@@ -72,15 +72,31 @@ pub struct InstallSection {
     /// e.g. "{ProgramFiles}/Better Mods Manager" — placeholders resolved at runtime.
     #[serde(default)]
     pub default_dir: Option<String>,
+    /// Main executable, relative to the install root (for shortcuts + protocol).
+    #[serde(default)]
+    pub main_exe: Option<String>,
+    /// Custom URL scheme to register, e.g. "bmm" (→ bmm:// deep links).
+    #[serde(default)]
+    pub protocol: Option<String>,
     #[serde(default = "default_true")]
     pub create_shortcuts: bool,
+    /// Also drop a desktop shortcut (Start Menu is implied by create_shortcuts).
+    #[serde(default)]
+    pub desktop_shortcut: bool,
     #[serde(default = "default_true")]
     pub allow_portable: bool,
 }
 
 impl Default for InstallSection {
     fn default() -> Self {
-        InstallSection { default_dir: None, create_shortcuts: true, allow_portable: true }
+        InstallSection {
+            default_dir: None,
+            main_exe: None,
+            protocol: None,
+            create_shortcuts: true,
+            desktop_shortcut: false,
+            allow_portable: true,
+        }
     }
 }
 

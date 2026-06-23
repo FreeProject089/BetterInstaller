@@ -58,6 +58,18 @@ pub trait PlatformOps {
     fn add_to_path(&self, _dir: &std::path::Path) -> Result<()> {
         Err(Error::Other("add_to_path: implemented in Phase 3".into()))
     }
+
+    // ── Reverse ops (uninstall). Default no-ops so unsupported platforms don't
+    //    fail an uninstall over a step they never performed. ──
+    fn remove_shortcuts(&self, _name: &str, _desktop: bool, _start_menu: bool) -> Result<()> {
+        Ok(())
+    }
+    fn unregister_protocol(&self, _scheme: &str) -> Result<()> {
+        Ok(())
+    }
+    fn unregister_uninstaller(&self, _app_id: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// The backend for the OS this binary was built for.

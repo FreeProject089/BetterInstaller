@@ -18,12 +18,29 @@ use bpkg_core::config::{InstallerConfig, SetupOption, SetupOptionKind};
 use bpkg_core::handoff;
 use bpkg_core::manifest::AppMeta;
 use bpkg_core::package::Package;
-use bpkg_core::platform;
+use bpkg_core::platform::{self, ShortcutSpec, UninstallEntry};
 use std::path::Path;
+
+/// Everything the install step needs to integrate with the OS (shortcuts,
+/// protocol, uninstaller). Send + Clone so it crosses into the worker thread.
+#[derive(Clone)]
+struct SystemIntegration {
+    app: AppMeta,
+    main_exe: Option<String>,
+    protocol: Option<String>,
+    create_shortcuts: bool,
+    desktop: bool,
+}
 
 slint::include_modules!();
 
 fn main() -> anyhow::Result<()> {
+    // Uninstall mode: triggered from the ARP "Uninstall" button
+    // (`uninstall.exe --uninstall`). Reverses the system integration + removes files.
+    if std::env::args().any(|a| a == "--uninstall") {
+        return run_uninstall();
+    }
+
     // Args: <installer.toml> [package.bpkg]. With a package, the Install step does
     // a real verify+extract; without one it runs a simulated progress (UI preview).
     let mut args = std::env::args().skip(1);
@@ -124,6 +141,13 @@ fn main() -> anyhow::Result<()> {
         .map(|c| c.id.clone())
         .collect();
     let app_version = cfg.app.version.clone();
+    let integ = SystemIntegration {
+        app: app_meta.clone(),
+        main_exe: cfg.install.main_exe.clone(),
+        protocol: cfg.install.protocol.clone(),
+        create_shortcuts: cfg.install.create_shortcuts,
+        desktop: cfg.install.desktop_shortcut,
+    };
 
     let prog_timer: Rc<RefCell<Option<Timer>>> = Rc::new(RefCell::new(None));
     {
@@ -178,8 +202,9 @@ fn main() -> anyhow::Result<()> {
                     let weak = ui.as_weak();
                     let handoff_msg = message.clone();
                     let handoff_ok = ok;
+                    let integ = integ.clone();
                     std::thread::spawn(move || {
-                        let result = run_real_install(weak.clone(), &pkg, &dest, &comps);
+                        let result = run_real_install(weak.clone(), &pkg, &dest, &comps, &integ);
                         let _ = weak.upgrade_in_event_loop(move |ui| {
                             match result {
                                 Ok(n) => {
@@ -242,22 +267,128 @@ fn run_real_install(
     pkg: &Path,
     dest: &Path,
     comps: &[String],
+    integ: &SystemIntegration,
 ) -> Result<u64, String> {
     let mut p = Package::open(pkg).map_err(|e| e.to_string())?;
     let comp: Option<&[String]> = if comps.is_empty() { None } else { Some(comps) };
     let mut last_pct = -1i32;
-    p.install_with_progress(dest, comp, |done, total, file| {
-        let pct = if total > 0 { (done * 100 / total) as i32 } else { 100 };
-        if pct != last_pct {
-            last_pct = pct;
-            let fname = file.to_string();
-            let _ = weak.upgrade_in_event_loop(move |ui| {
-                ui.set_progress(pct as f32 / 100.0);
-                ui.set_progress_label(format!("Installing…  {pct}%  ·  {fname}").into());
+    let written = p
+        .install_with_progress(dest, comp, |done, total, file| {
+            let pct = if total > 0 { (done * 100 / total) as i32 } else { 100 };
+            if pct != last_pct {
+                last_pct = pct;
+                let fname = file.to_string();
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_progress(pct as f32 / 100.0);
+                    ui.set_progress_label(format!("Installing…  {pct}%  ·  {fname}").into());
+                });
+            }
+        })
+        .map_err(|e| e.to_string())?;
+
+    // After files land: shortcuts, protocol, uninstaller (best-effort).
+    let _ = weak.upgrade_in_event_loop(|ui| {
+        ui.set_progress_label("Finishing up…".into());
+    });
+    do_system_integration(dest, integ);
+    Ok(written)
+}
+
+/// Register the app with the OS: shortcuts, custom URL scheme, and the
+/// Add/Remove-Programs uninstaller. All steps are best-effort (a failed shortcut
+/// never fails the whole install). Also drops `uninstall-info.json` so a later
+/// `--uninstall` can reverse exactly what was done.
+fn do_system_integration(dest: &Path, integ: &SystemIntegration) {
+    let plat = platform::current();
+
+    if let Some(exe_rel) = integ.main_exe.as_ref() {
+        let exe = dest.join(exe_rel);
+        if integ.create_shortcuts {
+            let _ = plat.create_shortcuts(&ShortcutSpec {
+                name: integ.app.name.clone(),
+                target: exe.clone(),
+                icon: None,
+                desktop: integ.desktop,
+                start_menu: true,
             });
         }
-    })
-    .map_err(|e| e.to_string())
+        if let Some(scheme) = integ.protocol.as_ref() {
+            let _ = plat.register_protocol(scheme, &exe);
+        }
+    }
+
+    // Copy ourselves in as the uninstaller and register the ARP entry.
+    if let Ok(self_exe) = std::env::current_exe() {
+        let uninstaller = dest.join("uninstall.exe");
+        let _ = std::fs::copy(&self_exe, &uninstaller);
+        let _ = plat.register_uninstaller(&UninstallEntry {
+            app: integ.app.clone(),
+            install_dir: dest.to_path_buf(),
+            uninstaller,
+        });
+    }
+
+    // Record what to reverse on uninstall.
+    let info = serde_json::json!({
+        "app_id": integ.app.id,
+        "app_name": integ.app.name,
+        "protocol": integ.protocol,
+        "shortcut_name": integ.app.name,
+        "desktop": integ.create_shortcuts && integ.desktop,
+        "start_menu": integ.create_shortcuts,
+        "install_dir": dest.to_string_lossy(),
+    });
+    if let Ok(bytes) = serde_json::to_vec_pretty(&info) {
+        let _ = std::fs::write(dest.join("uninstall-info.json"), bytes);
+    }
+}
+
+/// Reverse a previous install: remove shortcuts, unregister the protocol + ARP
+/// entry, and delete the install directory (except the running uninstaller).
+fn run_uninstall() -> anyhow::Result<()> {
+    let exe = std::env::current_exe()?;
+    let dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+
+    let info: serde_json::Value = std::fs::read(dir.join("uninstall-info.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or(serde_json::Value::Null);
+
+    let plat = platform::current();
+    if let Some(name) = info["shortcut_name"].as_str() {
+        let _ = plat.remove_shortcuts(
+            name,
+            info["desktop"].as_bool().unwrap_or(false),
+            info["start_menu"].as_bool().unwrap_or(false),
+        );
+    }
+    if let Some(scheme) = info["protocol"].as_str() {
+        let _ = plat.unregister_protocol(scheme);
+    }
+    if let Some(id) = info["app_id"].as_str() {
+        let _ = plat.unregister_uninstaller(id);
+    }
+
+    // Remove every install file except the running uninstaller (which Windows
+    // locks while it runs — the now-near-empty folder can be removed afterwards).
+    remove_dir_except(&dir, &exe);
+    Ok(())
+}
+
+fn remove_dir_except(dir: &Path, keep: &Path) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p == keep {
+                continue;
+            }
+            if p.is_dir() {
+                let _ = std::fs::remove_dir_all(&p);
+            } else {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
 }
 
 /// Map a [`SetupOption`] to the Slint row struct.

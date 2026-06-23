@@ -100,6 +100,30 @@ impl PlatformOps for WindowsOps {
         Ok(())
     }
 
+    fn remove_shortcuts(&self, name: &str, desktop: bool, start_menu: bool) -> Result<()> {
+        if start_menu {
+            let _ = std::fs::remove_file(Self::start_menu_programs().join(format!("{name}.lnk")));
+        }
+        if desktop {
+            let _ = std::fs::remove_file(Self::desktop().join(format!("{name}.lnk")));
+        }
+        Ok(())
+    }
+
+    fn unregister_protocol(&self, scheme: &str) -> Result<()> {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let _ = hkcu.delete_subkey_all(format!("Software\\Classes\\{scheme}"));
+        Ok(())
+    }
+
+    fn unregister_uninstaller(&self, app_id: &str) -> Result<()> {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let _ = hkcu.delete_subkey_all(format!(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{app_id}"
+        ));
+        Ok(())
+    }
+
     fn add_to_path(&self, dir: &Path) -> Result<()> {
         // Append to the per-user PATH (HKCU\Environment).
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);

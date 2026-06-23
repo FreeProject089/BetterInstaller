@@ -18,7 +18,10 @@ background  = "assets/installer-bg.png"
 
 [install]
 default_dir      = "{ProgramFiles}/Better Mods Manager"
+main_exe         = "better-mods-manager.exe"   # for shortcuts + bmm:// protocol
+protocol         = "bmm"                        # registers bmm:// deep links
 create_shortcuts = true
+desktop_shortcut = true
 allow_portable   = true
 
 # ─── Optional components ─────────────────────────────────────────────
