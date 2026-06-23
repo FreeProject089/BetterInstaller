@@ -47,14 +47,10 @@ slint::include_modules!();
 type RefreshLegal = Rc<dyn Fn(&MainWindow, usize)>;
 
 fn main() -> anyhow::Result<()> {
-    // Uninstall mode: triggered from the ARP "Uninstall" button
-    // (`uninstall.exe --uninstall`). Reverses the system integration + removes files.
-    if std::env::args().any(|a| a == "--uninstall") {
-        return run_uninstall();
-    }
-
+    // `--uninstall` (from the ARP entry) opens the GUI straight in maintenance mode.
+    let uninstall = std::env::args().any(|a| a == "--uninstall");
     let (cfg, package_path) = resolve_sources()?;
-    run_gui(cfg, package_path)
+    run_gui(cfg, package_path, uninstall)
 }
 
 /// Config + payload come from the embedded self-extracting blob (an exe built
@@ -73,7 +69,7 @@ fn resolve_sources() -> anyhow::Result<(InstallerConfig, Option<PathBuf>)> {
         return Ok((cfg, Some(tmp)));
     }
 
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).filter(|a| !a.starts_with("--"));
     let config_path = args
         .next()
         .unwrap_or_else(|| "examples/bmm/installer.toml".to_string());
@@ -83,7 +79,11 @@ fn resolve_sources() -> anyhow::Result<(InstallerConfig, Option<PathBuf>)> {
     Ok((cfg, package_path))
 }
 
-fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Result<()> {
+fn run_gui(
+    cfg: InstallerConfig,
+    package_path: Option<PathBuf>,
+    start_uninstall: bool,
+) -> anyhow::Result<()> {
     // Select the winit backend so the custom (frameless) title bar can drive the
     // window (drag / minimize / maximize). Must run before any Slint window.
     if let Ok(backend) = i_slint_backend_winit::Backend::new() {
@@ -100,7 +100,24 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
         platforms: cfg.app.platforms.clone(),
     };
 
+    // Maintenance mode: if this app is already installed (or `--uninstall`), show
+    // Repair / Uninstall instead of the install flow.
+    let installed = plat.installed_dir(&app_meta.id);
+    let maintenance = start_uninstall || installed.is_some();
+    let install_location: PathBuf = installed
+        .clone()
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|e| e.parent().map(Path::to_path_buf))
+        })
+        .unwrap_or_default();
+
     let ui = MainWindow::new()?;
+    if maintenance {
+        ui.set_maintenance(true);
+        ui.set_install_location(install_location.to_string_lossy().to_string().into());
+    }
     ui.set_app_name(cfg.app.name.clone().into());
     ui.set_app_version(cfg.app.version.clone().into());
     ui.set_publisher(cfg.app.publisher.clone().into());
@@ -281,6 +298,9 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
                     .insert(id.clone(), serde_json::json!(all));
             }
             if let Some(ui) = w.upgrade() {
+                // Drive the checkbox from state (the checkbox is "controlled", so
+                // it never self-toggles — this keeps TOS/Privacy independent).
+                ui.set_legal_accepted(v);
                 ui.set_can_proceed(v); // current doc must be accepted to proceed
             }
         });
@@ -412,6 +432,14 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
         prereqs: cfg.prerequisites.clone(),
     };
 
+    // Clones for the maintenance callbacks (the install closure below moves the
+    // originals).
+    let pkg_maint = package_path.clone();
+    let integ_maint = integ.clone();
+    let comps_maint = chosen_components.clone();
+    let loc_repair = install_location.clone();
+    let loc_uninstall = install_location.clone();
+
     let prog_timer: Rc<RefCell<Option<Timer>>> = Rc::new(RefCell::new(None));
     {
         let w = ui.as_weak();
@@ -524,6 +552,92 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
                     *prog_timer.borrow_mut() = Some(timer);
                 }
             }
+        });
+    }
+
+    // ── Maintenance: Repair (re-extract package) ────────────────────────
+    {
+        let w = ui.as_weak();
+        let pkg = pkg_maint;
+        let integ = integ_maint;
+        let comps = comps_maint;
+        let loc = loc_repair;
+        ui.on_repair(move || {
+            let ui = match w.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            let pkg = match &pkg {
+                Some(p) => p.clone(),
+                None => {
+                    ui.set_success(false);
+                    ui.set_result_message("Nothing to repair: no package embedded.".into());
+                    ui.set_page(4);
+                    return;
+                }
+            };
+            ui.set_page(3);
+            ui.set_progress(0.0);
+            ui.set_progress_label("Repairing…".into());
+            let dest = loc.clone();
+            let comps = comps.borrow().clone();
+            let integ = integ.clone();
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let result = run_real_install(weak.clone(), &pkg, &dest, &comps, &integ);
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    match result {
+                        Ok(n) => {
+                            ui.set_success(true);
+                            ui.set_result_message(
+                                format!("Repaired: {n} files restored in {}", dest.display())
+                                    .into(),
+                            );
+                        }
+                        Err(e) => {
+                            ui.set_success(false);
+                            ui.set_result_message(format!("Repair failed: {e}").into());
+                        }
+                    }
+                    ui.set_progress(1.0);
+                    ui.set_page(4);
+                });
+            });
+        });
+    }
+
+    // ── Maintenance: Uninstall ──────────────────────────────────────────
+    {
+        let w = ui.as_weak();
+        let loc = loc_uninstall;
+        ui.on_uninstall_app(move || {
+            let ui = match w.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            ui.set_page(3);
+            ui.set_progress(0.4);
+            ui.set_progress_label("Uninstalling…".into());
+            let dir = loc.clone();
+            let name = ui.get_app_name().to_string();
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let result = do_uninstall_full(&dir);
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    match result {
+                        Ok(()) => {
+                            ui.set_success(true);
+                            ui.set_result_message(format!("{name} was uninstalled.").into());
+                        }
+                        Err(e) => {
+                            ui.set_success(false);
+                            ui.set_result_message(format!("Uninstall failed: {e}").into());
+                        }
+                    }
+                    ui.set_progress(1.0);
+                    ui.set_page(4);
+                });
+            });
         });
     }
 
@@ -656,13 +770,11 @@ fn do_system_integration(dest: &Path, integ: &SystemIntegration) {
 
 /// Reverse a previous install: remove shortcuts, unregister the protocol + ARP
 /// entry, and delete the install directory (except the running uninstaller).
-fn run_uninstall() -> anyhow::Result<()> {
-    let exe = std::env::current_exe()?;
-    let dir = exe
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-
+/// Reverse the system integration recorded in `dir/uninstall-info.json`, then
+/// remove the install directory. If we're running from *inside* `dir` (the ARP
+/// uninstaller, which Windows locks), keep the running exe and schedule a detached
+/// self-delete; otherwise remove everything immediately.
+fn do_uninstall_full(dir: &Path) -> Result<(), String> {
     let info: serde_json::Value = std::fs::read(dir.join("uninstall-info.json"))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
@@ -683,13 +795,15 @@ fn run_uninstall() -> anyhow::Result<()> {
         let _ = plat.unregister_uninstaller(id);
     }
 
-    // Remove every install file except the running uninstaller (which Windows
-    // locks while it runs)…
-    remove_dir_except(&dir, &exe);
-    // …then schedule a detached process to delete the uninstaller + the now-empty
-    // folder once this process exits (the self-delete dance).
-    schedule_self_delete(&exe, &dir);
-    Ok(())
+    let exe = std::env::current_exe().unwrap_or_default();
+    if exe.starts_with(dir) {
+        // Locked uninstaller: remove all but the running exe, then self-delete.
+        remove_dir_except(dir, &exe);
+        schedule_self_delete(&exe, dir);
+        Ok(())
+    } else {
+        std::fs::remove_dir_all(dir).map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(windows)]

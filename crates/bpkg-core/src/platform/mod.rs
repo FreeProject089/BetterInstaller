@@ -76,6 +76,12 @@ pub trait PlatformOps {
     fn unregister_uninstaller(&self, _app_id: &str) -> Result<()> {
         Ok(())
     }
+
+    /// The directory `app_id` is currently installed in, if any (for maintenance
+    /// mode). Default: not detected.
+    fn installed_dir(&self, _app_id: &str) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// The backend for the OS this binary was built for.

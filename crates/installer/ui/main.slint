@@ -82,6 +82,9 @@ component BrutalCheck inherits Rectangle {
     in-out property <bool> checked;
     in property <string> text;
     in property <bool> enabled: true;
+    // When true, the check never self-toggles: the parent owns `checked` and
+    // updates it in response to `toggled`. Keeps a re-used checkbox in sync.
+    in property <bool> controlled: false;
     callback toggled;
     height: 26px;
     opacity: root.enabled ? 1.0 : 0.55;
@@ -117,7 +120,10 @@ component BrutalCheck inherits Rectangle {
     }
     ta := TouchArea {
         enabled: root.enabled;
-        clicked => { root.checked = !root.checked; root.toggled(); }
+        clicked => {
+            if !root.controlled { root.checked = !root.checked; }
+            root.toggled();
+        }
     }
 }
 
@@ -424,8 +430,58 @@ component LegalPage inherits VerticalLayout {
     BrutalCheck {
         text: root.accept-text;
         checked: root.accepted;
-        toggled => { root.accept-toggled(self.checked); }
+        controlled: true;
+        // `checked` still reflects the old value (no self-toggle), so send its inverse.
+        toggled => { root.accept-toggled(!self.checked); }
     }
+}
+
+component MaintenancePage inherits VerticalLayout {
+    in property <string> app-name;
+    in property <string> location;
+    callback repair();
+    callback uninstall();
+    // "" = choose · "repair"/"uninstall" = confirmation pending (cancelable).
+    property <string> pending: "";
+    spacing: 12px;
+    Text { text: app-name; font-size: 26px; font-weight: 900; color: white; }
+    Text { text: "Already installed at:"; font-size: 12px; font-weight: 700; color: Pal.dim; }
+    Text { text: location; font-size: 12px; color: Pal.text; wrap: word-wrap; }
+    Rectangle { height: 18px; }
+
+    if root.pending == "" : VerticalLayout {
+        spacing: 12px;
+        Text { text: "What would you like to do?"; font-size: 13px; font-weight: 700; color: Pal.dim; }
+        HorizontalLayout {
+            spacing: 12px;
+            BrutalBtn { text: "Repair / Update"; primary: true; clicked => { root.pending = "repair"; } }
+            BrutalBtn { text: "Uninstall"; clicked => { root.pending = "uninstall"; } }
+            Rectangle { horizontal-stretch: 1; }
+        }
+    }
+    if root.pending != "" : VerticalLayout {
+        spacing: 14px;
+        Text {
+            text: root.pending == "uninstall"
+                ? "Uninstall " + root.app-name + "?  This removes all installed files."
+                : "Repair / update " + root.app-name + "?  Files will be re-extracted.";
+            font-size: 14px; font-weight: 700; color: Pal.text; wrap: word-wrap;
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            BrutalBtn {
+                text: root.pending == "uninstall" ? "Yes, uninstall" : "Yes, repair";
+                primary: true;
+                clicked => {
+                    if (root.pending == "uninstall") { root.uninstall(); } else { root.repair(); }
+                    root.pending = "";
+                }
+            }
+            BrutalBtn { text: "Cancel"; clicked => { root.pending = ""; } }
+            Rectangle { horizontal-stretch: 1; }
+        }
+    }
+    Rectangle { vertical-stretch: 1; }
 }
 
 // ── Main window (frameless: OS decorations disabled from Rust) ──
@@ -439,6 +495,8 @@ export component MainWindow inherits Window {
     no-frame: true;
 
     in property <int> page: 0;
+    in property <bool> maintenance: false;
+    in property <string> install-location;
     in property <string> app-name: "Application";
     in property <string> app-version: "1.0.0";
     in property <string> publisher: "";
@@ -476,6 +534,8 @@ export component MainWindow inherits Window {
     callback option-select-changed(string, string);
     callback component-toggled(string, bool);
     callback legal-accept-toggled(bool);
+    callback repair();
+    callback uninstall-app();
     callback start-drag();
     callback minimize();
     callback toggle-maximize();
@@ -518,7 +578,13 @@ export component MainWindow inherits Window {
                     padding: 28px;
                     Rectangle {
                         vertical-stretch: 1;
-                        if root.page == 0 : WelcomePage {
+                        if root.page == 0 && root.maintenance : MaintenancePage {
+                            app-name: root.app-name;
+                            location: root.install-location;
+                            repair => { root.repair(); }
+                            uninstall => { root.uninstall-app(); }
+                        }
+                        if root.page == 0 && !root.maintenance : WelcomePage {
                             app-name: root.app-name;
                             app-version: root.app-version;
                             publisher: root.publisher;
@@ -563,7 +629,7 @@ export component MainWindow inherits Window {
                             text: root.t-back;
                             clicked => { root.go-back(); }
                         }
-                        if root.page == 0 || root.page == 1 : BrutalBtn {
+                        if (root.page == 0 && !root.maintenance) || root.page == 1 : BrutalBtn {
                             text: root.t-next; primary: true;
                             enabled: root.can-proceed;
                             clicked => { root.go-next(); }

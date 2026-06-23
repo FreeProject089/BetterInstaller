@@ -136,6 +136,22 @@ impl PlatformOps for WindowsOps {
         Ok(())
     }
 
+    fn installed_dir(&self, app_id: &str) -> Option<PathBuf> {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let key = hkcu
+            .open_subkey(format!(
+                "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{app_id}"
+            ))
+            .ok()?;
+        let loc: String = key.get_value("InstallLocation").ok()?;
+        let p = PathBuf::from(loc);
+        if p.exists() {
+            Some(p)
+        } else {
+            None
+        }
+    }
+
     fn add_to_path(&self, dir: &Path) -> Result<()> {
         // Append to the per-user PATH (HKCU\Environment).
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
