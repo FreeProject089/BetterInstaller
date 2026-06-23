@@ -390,10 +390,10 @@ component CompletePage inherits VerticalLayout {
 
 component LegalPage inherits VerticalLayout {
     in property <string> doc-title;
-    in property <string> doc-text;
+    in property <[MdBlock]> blocks;
     in property <int> index;
     in property <int> count;
-    in property <bool> is-last;
+    in property <string> accept-text;
     in-out property <bool> accepted;
     callback accept-toggled(bool);
     spacing: 10px;
@@ -410,17 +410,19 @@ component LegalPage inherits VerticalLayout {
         ScrollView {
             VerticalLayout {
                 padding: 16px;
-                Text {
-                    text: root.doc-text;
-                    font-size: 12px;
-                    color: Pal.text;
+                spacing: 5px;
+                for b in blocks : Text {
+                    text: b.level == 4 ? "•  " + b.text : b.text;
+                    font-size: b.level == 1 ? 18px : (b.level == 2 ? 15px : (b.level == 3 ? 13px : 12px));
+                    font-weight: (b.level >= 1 && b.level <= 3) ? 800 : 400;
+                    color: (b.level >= 1 && b.level <= 3) ? white : Pal.text;
                     wrap: word-wrap;
                 }
             }
         }
     }
-    if root.is-last : BrutalCheck {
-        text: "I have read and accept the Terms and the Privacy Policy.";
+    BrutalCheck {
+        text: root.accept-text;
         checked: root.accepted;
         toggled => { root.accept-toggled(self.checked); }
     }
@@ -444,10 +446,10 @@ export component MainWindow inherits Window {
     in property <[OptionRow]> options;
     in property <[CompRow]> components;
     in property <string> legal-title;
-    in property <string> legal-text;
+    in property <[MdBlock]> legal-blocks;
+    in property <string> legal-accept-text: "I have read and accept this document.";
     in property <int> legal-index: 0;
     in property <int> legal-count: 0;
-    in property <bool> legal-is-last: true;
     in-out property <bool> legal-accepted: false;
     in property <float> progress: 0;
     in property <string> progress-label;
@@ -527,10 +529,10 @@ export component MainWindow inherits Window {
                         }
                         if root.page == 1 : LegalPage {
                             doc-title: root.legal-title;
-                            doc-text: root.legal-text;
+                            blocks: root.legal-blocks;
                             index: root.legal-index;
                             count: root.legal-count;
-                            is-last: root.legal-is-last;
+                            accept-text: root.legal-accept-text;
                             accepted: root.legal-accepted;
                             accept-toggled(v) => { root.legal-accept-toggled(v); }
                         }

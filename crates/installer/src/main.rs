@@ -149,11 +149,11 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
         .iter()
         .find(|o| matches!(o.kind, SetupOptionKind::License) && !o.documents.is_empty())
         .map(|o| o.id.clone());
-    let legal_docs: Rc<Vec<(String, String)>> =
-        Rc::new(load_legal_docs(&cfg, package_path.as_deref()));
+    let legal_docs: Rc<Vec<LegalDoc>> = Rc::new(load_legal_docs(&cfg, package_path.as_deref()));
     let legal_count = legal_docs.len();
     let legal_index: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
-    let legal_accepted: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    // One acceptance flag PER document (separate accept for TOS and Privacy).
+    let legal_accepted: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(vec![false; legal_count]));
     ui.set_legal_count(legal_count as i32);
 
     // Setup rows + the option list used for "can proceed" exclude the legal option.
@@ -174,15 +174,16 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
         let docs = legal_docs.clone();
         let acc = legal_accepted.clone();
         move |ui: &MainWindow, idx: usize| {
-            if let Some((title, text)) = docs.get(idx) {
-                ui.set_legal_title(title.clone().into());
-                ui.set_legal_text(text.clone().into());
+            if let Some(d) = docs.get(idx) {
+                ui.set_legal_title(d.title.clone().into());
+                ui.set_legal_blocks(ModelRc::from(Rc::new(VecModel::from(d.blocks.clone()))));
+                ui.set_legal_accept_text(format!("I have read and accept the {}.", d.title).into());
             }
-            let last = idx + 1 >= docs.len();
+            let accepted = acc.borrow().get(idx).copied().unwrap_or(false);
             ui.set_legal_index(idx as i32);
-            ui.set_legal_is_last(last);
-            ui.set_legal_accepted(*acc.borrow());
-            ui.set_can_proceed(!last || *acc.borrow());
+            ui.set_legal_accepted(accepted);
+            // Each document must be accepted before its Next is enabled.
+            ui.set_can_proceed(accepted);
         }
     });
 
@@ -265,13 +266,22 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
         let li = legal_index.clone();
         let legal_id = legal_opt_id.clone();
         ui.on_legal_accept_toggled(move |v| {
-            *acc.borrow_mut() = v;
+            let idx = *li.borrow();
+            {
+                let mut a = acc.borrow_mut();
+                if idx < a.len() {
+                    a[idx] = v;
+                }
+            }
+            // The handoff records overall acceptance (all docs accepted).
+            let all = acc.borrow().iter().all(|x| *x);
             if let Some(id) = &legal_id {
-                chosen.borrow_mut().insert(id.clone(), serde_json::json!(v));
+                chosen
+                    .borrow_mut()
+                    .insert(id.clone(), serde_json::json!(all));
             }
             if let Some(ui) = w.upgrade() {
-                let last = (*li.borrow() + 1) >= legal_count;
-                ui.set_can_proceed(!last || v);
+                ui.set_can_proceed(v); // current doc must be accepted to proceed
             }
         });
     }
@@ -721,8 +731,14 @@ fn remove_dir_except(dir: &Path, keep: &Path) {
     }
 }
 
-/// Read the license documents' text from the package (shown on the Terms step).
-fn load_legal_docs(cfg: &InstallerConfig, pkg: Option<&Path>) -> Vec<(String, String)> {
+/// One legal document for the Terms step (title + rendered markdown blocks).
+struct LegalDoc {
+    title: String,
+    blocks: Vec<MdBlock>,
+}
+
+/// Read the license documents from the package and render them to markdown blocks.
+fn load_legal_docs(cfg: &InstallerConfig, pkg: Option<&Path>) -> Vec<LegalDoc> {
     let mut out = Vec::new();
     let lo = match cfg
         .setup_options
@@ -746,10 +762,65 @@ fn load_legal_docs(cfg: &InstallerConfig, pkg: Option<&Path>) -> Vec<(String, St
     };
     for doc in &lo.documents {
         if let Some(bytes) = map.get(doc) {
-            out.push((doc_title(doc), String::from_utf8_lossy(bytes).to_string()));
+            out.push(LegalDoc {
+                title: doc_title(doc),
+                blocks: parse_md(&String::from_utf8_lossy(bytes)),
+            });
         }
     }
     out
+}
+
+/// Render markdown to display blocks: headings (level 1-3), bullets (level 4),
+/// paragraphs (level 0). Inline emphasis/code markers are stripped; links become
+/// `text (url)`.
+fn parse_md(text: &str) -> Vec<MdBlock> {
+    let mut out = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim_end();
+        let (level, content): (i32, &str) = if let Some(s) = line.strip_prefix("### ") {
+            (3, s)
+        } else if let Some(s) = line.strip_prefix("## ") {
+            (2, s)
+        } else if let Some(s) = line.strip_prefix("# ") {
+            (1, s)
+        } else if let Some(s) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+            (4, s)
+        } else {
+            (0, line)
+        };
+        out.push(MdBlock {
+            text: strip_inline_md(content).into(),
+            level,
+        });
+    }
+    out
+}
+
+fn strip_inline_md(s: &str) -> String {
+    let mut r = s.replace("**", "").replace('`', "");
+    // [text](url) -> "text (url)"
+    while let (Some(lb), Some(rb)) = (r.find('['), r.find("](")) {
+        if rb <= lb {
+            break;
+        }
+        let close = match r[rb..].find(')') {
+            Some(c) => rb + c,
+            None => break,
+        };
+        let txt = r[lb + 1..rb].to_string();
+        let url = r[rb + 2..close].to_string();
+        let repl = if url.is_empty() {
+            txt
+        } else {
+            format!("{txt} ({url})")
+        };
+        r.replace_range(lb..close + 1, &repl);
+    }
+    r.replace('*', "")
+        .trim_start_matches('>')
+        .trim()
+        .to_string()
 }
 
 /// Friendly title for a legal document filename.
