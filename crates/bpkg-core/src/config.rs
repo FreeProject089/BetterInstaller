@@ -154,6 +154,20 @@ pub struct ComponentSection {
     pub default: bool,
     #[serde(default)]
     pub size_mb: u32,
+    /// Payload path prefixes that belong to this component (forward slashes),
+    /// e.g. ["bin/mcp-server.exe", "mcp/"]. Files matching none → core.
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
+impl ComponentSection {
+    /// Whether `rel` (a forward-slash payload path) belongs to this component.
+    pub fn matches(&self, rel: &str) -> bool {
+        self.paths.iter().any(|p| {
+            let p = p.trim_end_matches("**").trim_end_matches('*');
+            !p.is_empty() && (rel == p || rel.starts_with(p))
+        })
+    }
 }
 
 // ── First-run handoff (v3 Addendum §C) ──────────────────────────────────────
@@ -254,4 +268,26 @@ impl MapsTo {
 
 fn default_true() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn component_path_matching() {
+        let c = ComponentSection {
+            id: "mcp".into(),
+            name: "MCP".into(),
+            description: String::new(),
+            required: false,
+            default: true,
+            size_mb: 0,
+            paths: vec!["bmm-mcp-server.exe".into(), "mcp/".into()],
+        };
+        assert!(c.matches("bmm-mcp-server.exe"));
+        assert!(c.matches("mcp/data.json")); // prefix
+        assert!(!c.matches("better-mods-manager.exe")); // core
+        assert!(!c.matches("mcpx.txt")); // not under mcp/
+    }
 }

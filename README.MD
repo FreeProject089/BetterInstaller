@@ -36,17 +36,19 @@ and reusable by anyone for any app (Windows / Linux / macOS).
 | `asInvoker` manifest (no spurious UAC prompt) | ✅ |
 | **Single self-extracting installer** (`bpkg build` — config + payload in one exe) | ✅ |
 | **Ed25519 signing** + verify-on-install (`[security]`) | ✅ |
-| Prerequisites check (registry / file / command) | ✅ |
-| **Update with atomic rollback** | ✅ |
+| Prerequisites check + auto-download/-install of missing ones | ✅ |
+| **Update with atomic rollback** (local + remote manifest) | ✅ |
+| **Binary delta patches** (bsdiff — patches ~1% of the new file) | ✅ |
 | i18n (en / fr) for the UI chrome | ✅ |
+| Component-aware packing (`[[components]].paths` → per-file mapping) | ✅ |
+| Self-deleting uninstaller | ✅ |
 | Linux backend (`.desktop` shortcuts + `xdg-mime` protocol) | ✅ |
+| macOS backend (symlink shortcuts + paths; protocol via Info.plist) | ✅ / partial |
 | CI (GitHub Actions: fmt + clippy + test + release, Windows & Linux) | ✅ |
-| Cross-platform `PlatformOps` (Windows ✅ · Linux ✅ · macOS paths only) | ✅ / partial |
 
-**Not yet** (honest): remote update manifest + bsdiff binary deltas (local apply + rollback only);
-prerequisite auto-download/-install; macOS shortcut/protocol bodies; self-deleting uninstaller;
-reactive UI language switch; component-aware packing. SmartScreen still needs Authenticode
-(Ed25519 only covers package integrity, not Windows reputation).
+**Not yet** (honest, minor): macOS runtime protocol registration (it's declared in the `.app`
+Info.plist, not at runtime); reactive UI language switch mid-flow. SmartScreen still needs
+Authenticode (Ed25519 only covers package integrity, not Windows reputation).
 
 ---
 

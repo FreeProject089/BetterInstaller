@@ -13,11 +13,13 @@
 //! See `.Assets/.md/PLAN_BETTER_INSTALLER.md` (v2 + v3 Addendum) for the full plan.
 
 pub mod config;
+pub mod delta;
 pub mod embed;
 pub mod error;
 pub mod handoff;
 pub mod i18n;
 pub mod manifest;
+pub mod net;
 pub mod package;
 pub mod platform;
 pub mod prereq;

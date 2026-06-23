@@ -94,6 +94,36 @@ enum Command {
         #[arg(long)]
         dir: PathBuf,
     },
+    /// Create a binary delta patch (old.bpkg → new.bpkg).
+    Delta {
+        #[arg(long)]
+        old: PathBuf,
+        #[arg(long)]
+        new: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Apply a binary delta patch to reconstruct the new file.
+    ApplyDelta {
+        #[arg(long)]
+        old: PathBuf,
+        #[arg(long)]
+        patch: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Check a remote update manifest and, if newer, download + apply it.
+    FetchUpdate {
+        /// URL of the update manifest JSON.
+        #[arg(long)]
+        url: String,
+        /// Install directory to update.
+        #[arg(long)]
+        dir: PathBuf,
+        /// The currently-installed version.
+        #[arg(long)]
+        current: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -121,7 +151,47 @@ fn main() -> Result<()> {
             out,
         } => cmd_build(&installer, &config, &package, &out),
         Command::Update { package, dir } => cmd_update(&package, &dir),
+        Command::Delta { old, new, out } => cmd_delta(&old, &new, &out),
+        Command::ApplyDelta { old, patch, out } => cmd_apply_delta(&old, &patch, &out),
+        Command::FetchUpdate { url, dir, current } => cmd_fetch_update(&url, &dir, &current),
     }
+}
+
+fn cmd_delta(old: &Path, new: &Path, out: &Path) -> Result<()> {
+    let o = std::fs::read(old).with_context(|| format!("reading {}", old.display()))?;
+    let n = std::fs::read(new).with_context(|| format!("reading {}", new.display()))?;
+    let patch = bpkg_core::delta::make_delta(&o, &n).context("creating delta")?;
+    std::fs::write(out, &patch).with_context(|| format!("writing {}", out.display()))?;
+    println!(
+        "Delta {} → {}  ({:.1} KB, {:.0}% of new)",
+        old.display(),
+        out.display(),
+        patch.len() as f64 / 1024.0,
+        100.0 * patch.len() as f64 / n.len().max(1) as f64
+    );
+    Ok(())
+}
+
+fn cmd_apply_delta(old: &Path, patch: &Path, out: &Path) -> Result<()> {
+    let o = std::fs::read(old)?;
+    let p = std::fs::read(patch)?;
+    let n = bpkg_core::delta::apply_delta(&o, &p).context("applying delta")?;
+    std::fs::write(out, &n)?;
+    println!("Reconstructed {} ({} bytes).", out.display(), n.len());
+    Ok(())
+}
+
+fn cmd_fetch_update(url: &str, dir: &Path, current: &str) -> Result<()> {
+    match bpkg_core::update::check_remote(url, current).context("checking update")? {
+        None => println!("Up to date (current {current})."),
+        Some(m) => {
+            println!("Update available: {current} → {}. Downloading…", m.version);
+            let n = bpkg_core::update::download_and_apply(&m, current, None, dir)
+                .context("update failed (rolled back)")?;
+            println!("Updated to {} ({n} files).", m.version);
+        }
+    }
+    Ok(())
 }
 
 fn cmd_update(package: &Path, dir: &Path) -> Result<()> {
@@ -154,8 +224,16 @@ fn cmd_pack(root: &Path, config: &Path, out: &Path) -> Result<()> {
         })
         .collect();
 
-    // Phase 1: all files belong to core (None). Component-aware splitting comes later.
-    let manifest = package::create_from_dir(root, app, components, |_| None, out)
+    // Assign each file to the first component whose `paths` prefix matches; files
+    // matching none belong to core (None).
+    let sections = cfg.components.clone();
+    let component_of = move |rel: &str| -> Option<String> {
+        sections
+            .iter()
+            .find(|c| c.matches(rel))
+            .map(|c| c.id.clone())
+    };
+    let manifest = package::create_from_dir(root, app, components, component_of, out)
         .context("building package")?;
 
     println!(

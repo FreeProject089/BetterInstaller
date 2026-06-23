@@ -1,14 +1,97 @@
-//! In-place updates with atomic-ish rollback.
+//! Updates with atomic-ish rollback.
 //!
-//! Strategy: snapshot the install dir to a sibling `<name>.bak`, extract the new
-//! package over the install dir; on ANY error, wipe + restore from the snapshot.
-//! On success, drop the snapshot. (Remote manifest fetch + binary delta patches
-//! are a later increment; this is the local apply + safety net.)
+//! Local apply: snapshot the install dir to a sibling `<name>.bak`, extract the
+//! new package over it; on ANY error, wipe + restore from the snapshot; on
+//! success, drop the snapshot. Remote: [`check_remote`] fetches an
+//! [`UpdateManifest`] and [`download_and_apply`] downloads the new package —
+//! preferring a small binary [delta](crate::delta) from the current version when
+//! offered — then applies it with the same rollback safety net.
 
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
+
 use crate::error::{Error, Result};
 use crate::package::Package;
+
+/// A remote update manifest (JSON at a stable URL).
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateManifest {
+    /// Latest available version, e.g. "1.2.0".
+    pub version: String,
+    /// URL of the full `.bpkg` for that version.
+    pub url: String,
+    /// Optional hex Ed25519 signature note (verification uses the package's own sig).
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// Binary deltas from older versions (download a small patch instead of the full pkg).
+    #[serde(default)]
+    pub deltas: Vec<DeltaEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeltaEntry {
+    /// The version this patch upgrades *from*.
+    pub from: String,
+    /// URL of the bsdiff patch (old.bpkg → new.bpkg).
+    pub url: String,
+}
+
+/// `a` is a strictly newer dotted version than `b` (numeric, component-wise).
+pub fn is_newer(a: &str, b: &str) -> bool {
+    let parse =
+        |s: &str| -> Vec<u64> { s.split('.').filter_map(|x| x.trim().parse().ok()).collect() };
+    let (pa, pb) = (parse(a), parse(b));
+    for i in 0..pa.len().max(pb.len()) {
+        let (x, y) = (
+            pa.get(i).copied().unwrap_or(0),
+            pb.get(i).copied().unwrap_or(0),
+        );
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+/// Fetch the manifest at `manifest_url`; return it only if newer than `current_version`.
+pub fn check_remote(manifest_url: &str, current_version: &str) -> Result<Option<UpdateManifest>> {
+    let text = crate::net::fetch_text(manifest_url)?;
+    let m: UpdateManifest = serde_json::from_str(&text)?;
+    Ok(if is_newer(&m.version, current_version) {
+        Some(m)
+    } else {
+        None
+    })
+}
+
+/// Download the new package — using a binary delta from `current_version` when one
+/// is offered and `current_bpkg` is available — then apply it with rollback.
+pub fn download_and_apply(
+    m: &UpdateManifest,
+    current_version: &str,
+    current_bpkg: Option<&Path>,
+    install_dir: &Path,
+) -> Result<u64> {
+    let new_bytes = match (
+        current_bpkg,
+        m.deltas.iter().find(|d| d.from == current_version),
+    ) {
+        (Some(old_path), Some(delta)) => {
+            // Delta path: download a small patch and reconstruct the new package.
+            let old = std::fs::read(old_path).map_err(|e| Error::io(old_path, e))?;
+            let patch = crate::net::download(&delta.url)?;
+            crate::delta::apply_delta(&old, &patch)?
+        }
+        _ => crate::net::download(&m.url)?, // full download
+    };
+
+    let tmp = std::env::temp_dir().join(format!("bi-update-{}.bpkg", std::process::id()));
+    std::fs::write(&tmp, &new_bytes).map_err(|e| Error::io(&tmp, e))?;
+    let res = apply_package_update(&tmp, install_dir, None);
+    let _ = std::fs::remove_file(&tmp);
+    res
+}
 
 /// Apply a newer `.bpkg` over `install_dir`, rolling back on failure.
 /// Returns the number of files written on success.
@@ -102,6 +185,15 @@ mod tests {
             homepage: None,
             platforms: vec!["windows".into()],
         }
+    }
+
+    #[test]
+    fn version_compare() {
+        assert!(is_newer("1.2.0", "1.1.9"));
+        assert!(is_newer("2.0.0", "1.9.9"));
+        assert!(is_newer("1.0.1", "1.0")); // missing components = 0
+        assert!(!is_newer("1.0.0", "1.0.0"));
+        assert!(!is_newer("1.0.0", "1.0.1"));
     }
 
     #[test]

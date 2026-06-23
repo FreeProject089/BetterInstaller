@@ -343,15 +343,17 @@ fn run_real_install(
     comps: &[String],
     integ: &SystemIntegration,
 ) -> Result<u64, String> {
-    // Prerequisites must be satisfied before touching anything.
-    let missing: Vec<String> = integ
-        .prereqs
-        .iter()
-        .filter(|p| p.required && !bpkg_core::prereq::check(p))
-        .map(|p| p.name.clone())
-        .collect();
-    if !missing.is_empty() {
-        return Err(format!("Missing prerequisites: {}", missing.join(", ")));
+    // Prerequisites: auto-download/-install the missing required ones (those with a
+    // download_url), error on any still missing. Done before touching the install.
+    {
+        let weak = weak.clone();
+        bpkg_core::prereq::ensure_required(&integ.prereqs, |name| {
+            let name = name.to_string();
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                ui.set_progress_label(format!("Installing prerequisite: {name}…").into());
+            });
+        })
+        .map_err(|e| e.to_string())?;
     }
 
     let mut p = Package::open(pkg).map_err(|e| e.to_string())?;
@@ -476,9 +478,35 @@ fn run_uninstall() -> anyhow::Result<()> {
     }
 
     // Remove every install file except the running uninstaller (which Windows
-    // locks while it runs — the now-near-empty folder can be removed afterwards).
+    // locks while it runs)…
     remove_dir_except(&dir, &exe);
+    // …then schedule a detached process to delete the uninstaller + the now-empty
+    // folder once this process exits (the self-delete dance).
+    schedule_self_delete(&exe, &dir);
     Ok(())
+}
+
+#[cfg(windows)]
+fn schedule_self_delete(exe: &Path, dir: &Path) {
+    use std::os::windows::process::CommandExt;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // Wait ~1s (let us exit + release the lock), delete the exe, remove the dir.
+    let script = format!(
+        "ping 127.0.0.1 -n 2 >nul & del /F /Q \"{}\" & rmdir \"{}\"",
+        exe.display(),
+        dir.display()
+    );
+    let _ = std::process::Command::new("cmd")
+        .args(["/C", &script])
+        .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+        .spawn();
+}
+
+#[cfg(not(windows))]
+fn schedule_self_delete(exe: &Path, _dir: &Path) {
+    // Unix doesn't lock running executables — just remove it.
+    let _ = std::fs::remove_file(exe);
 }
 
 fn remove_dir_except(dir: &Path, keep: &Path) {
