@@ -1,0 +1,85 @@
+# ══════════════════════════════════════════════════════════════════
+# BetterInstaller config — Better Mods Manager (BMM)
+# Example project config: one TOML drives the whole installer.
+# ══════════════════════════════════════════════════════════════════
+
+[app]
+id        = "com.bettermm.app"
+name      = "Better Mods Manager"
+version   = "1.0.0"
+publisher = "BetterCommunity"
+homepage  = "https://github.com/FreeProject089/BetterModsManager"
+platforms = ["windows"]            # BMM is Windows-only for now
+
+[branding]
+accent     = "#3b82f6"
+logo       = "assets/logo.png"
+background  = "assets/installer-bg.png"
+
+[install]
+default_dir      = "{ProgramFiles}/Better Mods Manager"
+create_shortcuts = true
+allow_portable   = true
+
+# ─── Optional components ─────────────────────────────────────────────
+[[components]]
+id          = "core"
+name        = "Better Mods Manager"
+description = "Main application — required."
+required    = true
+default     = true
+size_mb     = 43
+
+[[components]]
+id          = "mcp-server"
+name        = "MCP AI Server (sidecar)"
+description = "AI control server (Claude/ChatGPT via the MCP protocol)."
+required    = false
+default     = true
+size_mb     = 7
+
+[[components]]
+id          = "cli"
+name        = "CLI tools"
+description = "Command-line automation (bmm-cli.exe)."
+required    = false
+default     = false
+size_mb     = 2
+
+# ─── First-run handoff (the headline feature) ────────────────────────
+# The installer writes installer-handoff.json into BMM's app data; BMM reads it
+# ONCE on first launch → no privacy/ToS/language/tutorial modals.
+[handoff]
+enabled  = true
+file     = "installer-handoff.json"
+location = "app_data"
+
+[[setup_option]]
+id        = "language"
+type      = "select"
+label_key = "setup.language"
+choices   = ["auto", "en", "fr"]
+default   = "auto"                 # auto = detect OS language
+maps_to   = "settings.language"
+
+[[setup_option]]
+id        = "legal"
+type      = "license"
+label_key = "setup.acceptLegal"
+documents = ["PRIVACY.md", "TOS.md"]
+required  = true
+maps_to   = ["settings.privacy_accepted", "settings.tos_accepted"]
+
+[[setup_option]]
+id        = "skip_tutorial"
+type      = "bool"
+label_key = "setup.skipTutorial"
+default   = false
+maps_to   = "settings.skip_tutorial"
+
+[[setup_option]]
+id        = "telemetry"
+type      = "bool"
+label_key = "setup.telemetry"
+default   = false                  # opt-in: never pre-checked
+maps_to   = "settings.telemetry"

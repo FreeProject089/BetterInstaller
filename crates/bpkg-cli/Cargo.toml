@@ -1,0 +1,17 @@
+[package]
+name = "bpkg-cli"
+description = "BetterInstaller packaging tool — build, inspect, verify and extract .bpkg packages."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "bpkg"
+path = "src/main.rs"
+
+[dependencies]
+bpkg-core = { path = "../bpkg-core" }
+clap.workspace = true
+anyhow.workspace = true

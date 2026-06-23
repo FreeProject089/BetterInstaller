@@ -1,0 +1,15 @@
+# Rust build output
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Generated packages / keys (never commit signing keys)
+*.bpkg
+/keys/
+*.private.key
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

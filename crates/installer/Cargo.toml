@@ -1,0 +1,22 @@
+[package]
+name = "installer"
+description = "BetterInstaller GUI — the Slint-based installer shell driven by an installer.toml + embedded .bpkg."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "betterinstaller"
+path = "src/main.rs"
+
+[dependencies]
+bpkg-core = { path = "../bpkg-core" }
+slint.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true
+embed-manifest.workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "bpkg-core"
+description = "BetterInstaller core engine: .bpkg package format, project config, first-run handoff contract, and platform abstraction."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+zstd.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+mslnk = "0.1"

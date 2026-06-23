@@ -1,0 +1,41 @@
+# BetterInstaller — proprietary, reusable installer/updater framework.
+# Workspace: one engine (bpkg-core) + the packaging CLI (bpkg). The GUI
+# installer binary (Slint) lands in Phase 2 as a third crate.
+#
+# Plan: ../.Assets/.md/PLAN_BETTER_INSTALLER.md (v2 body + v3 Addendum).
+[workspace]
+resolver = "2"
+members = [
+    "crates/bpkg-core",
+    "crates/bpkg-cli",
+    "crates/installer",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/FreeProject089/BetterInstaller"
+authors = ["FreeProject089"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "1"
+anyhow = "1"
+zstd = "0.13"
+sha2 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+slint = "1"
+slint-build = "1"
+embed-manifest = "1"
+
+# Smaller, faster release binary — the installer must stay tiny (<5 MB target).
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
