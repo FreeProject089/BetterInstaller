@@ -186,4 +186,4 @@ launch of a stamped self-extracting installer are verified end-to-end.
 
 ## License
 
-GPL 3.0
+(GPL 3.0)[https://github.com/FreeProject089/BetterInstaller/blob/master/LICENSE]
