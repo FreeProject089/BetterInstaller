@@ -25,6 +25,10 @@ pub struct HandoffDoc {
     pub installed_at: String,
     /// Components the user chose to install.
     pub components: Vec<String>,
+    /// Where the app was installed (so the app can import bundled presets from
+    /// `<install_dir>/...`). Empty when unknown.
+    #[serde(default)]
+    pub install_dir: String,
     /// Flat settings map (key → value) built from the project's setup options.
     pub settings: BTreeMap<String, serde_json::Value>,
 }
@@ -40,6 +44,7 @@ impl HandoffDoc {
             app_version: app_version.into(),
             installed_at: chrono::Utc::now().to_rfc3339(),
             components: Vec::new(),
+            install_dir: String::new(),
             settings: BTreeMap::new(),
         }
     }

@@ -31,6 +31,43 @@ pub struct InstallerConfig {
     /// System prerequisites to check (and optionally auto-install).
     #[serde(default, rename = "prerequisite")]
     pub prerequisites: Vec<Prerequisite>,
+    /// Things the user can optionally launch from the final "Done" page.
+    #[serde(default, rename = "launch")]
+    pub launch: Vec<LaunchItem>,
+    /// Auto-update settings (remote manifest check + apply). Optional.
+    #[serde(default)]
+    pub update: Option<UpdateConfig>,
+}
+
+/// Configures the updater: where to look for newer versions and whether to check
+/// automatically. The actual download/apply + rollback lives in `update.rs`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateConfig {
+    /// URL of a JSON update manifest: `{ "version", "url", "deltas": [...] }`.
+    pub manifest_url: String,
+    /// Check the manifest automatically when the maintenance window opens.
+    #[serde(default = "default_true")]
+    pub auto_check: bool,
+    /// Prefer a small binary delta patch over a full re-download when offered.
+    #[serde(default = "default_true")]
+    pub allow_delta: bool,
+}
+
+/// A program offered as an opt-in "launch now" checkbox on the Done page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LaunchItem {
+    pub id: String,
+    /// Checkbox label, e.g. "Launch Better Mods Manager".
+    pub label: String,
+    /// Executable to run, relative to the install root.
+    pub exe: String,
+    /// Pre-checked on the Done page. The main app is typically `true`; optional
+    /// sidecars `false`.
+    #[serde(default)]
+    pub default: bool,
+    /// Only offer this launch if the named component was installed (omit = always).
+    #[serde(default)]
+    pub component: Option<String>,
 }
 
 /// A prerequisite the target machine must satisfy (e.g. a runtime). Detection is

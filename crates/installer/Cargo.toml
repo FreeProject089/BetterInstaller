@@ -17,6 +17,8 @@ slint.workspace = true
 i-slint-backend-winit.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
+# Native folder picker for the "Browse…" button (Windows uses the OS dialog).
+rfd = { version = "0.15", default-features = false }
 
 [build-dependencies]
 slint-build.workspace = true

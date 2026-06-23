@@ -41,6 +41,13 @@ export struct MdBlock {
     level: int,
 }
 
+// An opt-in "launch now" checkbox on the Done page.
+export struct LaunchRow {
+    id: string,
+    label: string,
+    checked: bool,
+}
+
 // ── Brutalist button: thick border + hard shadow that "presses in" on click ──
 component BrutalBtn inherits Rectangle {
     in property <string> text;
@@ -218,30 +225,66 @@ component WelcomePage inherits VerticalLayout {
     in property <string> app-version;
     in property <string> publisher;
     in property <string> loc-label: "Install location";
+    in property <bool> signed: false;
+    in property <string> signature-status;
     in property <[CompRow]> components;
     in-out property <string> install-dir;
     callback component-toggled(string, bool);
+    callback browse();
     spacing: 10px;
     Text { text: "Install " + app-name; font-size: 26px; font-weight: 900; color: white; }
     Text { text: "Version " + app-version + (publisher != "" ? "  ·  " + publisher : ""); font-size: 13px; color: Pal.dim; }
-    Rectangle { height: 14px; }
-    Text { text: loc-label; font-size: 12px; font-weight: 700; color: Pal.dim; }
+
+    // Signature / publisher trust badge.
     Rectangle {
-        height: 46px;
-        background: Pal.bg;
+        height: 34px;
+        horizontal-stretch: 0;
+        background: root.signed ? #122b1c : #2b1212;
         border-radius: 4px;
         border-width: 2px;
-        border-color: Pal.border;
+        border-color: root.signed ? #2bbf6a : Pal.danger;
         HorizontalLayout {
-            padding-left: 12px; padding-right: 12px;
-            TextInput {
-                text <=> install-dir;
-                color: Pal.text;
-                font-size: 13px;
+            padding-left: 10px; padding-right: 12px; spacing: 8px;
+            alignment: start;
+            // shield with check / cross
+            Path {
+                width: 16px; height: 16px;
+                y: (parent.height - self.height) / 2;
+                fill: root.signed ? #36d27e : #ff6b6b;
+                commands: "M 8 0 L 15 3 L 15 8 C 15 12 12 15 8 16 C 4 15 1 12 1 8 L 1 3 Z";
+            }
+            Text {
+                text: root.signature-status;
+                color: root.signed ? #8be0ab : #ff9b9b;
+                font-size: 12px; font-weight: 700;
                 vertical-alignment: center;
-                single-line: true;
             }
         }
+    }
+
+    Rectangle { height: 6px; }
+    Text { text: loc-label; font-size: 12px; font-weight: 700; color: Pal.dim; }
+    HorizontalLayout {
+        spacing: 10px;
+        Rectangle {
+            height: 46px;
+            horizontal-stretch: 1;
+            background: Pal.bg;
+            border-radius: 4px;
+            border-width: 2px;
+            border-color: Pal.border;
+            HorizontalLayout {
+                padding-left: 12px; padding-right: 12px;
+                TextInput {
+                    text <=> install-dir;
+                    color: Pal.text;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    single-line: true;
+                }
+            }
+        }
+        BrutalBtn { text: "Browse…"; min-width: 96px; clicked => { root.browse(); } }
     }
     if root.components.length > 0 : Text {
         text: "Components"; font-size: 12px; font-weight: 700; color: Pal.dim;
@@ -299,24 +342,33 @@ component SetupPage inherits VerticalLayout {
         vertical-stretch: 1;
         VerticalLayout {
             spacing: 12px;
+            padding-right: 4px;
             for opt in options : Rectangle {
                 background: Pal.panel;
                 border-radius: 6px;
                 border-width: 2px;
-                border-color: Pal.border;
+                border-color: th.has-hover ? Pal.accent : Pal.border;
                 drop-shadow-offset-x: 4px;
                 drop-shadow-offset-y: 4px;
                 drop-shadow-blur: 0px;
                 drop-shadow-color: Pal.shadow;
-                min-height: 58px;
+                min-height: 62px;
+                th := TouchArea { mouse-cursor: default; }
+                // Left accent stripe.
+                Rectangle {
+                    x: 0; width: 5px;
+                    background: Pal.accent;
+                    border-top-left-radius: 4px; border-bottom-left-radius: 4px;
+                }
                 HorizontalLayout {
                     padding: 16px;
-                    spacing: 14px;
+                    padding-left: 20px;
+                    spacing: 16px;
                     VerticalLayout {
                         horizontal-stretch: 1;
                         spacing: 5px;
                         alignment: center;
-                        Text { text: opt.label; font-size: 14px; font-weight: 700; color: white; }
+                        Text { text: opt.label; font-size: 14px; font-weight: 800; color: white; }
                         if opt.description != "" : Text {
                             text: opt.description; font-size: 11px; color: Pal.dim; wrap: word-wrap;
                         }
@@ -327,11 +379,14 @@ component SetupPage inherits VerticalLayout {
                         }
                     }
                     if opt.kind == "bool" : BrutalCheck {
+                        y: (parent.height - self.height) / 2;
                         checked: opt.bool-value;
                         toggled => { option-bool-changed(opt.id, self.checked); }
                     }
                     if opt.kind == "select" : ComboBox {
-                        width: 150px;
+                        width: 148px;
+                        height: 38px;
+                        y: (parent.height - self.height) / 2;
                         model: opt.choices;
                         current-value: opt.string-value;
                         selected(v) => { option-select-changed(opt.id, v); }
@@ -346,22 +401,53 @@ component ProgressPage inherits VerticalLayout {
     in property <float> progress;
     in property <string> progress-label;
     in property <string> installing-label: "Installing…";
-    spacing: 16px;
+    spacing: 14px;
     Rectangle { vertical-stretch: 1; }
-    Text { text: installing-label; font-size: 22px; font-weight: 900; color: white; horizontal-alignment: center; }
-    Text { text: progress-label; font-size: 12px; color: Pal.dim; horizontal-alignment: center; }
+
+    // Big live percentage.
+    Text {
+        text: round(root.progress * 100) + "%";
+        font-size: 64px; font-weight: 900; color: Pal.accent;
+        horizontal-alignment: center;
+    }
+    Text {
+        text: installing-label;
+        font-size: 18px; font-weight: 800; color: white;
+        horizontal-alignment: center;
+    }
+
+    Rectangle { height: 4px; }
+
+    // Brutalist progress bar with hard shadow + rounded accent fill.
     Rectangle {
-        height: 24px;
+        height: 26px;
         background: Pal.bg;
-        border-radius: 4px;
+        border-radius: 5px;
         border-width: 2px;
         border-color: Pal.border;
+        drop-shadow-offset-x: 4px;
+        drop-shadow-offset-y: 4px;
+        drop-shadow-blur: 0px;
+        drop-shadow-color: Pal.shadow;
         Rectangle {
-            x: 2px; y: 2px;
-            width: (parent.width - 4px) * root.progress;
-            height: parent.height - 4px;
-            background: Pal.accent;
-            border-radius: 2px;
+            x: 3px; y: 3px;
+            width: max(0px, (parent.width - 6px) * root.progress);
+            height: parent.height - 6px;
+            background: @linear-gradient(90deg, Pal.accent-dark 0%, Pal.accent 100%);
+            border-radius: 3px;
+            animate width { duration: 120ms; easing: ease-out; }
+        }
+    }
+
+    // Live detail (current file / phase).
+    Rectangle {
+        height: 22px;
+        clip: true;
+        Text {
+            text: root.progress-label;
+            font-size: 11px; color: Pal.dim;
+            horizontal-alignment: center;
+            overflow: elide;
         }
     }
     Rectangle { vertical-stretch: 1; }
@@ -371,7 +457,9 @@ component CompletePage inherits VerticalLayout {
     in property <string> app-name;
     in property <bool> success;
     in property <string> result-message;
-    spacing: 14px;
+    in property <[LaunchRow]> launch-items;
+    callback launch-toggled(string, bool);
+    spacing: 12px;
     Rectangle { vertical-stretch: 1; }
     Rectangle {
         width: 64px; height: 64px;
@@ -391,6 +479,24 @@ component CompletePage inherits VerticalLayout {
         font-size: 21px; font-weight: 900; color: white; horizontal-alignment: center;
     }
     Text { text: result-message; font-size: 12px; color: Pal.dim; horizontal-alignment: center; wrap: word-wrap; }
+
+    // Opt-in: pick what to start when closing the installer.
+    if root.success && root.launch-items.length > 0 : Rectangle {
+        horizontal-stretch: 0;
+        x: (parent.width - self.width) / 2;
+        width: min(parent.width, 380px);
+        background: Pal.panel;
+        border-radius: 6px; border-width: 2px; border-color: Pal.border;
+        VerticalLayout {
+            padding: 14px; spacing: 10px;
+            Text { text: "Launch now"; font-size: 12px; font-weight: 700; color: Pal.dim; }
+            for it in root.launch-items : BrutalCheck {
+                text: it.label;
+                checked: it.checked;
+                toggled => { root.launch-toggled(it.id, self.checked); }
+            }
+        }
+    }
     Rectangle { vertical-stretch: 1; }
 }
 
@@ -439,22 +545,45 @@ component LegalPage inherits VerticalLayout {
 component MaintenancePage inherits VerticalLayout {
     in property <string> app-name;
     in property <string> location;
+    in property <string> installed-version;
+    in property <string> new-version;
+    in property <bool> update-available: false;
     callback repair();
+    callback update();
     callback uninstall();
-    // "" = choose · "repair"/"uninstall" = confirmation pending (cancelable).
+    // "" = choose · "repair"/"update"/"uninstall" = confirmation pending (cancelable).
     property <string> pending: "";
     spacing: 12px;
     Text { text: app-name; font-size: 26px; font-weight: 900; color: white; }
-    Text { text: "Already installed at:"; font-size: 12px; font-weight: 700; color: Pal.dim; }
+    Text {
+        text: "Installed" + (root.installed-version != "" ? "  ·  v" + root.installed-version : "");
+        font-size: 13px; color: Pal.dim;
+    }
     Text { text: location; font-size: 12px; color: Pal.text; wrap: word-wrap; }
-    Rectangle { height: 18px; }
+
+    // Update-available banner.
+    if root.update-available : Rectangle {
+        height: 34px;
+        background: #122b1c;
+        border-radius: 4px; border-width: 2px; border-color: #2bbf6a;
+        HorizontalLayout {
+            padding-left: 10px; padding-right: 12px; spacing: 8px; alignment: start;
+            Text {
+                text: "Update available: v" + root.installed-version + "  →  v" + root.new-version;
+                color: #8be0ab; font-size: 12px; font-weight: 700; vertical-alignment: center;
+            }
+        }
+    }
+    Rectangle { height: 10px; }
 
     if root.pending == "" : VerticalLayout {
         spacing: 12px;
         Text { text: "What would you like to do?"; font-size: 13px; font-weight: 700; color: Pal.dim; }
         HorizontalLayout {
             spacing: 12px;
-            BrutalBtn { text: "Repair / Update"; primary: true; clicked => { root.pending = "repair"; } }
+            // Update only appears when a newer version is bundled.
+            if root.update-available : BrutalBtn { text: "Update"; primary: true; clicked => { root.pending = "update"; } }
+            BrutalBtn { text: "Repair"; primary: !root.update-available; clicked => { root.pending = "repair"; } }
             BrutalBtn { text: "Uninstall"; clicked => { root.pending = "uninstall"; } }
             Rectangle { horizontal-stretch: 1; }
         }
@@ -464,16 +593,21 @@ component MaintenancePage inherits VerticalLayout {
         Text {
             text: root.pending == "uninstall"
                 ? "Uninstall " + root.app-name + "?  This removes all installed files."
-                : "Repair / update " + root.app-name + "?  Files will be re-extracted.";
+                : (root.pending == "update"
+                    ? "Update " + root.app-name + " to v" + root.new-version + "?"
+                    : "Repair " + root.app-name + "?  Files will be re-verified and restored.");
             font-size: 14px; font-weight: 700; color: Pal.text; wrap: word-wrap;
         }
         HorizontalLayout {
             spacing: 12px;
             BrutalBtn {
-                text: root.pending == "uninstall" ? "Yes, uninstall" : "Yes, repair";
+                text: root.pending == "uninstall" ? "Yes, uninstall"
+                    : (root.pending == "update" ? "Yes, update" : "Yes, repair");
                 primary: true;
                 clicked => {
-                    if (root.pending == "uninstall") { root.uninstall(); } else { root.repair(); }
+                    if (root.pending == "uninstall") { root.uninstall(); }
+                    else if (root.pending == "update") { root.update(); }
+                    else { root.repair(); }
                     root.pending = "";
                 }
             }
@@ -497,9 +631,15 @@ export component MainWindow inherits Window {
     in property <int> page: 0;
     in property <bool> maintenance: false;
     in property <string> install-location;
+    in property <string> installed-version;
+    in property <string> new-version;
+    in property <bool> update-available: false;
     in property <string> app-name: "Application";
     in property <string> app-version: "1.0.0";
     in property <string> publisher: "";
+    in property <bool> signed: false;
+    in property <string> signature-status;
+    in property <[LaunchRow]> launch-items;
     in-out property <string> install-dir;
     in property <[OptionRow]> options;
     in property <[CompRow]> components;
@@ -534,7 +674,10 @@ export component MainWindow inherits Window {
     callback option-select-changed(string, string);
     callback component-toggled(string, bool);
     callback legal-accept-toggled(bool);
+    callback browse-location();
+    callback launch-toggled(string, bool);
     callback repair();
+    callback update-app();
     callback uninstall-app();
     callback start-drag();
     callback minimize();
@@ -581,7 +724,11 @@ export component MainWindow inherits Window {
                         if root.page == 0 && root.maintenance : MaintenancePage {
                             app-name: root.app-name;
                             location: root.install-location;
+                            installed-version: root.installed-version;
+                            new-version: root.app-version;
+                            update-available: root.update-available;
                             repair => { root.repair(); }
+                            update => { root.update-app(); }
                             uninstall => { root.uninstall-app(); }
                         }
                         if root.page == 0 && !root.maintenance : WelcomePage {
@@ -589,9 +736,12 @@ export component MainWindow inherits Window {
                             app-version: root.app-version;
                             publisher: root.publisher;
                             loc-label: root.t-install-loc;
+                            signed: root.signed;
+                            signature-status: root.signature-status;
                             components: root.components;
                             install-dir <=> root.install-dir;
                             component-toggled(id, v) => { root.component-toggled(id, v); }
+                            browse => { root.browse-location(); }
                         }
                         if root.page == 1 : LegalPage {
                             doc-title: root.legal-title;
@@ -619,6 +769,8 @@ export component MainWindow inherits Window {
                             app-name: root.app-name;
                             success: root.success;
                             result-message: root.result-message;
+                            launch-items: root.launch-items;
+                            launch-toggled(id, v) => { root.launch-toggled(id, v); }
                         }
                     }
                     HorizontalLayout {

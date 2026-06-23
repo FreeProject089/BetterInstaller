@@ -1,28 +1,45 @@
 # ══════════════════════════════════════════════════════════════════
 # BetterInstaller config — Better Mods Manager (BMM)
-# Example project config: one TOML drives the whole installer.
+# One TOML drives the whole installer. See ../../GUIDE.md for every field.
 # ══════════════════════════════════════════════════════════════════
 
 [app]
-id        = "com.bettermm.app"
+id        = "com.bettermm.app"     # MUST match the app's data-dir identifier
 name      = "Better Mods Manager"
 version   = "1.0.0"
 publisher = "BetterCommunity"
 homepage  = "https://github.com/FreeProject089/BetterModsManager"
-platforms = ["windows"]            # BMM is Windows-only for now
+platforms = ["windows"]
 
 [branding]
-accent     = "#3b82f6"
+accent     = "#3b82f6"             # drives the installer accent color
 logo       = "assets/logo.png"
-background  = "assets/installer-bg.png"
+background = "assets/installer-bg.png"
 
 [install]
 default_dir      = "{ProgramFiles}/Better Mods Manager"
-main_exe         = "better-mods-manager.exe"   # for shortcuts + bmm:// protocol
+main_exe         = "better-mods-manager.exe"   # shortcuts + bmm:// protocol
 protocol         = "bmm"                        # registers bmm:// deep links
 create_shortcuts = true
 desktop_shortcut = true
 allow_portable   = true
+
+# ─── Package signature (trust) ───────────────────────────────────────
+# The installer refuses to install a package that isn't signed by this key.
+# Generate with:  bpkg keygen --out examples/bmm/keys
+# Then sign the package with examples/bmm/keys/private.key (build script does it).
+[security]
+public_key        = "8e0647c277dd67158d34dd1c10d0a2d97191716dc4f92aebde6d349d1c0f168b"
+require_signature = true
+
+# ─── Auto-update ─────────────────────────────────────────────────────
+# In maintenance mode the installer checks this manifest; if it advertises a
+# newer version, the "Update" button downloads + applies it (delta when offered,
+# with rollback on failure). Point it at a stable JSON URL you control.
+[update]
+manifest_url = "https://github.com/FreeProject089/BetterModsManager/releases/latest/download/update.json"
+auto_check   = true
+allow_delta  = true
 
 # ─── Optional components ─────────────────────────────────────────────
 [[components]]
@@ -40,7 +57,7 @@ description = "AI control server (Claude/ChatGPT via the MCP protocol)."
 required    = false
 default     = true
 size_mb     = 7
-paths       = ["bmm-mcp-server.exe", "mcp/"]   # files belonging to this component
+paths       = ["bmm-mcp-server.exe", "mcp/"]
 
 [[components]]
 id          = "cli"
@@ -51,8 +68,8 @@ default     = false
 size_mb     = 2
 
 # ─── First-run handoff (the headline feature) ────────────────────────
-# The installer writes installer-handoff.json into BMM's app data; BMM reads it
-# ONCE on first launch → no privacy/ToS/language/tutorial modals.
+# Writes installer-handoff.json into BMM's app data; BMM reads it ONCE on first
+# launch → no privacy/ToS/language/tutorial modals.
 [handoff]
 enabled  = true
 file     = "installer-handoff.json"
@@ -65,7 +82,7 @@ label_key   = "setup.language"
 label       = "Language"
 description  = "Interface language for Better Mods Manager."
 choices     = ["auto", "en", "fr"]
-default     = "auto"                 # auto = detect OS language
+default     = "auto"                 # "auto" is resolved to the OS language
 maps_to     = "settings.language"
 
 [[setup_option]]
@@ -76,7 +93,7 @@ label       = "Terms of Service & Privacy"
 description  = "I accept the Terms of Service and the Privacy Policy. Required to continue."
 documents   = ["TOS.md", "PRIVACY.md"]
 required    = true
-maps_to     = ["settings.privacy_accepted", "settings.tos_accepted"]
+maps_to     = ["settings.tos_accepted", "settings.privacy_accepted"]
 
 [[setup_option]]
 id          = "skip_tutorial"
@@ -95,3 +112,39 @@ label       = "Anonymous telemetry"
 description  = "Opt-in. Sends anonymous usage data only — app version, OS, hardware specs (CPU/GPU/RAM), and which features you use. No personal data, no file contents, no account. You can turn it off later in Settings."
 default     = false                  # opt-in: never pre-checked
 maps_to     = "settings.telemetry"
+
+# Pre-import: bundled content the installer seeds on first launch. Checked by
+# default; unchecking it means BMM starts with only its built-in content.
+[[setup_option]]
+id          = "import_themes"
+type        = "bool"
+label_key   = "setup.importThemes"
+label       = "Import the starter theme pack"
+description  = "Adds a curated set of ready-made themes the first time BMM opens. Uncheck to keep only the built-in themes."
+default     = true
+maps_to     = "settings.import_starter_themes"
+
+[[setup_option]]
+id          = "import_languages"
+type        = "bool"
+label_key   = "setup.importLanguages"
+label       = "Import extra language packs"
+description  = "Installs the additional community translations bundled with this setup."
+default     = true
+maps_to     = "settings.import_extra_languages"
+
+# ─── Post-install launch (offered on the Done page) ──────────────────
+# The main app is pre-checked; the optional sidecar is opt-in and only shown
+# when its component was actually installed.
+[[launch]]
+id      = "app"
+label   = "Launch Better Mods Manager"
+exe     = "better-mods-manager.exe"
+default = true
+
+[[launch]]
+id        = "mcp"
+label     = "Start the MCP AI server now"
+exe       = "bmm-mcp-server.exe"
+default   = false
+component = "mcp-server"

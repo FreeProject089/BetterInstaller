@@ -82,6 +82,12 @@ pub trait PlatformOps {
     fn installed_dir(&self, _app_id: &str) -> Option<PathBuf> {
         None
     }
+
+    /// The currently-installed version string of `app_id`, if recorded (to decide
+    /// whether an update is available). Default: unknown.
+    fn installed_version(&self, _app_id: &str) -> Option<String> {
+        None
+    }
 }
 
 /// The backend for the OS this binary was built for.

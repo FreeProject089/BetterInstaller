@@ -46,6 +46,12 @@ slint::include_modules!();
 /// Pushes a legal document (by index) into the UI and gates the Next button.
 type RefreshLegal = Rc<dyn Fn(&MainWindow, usize)>;
 
+thread_local! {
+    /// The remote update manifest found by the background check (UI-thread only).
+    static REMOTE_MANIFEST: RefCell<Option<bpkg_core::update::UpdateManifest>> =
+        const { RefCell::new(None) };
+}
+
 fn main() -> anyhow::Result<()> {
     // `--uninstall` (from the ARP entry) opens the GUI straight in maintenance mode.
     let uninstall = std::env::args().any(|a| a == "--uninstall");
@@ -113,11 +119,28 @@ fn run_gui(
         })
         .unwrap_or_default();
 
+    let installed_version = plat.installed_version(&app_meta.id);
+    let update_available = installed_version
+        .as_deref()
+        .map(|iv| version_gt(&app_meta.version, iv))
+        .unwrap_or(false);
+
     let ui = MainWindow::new()?;
     if maintenance {
         ui.set_maintenance(true);
-        ui.set_install_location(install_location.to_string_lossy().to_string().into());
+        let loc = install_location.to_string_lossy().to_string();
+        ui.set_install_location(loc.clone().into());
+        ui.set_install_dir(loc.into()); // so post-action launch can resolve exes
+        if let Some(iv) = &installed_version {
+            ui.set_installed_version(iv.clone().into());
+        }
+        ui.set_update_available(update_available);
     }
+
+    // Signature / publisher trust badge (shown on the Welcome page).
+    let (signed, sig_status) = detect_signature(&cfg, package_path.as_deref());
+    ui.set_signed(signed);
+    ui.set_signature_status(sig_status.into());
     ui.set_app_name(cfg.app.name.clone().into());
     ui.set_app_version(cfg.app.version.clone().into());
     ui.set_publisher(cfg.app.publisher.clone().into());
@@ -157,6 +180,16 @@ fn run_gui(
     let setup_opts = Rc::new(cfg.setup_options.clone());
     let chosen: Rc<RefCell<BTreeMap<String, serde_json::Value>>> =
         Rc::new(RefCell::new(BTreeMap::new()));
+
+    // Post-install "launch now" items (opt-in checkboxes on the Done page).
+    let launch_cfg: Rc<Vec<bpkg_core::config::LaunchItem>> = Rc::new(cfg.launch.clone());
+    let launch_checked: Rc<RefCell<std::collections::HashMap<String, bool>>> =
+        Rc::new(RefCell::new(
+            cfg.launch
+                .iter()
+                .map(|l| (l.id.clone(), l.default))
+                .collect(),
+        ));
 
     // Legal: a license option with `documents` becomes the Terms step (text read
     // from the package). It's hidden from the Setup page; its acceptance is stored
@@ -307,9 +340,45 @@ fn run_gui(
     }
     {
         let w = ui.as_weak();
+        let launch_cfg = launch_cfg.clone();
+        let launch_checked = launch_checked.clone();
         ui.on_finish(move || {
-            let _ = w;
+            // Launch whatever the user opted into, then close.
+            if let Some(ui) = w.upgrade() {
+                let dir = PathBuf::from(ui.get_install_dir().to_string());
+                let checked = launch_checked.borrow();
+                for it in launch_cfg.iter() {
+                    if *checked.get(&it.id).unwrap_or(&false) {
+                        launch_detached(&dir.join(&it.exe));
+                    }
+                }
+            }
             let _ = slint::quit_event_loop();
+        });
+    }
+    {
+        let launch_checked = launch_checked.clone();
+        ui.on_launch_toggled(move |id, v| {
+            launch_checked.borrow_mut().insert(id.to_string(), v);
+        });
+    }
+    {
+        let w = ui.as_weak();
+        ui.on_browse_location(move || {
+            // Native folder picker (Windows uses the OS dialog).
+            if let Some(ui) = w.upgrade() {
+                let start = ui.get_install_dir().to_string();
+                let mut dlg = rfd::FileDialog::new().set_title("Choose install location");
+                let p = std::path::Path::new(&start);
+                if let Some(parent) = p.parent() {
+                    if parent.exists() {
+                        dlg = dlg.set_directory(parent);
+                    }
+                }
+                if let Some(dir) = dlg.pick_folder() {
+                    ui.set_install_dir(dir.to_string_lossy().to_string().into());
+                }
+            }
         });
     }
 
@@ -438,7 +507,32 @@ fn run_gui(
     let integ_maint = integ.clone();
     let comps_maint = chosen_components.clone();
     let loc_repair = install_location.clone();
+    let loc_update = install_location.clone();
     let loc_uninstall = install_location.clone();
+    // The version to compare/patch from (what's installed, else the bundled one).
+    let current_version = installed_version
+        .clone()
+        .unwrap_or_else(|| app_meta.version.clone());
+
+    // Remote update: if configured, check the manifest in the background and flip
+    // the maintenance "Update" button on when a newer version is published online.
+    if maintenance {
+        if let Some(uc) = cfg.update.as_ref().filter(|u| u.auto_check) {
+            let url = uc.manifest_url.clone();
+            let cur = current_version.clone();
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                if let Ok(Some(m)) = bpkg_core::update::check_remote(&url, &cur) {
+                    let newv = m.version.clone();
+                    let _ = weak.upgrade_in_event_loop(move |ui| {
+                        ui.set_update_available(true);
+                        ui.set_new_version(newv.into());
+                        REMOTE_MANIFEST.with(|c| *c.borrow_mut() = Some(m));
+                    });
+                }
+            });
+        }
+    }
 
     let prog_timer: Rc<RefCell<Option<Timer>>> = Rc::new(RefCell::new(None));
     {
@@ -447,6 +541,8 @@ fn run_gui(
         let chosen_components = chosen_components.clone();
         let opts = setup_opts.clone();
         let prog_timer = prog_timer.clone();
+        let launch_cfg = launch_cfg.clone();
+        let launch_checked = launch_checked.clone();
         ui.on_install(move || {
             let ui = match w.upgrade() {
                 Some(u) => u,
@@ -457,13 +553,36 @@ fn run_gui(
             let mut message = String::new();
             let mut ok = true;
             if let Some(h) = handoff_cfg.as_ref().filter(|h| h.enabled) {
-                let doc = handoff::build(
+                // Resolve a still-"auto" select (e.g. language) to the detected OS
+                // value. Without this, leaving the default "auto" means the app never
+                // receives a concrete language/select choice (the "selects not applied"
+                // bug). "auto" is the documented language sentinel.
+                {
+                    let detected = bpkg_core::i18n::detect_lang();
+                    let mut ch = chosen.borrow_mut();
+                    for opt in opts.iter() {
+                        if matches!(opt.kind, SetupOptionKind::Select) {
+                            let eff = ch
+                                .get(&opt.id)
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string)
+                                .unwrap_or_else(|| {
+                                    opt.default.as_str().unwrap_or_default().to_string()
+                                });
+                            if eff == "auto" {
+                                ch.insert(opt.id.clone(), serde_json::json!(detected.clone()));
+                            }
+                        }
+                    }
+                }
+                let mut doc = handoff::build(
                     &opts,
                     &chosen.borrow(),
                     chosen_components.borrow().clone(),
                     &app_version,
                     bpkg_core::VERSION,
                 );
+                doc.install_dir = ui.get_install_dir().to_string();
                 let dir = match h.location {
                     bpkg_core::config::HandoffLocation::AppData => app_data_dir.clone(),
                     bpkg_core::config::HandoffLocation::InstallDir => {
@@ -495,6 +614,8 @@ fn run_gui(
                     let handoff_msg = message.clone();
                     let handoff_ok = ok;
                     let integ = integ.clone();
+                    // Build the launch rows on the UI thread (Rc isn't Send).
+                    let lrows = launch_rows(&launch_cfg, &launch_checked.borrow(), &comps);
                     std::thread::spawn(move || {
                         let result = run_real_install(weak.clone(), &pkg, &dest, &comps, &integ);
                         let _ = weak.upgrade_in_event_loop(move |ui| {
@@ -509,6 +630,7 @@ fn run_gui(
                                         )
                                         .into(),
                                     );
+                                    apply_launch_rows(&ui, lrows);
                                 }
                                 Err(e) => {
                                     ui.set_success(false);
@@ -555,13 +677,15 @@ fn run_gui(
         });
     }
 
-    // ── Maintenance: Repair (re-extract package) ────────────────────────
+    // ── Maintenance: Repair (re-verify + restore the same version) ──────
     {
         let w = ui.as_weak();
-        let pkg = pkg_maint;
-        let integ = integ_maint;
-        let comps = comps_maint;
+        let pkg = pkg_maint.clone();
+        let integ = integ_maint.clone();
+        let comps = comps_maint.clone();
         let loc = loc_repair;
+        let launch_cfg = launch_cfg.clone();
+        let launch_checked = launch_checked.clone();
         ui.on_repair(move || {
             let ui = match w.upgrade() {
                 Some(u) => u,
@@ -576,33 +700,99 @@ fn run_gui(
                     return;
                 }
             };
-            ui.set_page(3);
-            ui.set_progress(0.0);
-            ui.set_progress_label("Repairing…".into());
-            let dest = loc.clone();
-            let comps = comps.borrow().clone();
-            let integ = integ.clone();
-            let weak = ui.as_weak();
-            std::thread::spawn(move || {
-                let result = run_real_install(weak.clone(), &pkg, &dest, &comps, &integ);
-                let _ = weak.upgrade_in_event_loop(move |ui| {
-                    match result {
-                        Ok(n) => {
-                            ui.set_success(true);
-                            ui.set_result_message(
-                                format!("Repaired: {n} files restored in {}", dest.display())
+            let comps_v = comps.borrow().clone();
+            let lrows = launch_rows(&launch_cfg, &launch_checked.borrow(), &comps_v);
+            spawn_reinstall(
+                &ui,
+                pkg,
+                loc.clone(),
+                comps_v,
+                integ.clone(),
+                lrows,
+                "Repairing",
+                "Repaired",
+            );
+        });
+    }
+
+    // ── Maintenance: Update — remote (download + delta + rollback) when a
+    //    manifest is configured & newer, else re-extract the bundled package. ──
+    {
+        let w = ui.as_weak();
+        let pkg = pkg_maint;
+        let integ = integ_maint;
+        let comps = comps_maint;
+        let loc = loc_update;
+        let cur = current_version.clone();
+        let launch_cfg = launch_cfg.clone();
+        let launch_checked = launch_checked.clone();
+        ui.on_update_app(move || {
+            let ui = match w.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            let comps_v = comps.borrow().clone();
+
+            // Preferred path: a configured remote update was found.
+            if let Some(m) = REMOTE_MANIFEST.with(|c| c.borrow().clone()) {
+                let lrows = launch_rows(&launch_cfg, &launch_checked.borrow(), &comps_v);
+                ui.set_page(3);
+                ui.set_progress(0.2);
+                ui.set_progress_label(format!("Downloading v{}…", m.version).into());
+                let dir = loc.clone();
+                let cur = cur.clone();
+                let cur_bpkg = pkg.clone();
+                let weak = ui.as_weak();
+                std::thread::spawn(move || {
+                    let res =
+                        bpkg_core::update::download_and_apply(&m, &cur, cur_bpkg.as_deref(), &dir);
+                    let _ = weak.upgrade_in_event_loop(move |ui| {
+                        match res {
+                            Ok(n) => {
+                                ui.set_success(true);
+                                ui.set_result_message(
+                                    format!(
+                                        "Updated to v{}: {n} files in {}",
+                                        m.version,
+                                        dir.display()
+                                    )
                                     .into(),
-                            );
+                                );
+                                apply_launch_rows(&ui, lrows);
+                            }
+                            Err(e) => {
+                                ui.set_success(false);
+                                ui.set_result_message(format!("Update failed: {e}").into());
+                            }
                         }
-                        Err(e) => {
-                            ui.set_success(false);
-                            ui.set_result_message(format!("Repair failed: {e}").into());
-                        }
-                    }
-                    ui.set_progress(1.0);
-                    ui.set_page(4);
+                        ui.set_progress(1.0);
+                        ui.set_page(4);
+                    });
                 });
-            });
+                return;
+            }
+
+            // Fallback: re-extract the (newer) bundled package.
+            let pkg = match &pkg {
+                Some(p) => p.clone(),
+                None => {
+                    ui.set_success(false);
+                    ui.set_result_message("No update package available.".into());
+                    ui.set_page(4);
+                    return;
+                }
+            };
+            let lrows = launch_rows(&launch_cfg, &launch_checked.borrow(), &comps_v);
+            spawn_reinstall(
+                &ui,
+                pkg,
+                loc.clone(),
+                comps_v,
+                integ.clone(),
+                lrows,
+                "Updating",
+                "Updated",
+            );
         });
     }
 
@@ -843,6 +1033,154 @@ fn remove_dir_except(dir: &Path, keep: &Path) {
             }
         }
     }
+}
+
+/// Whether package signature `status` should show the package as trusted, and the
+/// human label for the Welcome-page badge.
+fn detect_signature(cfg: &InstallerConfig, pkg: Option<&Path>) -> (bool, String) {
+    let publisher = cfg.app.publisher.as_str();
+    let pkg = match pkg {
+        Some(p) => p,
+        None => return (false, "Unsigned (developer preview)".into()),
+    };
+    let mut p = match Package::open(pkg) {
+        Ok(p) => p,
+        Err(_) => return (false, "Package unreadable".into()),
+    };
+    if !p.is_signed() {
+        return (
+            false,
+            format!("Unsigned package  ·  publisher: {publisher}"),
+        );
+    }
+    if let Some(pk) = cfg.security.as_ref().and_then(|s| s.public_key.as_ref()) {
+        match bpkg_core::sign::parse_public(pk).and_then(|vk| p.verify_signature(&vk)) {
+            Ok(true) => return (true, format!("Signed & verified  ·  {publisher}")),
+            _ => {
+                return (
+                    false,
+                    "Signature INVALID — do not trust this package".into(),
+                )
+            }
+        }
+    }
+    (true, format!("Signed  ·  {publisher}"))
+}
+
+/// Compare dotted version strings numerically: is `a` newer than `b`?
+fn version_gt(a: &str, b: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.split(['.', '-', '+'])
+            .map(|p| p.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let (va, vb) = (parse(a), parse(b));
+    for i in 0..va.len().max(vb.len()) {
+        let x = va.get(i).copied().unwrap_or(0);
+        let y = vb.get(i).copied().unwrap_or(0);
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+/// Spawn `exe` detached (no console window, survives the installer closing).
+fn launch_detached(exe: &Path) {
+    if !exe.exists() {
+        return;
+    }
+    let dir = exe.parent().unwrap_or_else(|| Path::new("."));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        let _ = std::process::Command::new(exe)
+            .current_dir(dir)
+            .creation_flags(DETACHED_PROCESS)
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new(exe).current_dir(dir).spawn();
+    }
+}
+
+/// Filter the configured launch items to those whose component was installed, and
+/// resolve each one's checked state. Returns plain (id, label, checked) — `Send`,
+/// so it can cross into the worker thread.
+fn launch_rows(
+    cfg: &[bpkg_core::config::LaunchItem],
+    checked: &std::collections::HashMap<String, bool>,
+    installed: &[String],
+) -> Vec<(String, String, bool)> {
+    cfg.iter()
+        .filter(|l| {
+            l.component
+                .as_ref()
+                .map(|c| installed.iter().any(|ic| ic == c))
+                .unwrap_or(true)
+        })
+        .map(|l| {
+            (
+                l.id.clone(),
+                l.label.clone(),
+                *checked.get(&l.id).unwrap_or(&l.default),
+            )
+        })
+        .collect()
+}
+
+/// Push pre-computed launch rows into the Done-page model.
+fn apply_launch_rows(ui: &MainWindow, rows: Vec<(String, String, bool)>) {
+    let model: Vec<LaunchRow> = rows
+        .into_iter()
+        .map(|(id, label, checked)| LaunchRow {
+            id: id.into(),
+            label: label.into(),
+            checked,
+        })
+        .collect();
+    ui.set_launch_items(ModelRc::from(Rc::new(VecModel::from(model))));
+}
+
+/// Re-extract the package into `dest` on a worker thread (Repair / Update), then
+/// surface the result + launch options on the Done page.
+#[allow(clippy::too_many_arguments)]
+fn spawn_reinstall(
+    ui: &MainWindow,
+    pkg: PathBuf,
+    dest: PathBuf,
+    comps: Vec<String>,
+    integ: SystemIntegration,
+    lrows: Vec<(String, String, bool)>,
+    progress_verb: &'static str,
+    done_verb: &'static str,
+) {
+    ui.set_page(3);
+    ui.set_progress(0.0);
+    ui.set_progress_label(format!("{progress_verb}…").into());
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let result = run_real_install(weak.clone(), &pkg, &dest, &comps, &integ);
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            match result {
+                Ok(n) => {
+                    ui.set_success(true);
+                    ui.set_result_message(
+                        format!("{done_verb}: {n} files in {}", dest.display()).into(),
+                    );
+                    apply_launch_rows(&ui, lrows);
+                }
+                Err(e) => {
+                    ui.set_success(false);
+                    ui.set_result_message(format!("{done_verb} failed: {e}").into());
+                }
+            }
+            ui.set_progress(1.0);
+            ui.set_page(4);
+        });
+    });
 }
 
 /// One legal document for the Terms step (title + rendered markdown blocks).

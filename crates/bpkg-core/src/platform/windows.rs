@@ -152,6 +152,16 @@ impl PlatformOps for WindowsOps {
         }
     }
 
+    fn installed_version(&self, app_id: &str) -> Option<String> {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let key = hkcu
+            .open_subkey(format!(
+                "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{app_id}"
+            ))
+            .ok()?;
+        key.get_value("DisplayVersion").ok()
+    }
+
     fn add_to_path(&self, dir: &Path) -> Result<()> {
         // Append to the per-user PATH (HKCU\Environment).
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);

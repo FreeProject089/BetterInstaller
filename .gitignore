@@ -5,8 +5,10 @@ Cargo.lock.bak
 
 # Generated packages / keys (never commit signing keys)
 *.bpkg
-/keys/
+**/keys/
+private.key
 *.private.key
+public.key
 
 # Built example installers + assembled payloads (artifacts)
 examples/**/payload/
