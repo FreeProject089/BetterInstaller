@@ -1,93 +1,331 @@
-import { Button, CheckBox, ComboBox, LineEdit, ProgressIndicator, ScrollView } from "std-widgets.slint";
+import { ComboBox, ScrollView } from "std-widgets.slint";
 
-// One configurable option presented on the Setup page, mirrored from the
-// project's [[setup_option]] declarations in installer.toml.
+// Brutalist BMM palette: dark navy + BMM blue (#3b82f6), thick borders, hard
+// (zero-blur) offset shadows, flat fills, bold type.
+global Pal {
+    out property <color> bg: #0d1117;
+    out property <color> panel: #161b22;
+    out property <color> panel2: #1c2333;
+    out property <color> border: #2f3b52;
+    out property <color> accent: #3b82f6;
+    out property <color> accent-dark: #1e3a8a;
+    out property <color> accent-hover: #4b8ef8;
+    out property <color> text: #e6edf3;
+    out property <color> dim: #8b95a7;
+    out property <color> danger: #e3342f;
+    out property <color> shadow: #04060b;
+}
+
 export struct OptionRow {
     id: string,
-    kind: string,        // "select" | "bool" | "license"
+    kind: string,
     label: string,
+    description: string,
     choices: [string],
     bool-value: bool,
     string-value: string,
 }
 
-// ── Step indicator ──────────────────────────────────────────────────────
+export struct CompRow {
+    id: string,
+    name: string,
+    description: string,
+    size: string,
+    required: bool,
+    checked: bool,
+}
+
+// A rendered markdown block. level: 0 paragraph · 1/2/3 heading · 4 bullet.
+export struct MdBlock {
+    text: string,
+    level: int,
+}
+
+// ── Brutalist button: thick border + hard shadow that "presses in" on click ──
+component BrutalBtn inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: 42px;
+    min-width: 104px;
+    border-radius: 4px;
+    border-width: 2px;
+    border-color: !enabled ? Pal.border : (primary ? Pal.accent-dark : Pal.border);
+    background: !enabled ? Pal.panel2
+        : (primary ? (ta.has-hover ? Pal.accent-hover : Pal.accent)
+                   : (ta.has-hover ? Pal.panel2 : Pal.panel));
+    drop-shadow-offset-x: (ta.pressed && enabled) ? 0px : 4px;
+    drop-shadow-offset-y: (ta.pressed && enabled) ? 0px : 4px;
+    drop-shadow-blur: 0px;
+    drop-shadow-color: primary ? #142a63 : Pal.shadow;
+    animate drop-shadow-offset-x, drop-shadow-offset-y { duration: 60ms; }
+    HorizontalLayout {
+        alignment: center;
+        spacing: 8px;
+        Text {
+            text: root.text;
+            color: !root.enabled ? #5b6577 : (root.primary ? white : Pal.text);
+            font-size: 14px;
+            font-weight: 800;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// ── Brutalist checkbox ──
+component BrutalCheck inherits Rectangle {
+    in-out property <bool> checked;
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback toggled;
+    height: 26px;
+    opacity: root.enabled ? 1.0 : 0.55;
+    HorizontalLayout {
+        spacing: 10px;
+        Rectangle {
+            width: 22px;
+            height: 22px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            border-width: 2px;
+            border-color: root.checked ? Pal.accent : Pal.border;
+            background: root.checked ? Pal.accent : Pal.bg;
+            Path {
+                visible: root.checked;
+                width: 14px;
+                height: 14px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                commands: "M 2 7 L 6 11 L 12 2";
+                stroke: white;
+                stroke-width: 2px;
+                fill: transparent;
+            }
+        }
+        if root.text != "" : Text {
+            text: root.text;
+            color: Pal.text;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.checked = !root.checked; root.toggled(); }
+    }
+}
+
+// ── Window control button (minimize / maximize / close) ──
+component WinBtn inherits Rectangle {
+    in property <string> kind;   // "min" | "max" | "close"
+    callback clicked;
+    width: 46px;
+    background: ta.has-hover ? (root.kind == "close" ? Pal.danger : Pal.panel2) : transparent;
+    Path {
+        width: 12px;
+        height: 12px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        stroke: white;
+        stroke-width: 1.6px;
+        fill: transparent;
+        commands: root.kind == "min" ? "M 1 6 L 11 6"
+                : root.kind == "max" ? "M 1 1 L 11 1 L 11 11 L 1 11 Z"
+                : "M 1 1 L 11 11 M 11 1 L 1 11";
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// ── Custom title bar (drag + window controls) ──
+component TitleBar inherits Rectangle {
+    in property <string> title;
+    callback start-drag();
+    callback minimize();
+    callback toggle-maximize();
+    callback close-window();
+    height: 42px;
+    background: #0a0d13;
+    Rectangle { y: parent.height - 2px; height: 2px; background: Pal.accent; } // bottom accent rule
+    HorizontalLayout {
+        drag := TouchArea {
+            horizontal-stretch: 1;
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                    root.start-drag();
+                }
+            }
+            HorizontalLayout {
+                padding-left: 14px;
+                spacing: 9px;
+                alignment: start;
+                Rectangle {
+                    width: 16px; height: 16px;
+                    y: (parent.height - self.height) / 2;
+                    background: Pal.accent; border-radius: 3px;
+                    border-width: 2px; border-color: Pal.accent-dark;
+                }
+                Text {
+                    text: root.title;
+                    color: white; font-size: 13px; font-weight: 800;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        WinBtn { kind: "min"; clicked => { root.minimize(); } }
+        WinBtn { kind: "max"; clicked => { root.toggle-maximize(); } }
+        WinBtn { kind: "close"; clicked => { root.close-window(); } }
+    }
+}
+
+// ── Sidebar step indicator (brutalist square) ──
 component StepItem inherits HorizontalLayout {
     in property <string> label;
     in property <int> index;
     in property <int> current;
-    in property <color> accent;
-    spacing: 10px;
+    spacing: 11px;
     Rectangle {
-        width: 10px;
-        height: 10px;
-        border-radius: 5px;
-        y: 4px;
-        background: index <= current ? accent : #2a2f3c;
+        width: 14px; height: 14px; y: 3px;
+        border-radius: 3px;
+        border-width: 2px;
+        border-color: index <= current ? Pal.accent : Pal.border;
+        background: index < current ? Pal.accent : (index == current ? Pal.accent : transparent);
     }
     Text {
         text: label;
         font-size: 13px;
-        color: index == current ? white : #6b7280;
-        font-weight: index == current ? 700 : 400;
+        color: index == current ? white : Pal.dim;
+        font-weight: index == current ? 800 : 500;
     }
 }
 
-// ── Pages ───────────────────────────────────────────────────────────────
+// ── Pages ──
 component WelcomePage inherits VerticalLayout {
     in property <string> app-name;
     in property <string> app-version;
     in property <string> publisher;
     in property <string> loc-label: "Install location";
+    in property <[CompRow]> components;
     in-out property <string> install-dir;
+    callback component-toggled(string, bool);
     spacing: 10px;
-    Text { text: "Install " + app-name; font-size: 24px; font-weight: 800; color: white; }
-    Text { text: "Version " + app-version + (publisher != "" ? "  ·  " + publisher : ""); font-size: 13px; color: #8b93a7; }
-    Rectangle { height: 16px; }
-    Text { text: loc-label; font-size: 12px; color: #8b93a7; }
-    LineEdit { text <=> install-dir; }
-    Rectangle { vertical-stretch: 1; }
+    Text { text: "Install " + app-name; font-size: 26px; font-weight: 900; color: white; }
+    Text { text: "Version " + app-version + (publisher != "" ? "  ·  " + publisher : ""); font-size: 13px; color: Pal.dim; }
+    Rectangle { height: 14px; }
+    Text { text: loc-label; font-size: 12px; font-weight: 700; color: Pal.dim; }
+    Rectangle {
+        height: 46px;
+        background: Pal.bg;
+        border-radius: 4px;
+        border-width: 2px;
+        border-color: Pal.border;
+        HorizontalLayout {
+            padding-left: 12px; padding-right: 12px;
+            TextInput {
+                text <=> install-dir;
+                color: Pal.text;
+                font-size: 13px;
+                vertical-alignment: center;
+                single-line: true;
+            }
+        }
+    }
+    if root.components.length > 0 : Text {
+        text: "Components"; font-size: 12px; font-weight: 700; color: Pal.dim;
+    }
+    ScrollView {
+        vertical-stretch: 1;
+        VerticalLayout {
+            spacing: 8px;
+            for c in components : Rectangle {
+                background: Pal.panel;
+                border-radius: 6px;
+                border-width: 2px;
+                border-color: Pal.border;
+                min-height: 50px;
+                HorizontalLayout {
+                    padding: 12px;
+                    spacing: 12px;
+                    BrutalCheck {
+                        y: (parent.height - self.height) / 2;
+                        checked: c.checked;
+                        enabled: !c.required;
+                        toggled => { component-toggled(c.id, self.checked); }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 3px;
+                        alignment: center;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: c.name; font-size: 13px; font-weight: 700; color: white; }
+                            if c.required : Text { text: "required"; font-size: 10px; font-weight: 700; color: Pal.accent; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text { text: c.size; font-size: 11px; color: Pal.dim; vertical-alignment: center; }
+                        }
+                        if c.description != "" : Text { text: c.description; font-size: 11px; color: Pal.dim; wrap: word-wrap; }
+                    }
+                }
+            }
+        }
+    }
 }
 
 component SetupPage inherits VerticalLayout {
     in property <[OptionRow]> options;
-    in property <color> accent;
     in property <string> title: "Configuration";
     in property <string> hint;
     in property <string> accept-label: "I accept";
     callback option-bool-changed(string, bool);
     callback option-select-changed(string, string);
     spacing: 8px;
-    Text { text: title; font-size: 20px; font-weight: 800; color: white; }
-    Text { text: hint; font-size: 12px; color: #8b93a7; wrap: word-wrap; }
-    Rectangle { height: 8px; }
+    Text { text: title; font-size: 22px; font-weight: 900; color: white; }
+    Text { text: hint; font-size: 12px; color: Pal.dim; wrap: word-wrap; }
+    Rectangle { height: 6px; }
     ScrollView {
         vertical-stretch: 1;
         VerticalLayout {
             spacing: 12px;
             for opt in options : Rectangle {
-                background: #161922;
-                border-radius: 8px;
-                height: opt.kind == "license" ? 86px : 52px;
+                background: Pal.panel;
+                border-radius: 6px;
+                border-width: 2px;
+                border-color: Pal.border;
+                drop-shadow-offset-x: 4px;
+                drop-shadow-offset-y: 4px;
+                drop-shadow-blur: 0px;
+                drop-shadow-color: Pal.shadow;
+                min-height: 58px;
                 HorizontalLayout {
-                    padding: 12px;
-                    spacing: 12px;
+                    padding: 16px;
+                    spacing: 14px;
                     VerticalLayout {
                         horizontal-stretch: 1;
-                        spacing: 4px;
-                        Text { text: opt.label; font-size: 13px; color: white; vertical-alignment: center; }
-                        if opt.kind == "license" : CheckBox {
+                        spacing: 5px;
+                        alignment: center;
+                        Text { text: opt.label; font-size: 14px; font-weight: 700; color: white; }
+                        if opt.description != "" : Text {
+                            text: opt.description; font-size: 11px; color: Pal.dim; wrap: word-wrap;
+                        }
+                        if opt.kind == "license" : BrutalCheck {
                             text: accept-label;
                             checked: opt.bool-value;
                             toggled => { option-bool-changed(opt.id, self.checked); }
                         }
                     }
-                    if opt.kind == "bool" : CheckBox {
+                    if opt.kind == "bool" : BrutalCheck {
                         checked: opt.bool-value;
                         toggled => { option-bool-changed(opt.id, self.checked); }
                     }
                     if opt.kind == "select" : ComboBox {
-                        width: 140px;
+                        width: 150px;
                         model: opt.choices;
                         current-value: opt.string-value;
                         selected(v) => { option-select-changed(opt.id, v); }
@@ -102,11 +340,24 @@ component ProgressPage inherits VerticalLayout {
     in property <float> progress;
     in property <string> progress-label;
     in property <string> installing-label: "Installing…";
-    spacing: 14px;
+    spacing: 16px;
     Rectangle { vertical-stretch: 1; }
-    Text { text: installing-label; font-size: 20px; font-weight: 800; color: white; horizontal-alignment: center; }
-    Text { text: progress-label; font-size: 12px; color: #8b93a7; horizontal-alignment: center; }
-    ProgressIndicator { progress: progress; height: 8px; }
+    Text { text: installing-label; font-size: 22px; font-weight: 900; color: white; horizontal-alignment: center; }
+    Text { text: progress-label; font-size: 12px; color: Pal.dim; horizontal-alignment: center; }
+    Rectangle {
+        height: 24px;
+        background: Pal.bg;
+        border-radius: 4px;
+        border-width: 2px;
+        border-color: Pal.border;
+        Rectangle {
+            x: 2px; y: 2px;
+            width: (parent.width - 4px) * root.progress;
+            height: parent.height - 4px;
+            background: Pal.accent;
+            border-radius: 2px;
+        }
+    }
     Rectangle { vertical-stretch: 1; }
 }
 
@@ -114,42 +365,90 @@ component CompletePage inherits VerticalLayout {
     in property <string> app-name;
     in property <bool> success;
     in property <string> result-message;
-    spacing: 12px;
+    spacing: 14px;
     Rectangle { vertical-stretch: 1; }
-    Text {
-        text: success ? "✓" : "✕";
-        font-size: 48px;
-        font-weight: 800;
-        color: success ? #22c55e : #ef4444;
-        horizontal-alignment: center;
+    Rectangle {
+        width: 64px; height: 64px;
+        x: (parent.width - self.width) / 2;
+        border-radius: 6px; border-width: 3px;
+        border-color: root.success ? #2bbf6a : Pal.danger;
+        background: root.success ? #143b27 : #3b1414;
+        Path {
+            width: 32px; height: 32px;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            stroke: root.success ? #36d27e : #ff6b6b; stroke-width: 3px; fill: transparent;
+            commands: root.success ? "M 5 16 L 13 24 L 27 6" : "M 6 6 L 26 26 M 26 6 L 6 26";
+        }
     }
     Text {
-        text: success ? app-name + " is installed" : "Installation failed";
-        font-size: 20px;
-        font-weight: 800;
-        color: white;
-        horizontal-alignment: center;
+        text: root.success ? app-name + " is installed" : "Installation failed";
+        font-size: 21px; font-weight: 900; color: white; horizontal-alignment: center;
     }
-    Text { text: result-message; font-size: 12px; color: #8b93a7; horizontal-alignment: center; wrap: word-wrap; }
+    Text { text: result-message; font-size: 12px; color: Pal.dim; horizontal-alignment: center; wrap: word-wrap; }
     Rectangle { vertical-stretch: 1; }
 }
 
-// ── Main window (defined last: Slint has no forward references) ──────────
+component LegalPage inherits VerticalLayout {
+    in property <string> doc-title;
+    in property <string> doc-text;
+    in property <int> index;
+    in property <int> count;
+    in property <bool> is-last;
+    in-out property <bool> accepted;
+    callback accept-toggled(bool);
+    spacing: 10px;
+    HorizontalLayout {
+        Text { text: doc-title; font-size: 22px; font-weight: 900; color: white; horizontal-stretch: 1; }
+        Text { text: "Doc " + (index + 1) + " / " + count; font-size: 12px; font-weight: 700; color: Pal.dim; vertical-alignment: center; }
+    }
+    Rectangle {
+        vertical-stretch: 1;
+        background: Pal.panel;
+        border-radius: 6px;
+        border-width: 2px;
+        border-color: Pal.border;
+        ScrollView {
+            VerticalLayout {
+                padding: 16px;
+                Text {
+                    text: root.doc-text;
+                    font-size: 12px;
+                    color: Pal.text;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+    if root.is-last : BrutalCheck {
+        text: "I have read and accept the Terms and the Privacy Policy.";
+        checked: root.accepted;
+        toggled => { root.accept-toggled(self.checked); }
+    }
+}
+
+// ── Main window (frameless: OS decorations disabled from Rust) ──
 export component MainWindow inherits Window {
     title: "BetterInstaller";
-    preferred-width: 780px;
-    preferred-height: 540px;
-    min-width: 680px;
-    min-height: 480px;
-    background: #0f1117;
+    preferred-width: 800px;
+    preferred-height: 560px;
+    min-width: 720px;
+    min-height: 520px;
+    background: Pal.bg;
+    no-frame: true;
 
-    // State driven from Rust
-    in property <int> page: 0;            // 0 welcome · 1 setup · 2 progress · 3 done
+    in property <int> page: 0;
     in property <string> app-name: "Application";
     in property <string> app-version: "1.0.0";
     in property <string> publisher: "";
     in-out property <string> install-dir;
     in property <[OptionRow]> options;
+    in property <[CompRow]> components;
+    in property <string> legal-title;
+    in property <string> legal-text;
+    in property <int> legal-index: 0;
+    in property <int> legal-count: 0;
+    in property <bool> legal-is-last: true;
+    in-out property <bool> legal-accepted: false;
     in property <float> progress: 0;
     in property <string> progress-label;
     in property <bool> can-proceed: true;
@@ -157,7 +456,6 @@ export component MainWindow inherits Window {
     in property <string> result-message;
     in property <color> accent: #3b82f6;
 
-    // i18n strings (set from Rust; English defaults)
     in property <string> t-next: "Next";
     in property <string> t-back: "Back";
     in property <string> t-install: "Install";
@@ -168,92 +466,115 @@ export component MainWindow inherits Window {
     in property <string> t-installing: "Installing…";
     in property <string> t-accept: "I accept";
 
-    // Callbacks to Rust
     callback go-back();
     callback go-next();
     callback install();
     callback finish();
     callback option-bool-changed(string, bool);
     callback option-select-changed(string, string);
+    callback component-toggled(string, bool);
+    callback legal-accept-toggled(bool);
+    callback start-drag();
+    callback minimize();
+    callback toggle-maximize();
+    callback close-window();
 
-    HorizontalLayout {
-        Rectangle {
-            width: 210px;
-            background: #161922;
-            VerticalLayout {
-                padding: 24px;
-                spacing: 6px;
-                Text { text: "BetterInstaller"; font-size: 15px; font-weight: 800; color: white; }
-                Text { text: root.app-name; font-size: 12px; color: #8b93a7; wrap: word-wrap; }
-                Rectangle { height: 18px; }
+    VerticalLayout {
+        TitleBar {
+            title: "BetterInstaller  —  " + root.app-name;
+            start-drag => { root.start-drag(); }
+            minimize => { root.minimize(); }
+            toggle-maximize => { root.toggle-maximize(); }
+            close-window => { root.close-window(); }
+        }
+        HorizontalLayout {
+            // Sidebar
+            Rectangle {
+                width: 216px;
+                background: #11151d;
+                Rectangle { x: parent.width - 2px; width: 2px; background: Pal.border; }
                 VerticalLayout {
-                    spacing: 14px;
-                    StepItem { label: "Welcome"; index: 0; current: root.page; accent: root.accent; }
-                    StepItem { label: "Setup";   index: 1; current: root.page; accent: root.accent; }
-                    StepItem { label: "Install"; index: 2; current: root.page; accent: root.accent; }
-                    StepItem { label: "Done";    index: 3; current: root.page; accent: root.accent; }
+                    padding: 24px;
+                    spacing: 6px;
+                    Text { text: "BetterInstaller"; font-size: 16px; font-weight: 900; color: white; }
+                    Text { text: root.app-name; font-size: 11px; color: Pal.dim; wrap: word-wrap; }
+                    Rectangle { height: 20px; }
+                    VerticalLayout {
+                        spacing: 16px;
+                        StepItem { label: "Welcome"; index: 0; current: root.page; }
+                        if root.legal-count > 0 : StepItem { label: "Terms"; index: 1; current: root.page; }
+                        StepItem { label: "Setup"; index: 2; current: root.page; }
+                        StepItem { label: "Install"; index: 3; current: root.page; }
+                        StepItem { label: "Done"; index: 4; current: root.page; }
+                    }
                 }
             }
-        }
-
-        Rectangle {
-            background: #0f1117;
-            VerticalLayout {
-                padding: 28px;
-
-                Rectangle {
-                    vertical-stretch: 1;
-                    if root.page == 0 : WelcomePage {
-                        app-name: root.app-name;
-                        app-version: root.app-version;
-                        publisher: root.publisher;
-                        loc-label: root.t-install-loc;
-                        install-dir <=> root.install-dir;
+            // Content
+            Rectangle {
+                background: Pal.bg;
+                VerticalLayout {
+                    padding: 28px;
+                    Rectangle {
+                        vertical-stretch: 1;
+                        if root.page == 0 : WelcomePage {
+                            app-name: root.app-name;
+                            app-version: root.app-version;
+                            publisher: root.publisher;
+                            loc-label: root.t-install-loc;
+                            components: root.components;
+                            install-dir <=> root.install-dir;
+                            component-toggled(id, v) => { root.component-toggled(id, v); }
+                        }
+                        if root.page == 1 : LegalPage {
+                            doc-title: root.legal-title;
+                            doc-text: root.legal-text;
+                            index: root.legal-index;
+                            count: root.legal-count;
+                            is-last: root.legal-is-last;
+                            accepted: root.legal-accepted;
+                            accept-toggled(v) => { root.legal-accept-toggled(v); }
+                        }
+                        if root.page == 2 : SetupPage {
+                            options: root.options;
+                            title: root.t-config-title;
+                            hint: root.t-config-hint;
+                            accept-label: root.t-accept;
+                            option-bool-changed(id, v) => { root.option-bool-changed(id, v); }
+                            option-select-changed(id, v) => { root.option-select-changed(id, v); }
+                        }
+                        if root.page == 3 : ProgressPage {
+                            progress: root.progress;
+                            progress-label: root.progress-label;
+                            installing-label: root.t-installing;
+                        }
+                        if root.page == 4 : CompletePage {
+                            app-name: root.app-name;
+                            success: root.success;
+                            result-message: root.result-message;
+                        }
                     }
-                    if root.page == 1 : SetupPage {
-                        options: root.options;
-                        accent: root.accent;
-                        title: root.t-config-title;
-                        hint: root.t-config-hint;
-                        accept-label: root.t-accept;
-                        option-bool-changed(id, v) => { root.option-bool-changed(id, v); }
-                        option-select-changed(id, v) => { root.option-select-changed(id, v); }
-                    }
-                    if root.page == 2 : ProgressPage {
-                        progress: root.progress;
-                        progress-label: root.progress-label;
-                        installing-label: root.t-installing;
-                    }
-                    if root.page == 3 : CompletePage {
-                        app-name: root.app-name;
-                        success: root.success;
-                        result-message: root.result-message;
-                    }
-                }
-
-                HorizontalLayout {
-                    height: 44px;
-                    spacing: 10px;
-                    Rectangle { horizontal-stretch: 1; }
-                    if root.page == 1 : Button {
-                        text: root.t-back;
-                        clicked => { root.go-back(); }
-                    }
-                    if root.page == 0 : Button {
-                        text: root.t-next;
-                        primary: true;
-                        clicked => { root.go-next(); }
-                    }
-                    if root.page == 1 : Button {
-                        text: root.t-install;
-                        primary: true;
-                        enabled: root.can-proceed;
-                        clicked => { root.install(); }
-                    }
-                    if root.page == 3 : Button {
-                        text: root.t-finish;
-                        primary: true;
-                        clicked => { root.finish(); }
+                    HorizontalLayout {
+                        height: 46px;
+                        spacing: 12px;
+                        Rectangle { horizontal-stretch: 1; }
+                        if root.page == 1 || root.page == 2 : BrutalBtn {
+                            text: root.t-back;
+                            clicked => { root.go-back(); }
+                        }
+                        if root.page == 0 || root.page == 1 : BrutalBtn {
+                            text: root.t-next; primary: true;
+                            enabled: root.can-proceed;
+                            clicked => { root.go-next(); }
+                        }
+                        if root.page == 2 : BrutalBtn {
+                            text: root.t-install; primary: true;
+                            enabled: root.can-proceed;
+                            clicked => { root.install(); }
+                        }
+                        if root.page == 4 : BrutalBtn {
+                            text: root.t-finish; primary: true;
+                            clicked => { root.finish(); }
+                        }
                     }
                 }
             }

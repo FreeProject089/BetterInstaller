@@ -201,3 +201,64 @@ and self-deletes the uninstaller.
   `.bpkg`/patches; the installer/app calls `fetch-update`.
 - **Uninstall** removes what the install created/declared; files an app writes at runtime
   outside the install dir are the app's responsibility (same as NSIS/MSI).
+- **Admin rights**: the installer is `asInvoker` (no UAC), so it installs **per-user** by
+  default (`%LOCALAPPDATA%\Programs\<name>`, writable without admin). Installing into
+  `C:\Program Files` needs an **elevated** installer — the GUI shows a clear error if you
+  pick a folder you can't write to. (Per-machine/elevated builds are on the roadmap.)
+
+---
+
+## Appendix A — `bpkg` command reference
+
+| Command | What it does |
+|---|---|
+| `bpkg pack --root <dir> --config <toml> --out <bpkg>` | Build a `.bpkg` from a folder (component-aware via `[[components]].paths`). |
+| `bpkg info <bpkg>` | Print app metadata + components. |
+| `bpkg verify <bpkg> [--key <public.key>]` | Verify every file's SHA-256 (and the Ed25519 signature with `--key`). |
+| `bpkg extract <bpkg> --dest <dir> [--components a,b]` | Extract files (optionally only some components). |
+| `bpkg install <bpkg> --dest <dir> [--components a,b]` | Verify + extract with a progress bar (the GUI's path). |
+| `bpkg keygen --out <dir>` | Generate an Ed25519 keypair (`private.key` + `public.key`). |
+| `bpkg sign <bpkg> --key <private.key>` | Sign a package in place. |
+| `bpkg build --installer <exe> --config <toml> --package <bpkg> --out <Setup.exe>` | Stamp config + package into one self-extracting installer. |
+| `bpkg update <bpkg> --dir <install>` | Update an install from a local package (atomic rollback). |
+| `bpkg fetch-update --url <manifest> --dir <install> --current <ver>` | Check a remote manifest, download (delta if available) + apply. |
+| `bpkg delta --old <bpkg> --new <bpkg> --out <patch>` | Create a binary delta patch (≈1% of the new file). |
+| `bpkg apply-delta --old <bpkg> --patch <patch> --out <bpkg>` | Reconstruct the new file from old + patch. |
+
+The GUI binary: `betterinstaller <installer.toml> [package.bpkg]` (dev), `betterinstaller --uninstall`
+(reverse an install), or a stamped `Setup.exe` (no args — uses the embedded blob).
+
+## Appendix B — `installer.toml` reference
+
+**`[app]`** — `id` (reverse-DNS), `name`, `version`, `publisher`, `homepage?`, `platforms` (`["windows"|"linux"|"macos"]`).
+
+**`[branding]`** — `accent?` (hex color), `logo?`, `background?`.
+
+**`[install]`** — `default_dir?` (placeholders: `{ProgramFiles}`, …), `main_exe?` (relative, for shortcuts/protocol), `protocol?` (URL scheme), `create_shortcuts` (bool), `desktop_shortcut` (bool), `allow_portable` (bool).
+
+**`[[components]]`** — `id`, `name`, `description?`, `required` (bool), `default` (bool), `size_mb`, `paths` (payload prefixes that belong to this component; unmatched files = core).
+
+**`[handoff]`** — `enabled` (bool), `file` (default `installer-handoff.json`), `location` (`app_data`|`install_dir`).
+
+**`[[setup_option]]`** — `id`, `type` (`select`|`bool`|`license`), `label?` (display text), `label_key` (i18n key), `description?` (one-line transparency text under the label), `choices` (for `select`), `default` (JSON value), `documents` (for `license`), `required` (bool), `maps_to` (one key or a list → `settings.*` in the handoff).
+
+**`[security]`** — `public_key?` (hex Ed25519; enforce the package signature), `require_signature` (bool).
+
+**`[[prerequisite]]`** — `id`, `name`, one of `check_registry` / `check_file` / `check_command`, `download_url?` + `silent_args?` (auto-install when missing), `required` (bool).
+
+## Appendix C — `bpkg-core` modules
+
+| Module | Responsibility |
+|---|---|
+| `package` | `.bpkg` format: `format` (header), `writer` (`create_from_dir`), `reader` (`Package`: verify / extract / `install_with_progress` / signature). |
+| `manifest` | The in-package JSON manifest (app + files + components + SHA-256). |
+| `config` | `installer.toml` model + parsing. |
+| `handoff` | `installer-handoff.json` contract + `build()` from setup options. |
+| `sign` | Ed25519 keygen / sign / verify (hex keys). |
+| `embed` | Self-extracting stamp / read (trailer magic `BPKGSFX1`). |
+| `update` | Local + remote apply with atomic rollback; `UpdateManifest`, `check_remote`, `download_and_apply`, `is_newer`. |
+| `delta` | bsdiff `make_delta` / `apply_delta` (via `qbsdiff`). |
+| `net` | Blocking HTTP (`fetch_text` / `download`, rustls). |
+| `prereq` | `check` / `ensure_required` / `auto_install`. |
+| `platform` | `PlatformOps` trait + `windows` / `linux` / `macos` backends. |
+| `i18n` | Compiled-in en/fr UI strings (`t`, `detect_lang`). |

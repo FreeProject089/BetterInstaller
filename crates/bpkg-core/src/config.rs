@@ -217,6 +217,13 @@ pub struct SetupOption {
     pub kind: SetupOptionKind,
     /// i18n key for the label.
     pub label_key: String,
+    /// Direct display label (overrides the humanized `label_key`).
+    #[serde(default)]
+    pub label: Option<String>,
+    /// One-line explanation shown under the label (e.g. exactly what telemetry
+    /// sends, or what accepting the terms means). Transparency.
+    #[serde(default)]
+    pub description: Option<String>,
     /// For `select`: allowed choices. "auto" may be used as a sentinel (e.g. OS language).
     #[serde(default)]
     pub choices: Vec<String>,

@@ -34,6 +34,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 slint = "1"
 slint-build = "1"
+i-slint-backend-winit = "1.16"
 embed-manifest = "1"
 
 # Smaller, faster release binary — the installer must stay tiny (<5 MB target).

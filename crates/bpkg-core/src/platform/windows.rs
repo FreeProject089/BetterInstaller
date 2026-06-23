@@ -42,7 +42,12 @@ impl PlatformOps for WindowsOps {
     }
 
     fn default_install_dir(&self, app: &AppMeta) -> PathBuf {
-        env_dir("ProgramFiles", "C:\\Program Files").join(&app.name)
+        // Per-user, writable WITHOUT admin (matches the asInvoker manifest):
+        // %LOCALAPPDATA%\Programs\<name>. Installing into Program Files would need
+        // an elevated (requireAdministrator) build.
+        env_dir("LOCALAPPDATA", "C:\\Users\\Default\\AppData\\Local")
+            .join("Programs")
+            .join(&app.name)
     }
 
     fn app_data_dir(&self, app: &AppMeta) -> PathBuf {

@@ -59,31 +59,39 @@ file     = "installer-handoff.json"
 location = "app_data"
 
 [[setup_option]]
-id        = "language"
-type      = "select"
-label_key = "setup.language"
-choices   = ["auto", "en", "fr"]
-default   = "auto"                 # auto = detect OS language
-maps_to   = "settings.language"
+id          = "language"
+type        = "select"
+label_key   = "setup.language"
+label       = "Language"
+description  = "Interface language for Better Mods Manager."
+choices     = ["auto", "en", "fr"]
+default     = "auto"                 # auto = detect OS language
+maps_to     = "settings.language"
 
 [[setup_option]]
-id        = "legal"
-type      = "license"
-label_key = "setup.acceptLegal"
-documents = ["PRIVACY.md", "TOS.md"]
-required  = true
-maps_to   = ["settings.privacy_accepted", "settings.tos_accepted"]
+id          = "legal"
+type        = "license"
+label_key   = "setup.acceptLegal"
+label       = "Terms of Service & Privacy"
+description  = "I accept the Terms of Service and the Privacy Policy. Required to continue."
+documents   = ["TOS.md", "PRIVACY.md"]
+required    = true
+maps_to     = ["settings.privacy_accepted", "settings.tos_accepted"]
 
 [[setup_option]]
-id        = "skip_tutorial"
-type      = "bool"
-label_key = "setup.skipTutorial"
-default   = false
-maps_to   = "settings.skip_tutorial"
+id          = "skip_tutorial"
+type        = "bool"
+label_key   = "setup.skipTutorial"
+label       = "Skip the interactive tutorial"
+description  = "Don't show the guided tour the first time BMM opens."
+default     = false
+maps_to     = "settings.skip_tutorial"
 
 [[setup_option]]
-id        = "telemetry"
-type      = "bool"
-label_key = "setup.telemetry"
-default   = false                  # opt-in: never pre-checked
-maps_to   = "settings.telemetry"
+id          = "telemetry"
+type        = "bool"
+label_key   = "setup.telemetry"
+label       = "Anonymous telemetry"
+description  = "Opt-in. Sends anonymous usage data only — app version, OS, hardware specs (CPU/GPU/RAM), and which features you use. No personal data, no file contents, no account. You can turn it off later in Settings."
+default     = false                  # opt-in: never pre-checked
+maps_to     = "settings.telemetry"

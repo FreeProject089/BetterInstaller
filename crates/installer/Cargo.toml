@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 bpkg-core = { path = "../bpkg-core" }
 slint.workspace = true
+i-slint-backend-winit.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 

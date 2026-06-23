@@ -2679,6 +2679,7 @@ dependencies = [
  "anyhow",
  "bpkg-core",
  "embed-manifest",
+ "i-slint-backend-winit",
  "serde_json",
  "slint",
  "slint-build",

@@ -8,6 +8,10 @@ Cargo.lock.bak
 /keys/
 *.private.key
 
+# Built example installers + assembled payloads (artifacts)
+examples/**/payload/
+examples/**/*-Setup.exe
+
 # Editor / OS
 .DS_Store
 Thumbs.db

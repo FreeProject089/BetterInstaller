@@ -98,6 +98,21 @@ impl Package {
         })
     }
 
+    /// Read the raw bytes of specific payload files in one decompression pass
+    /// (used to show license documents before installing). Missing files are
+    /// simply absent from the result.
+    pub fn read_files(&mut self, paths: &[String]) -> Result<HashMap<String, Vec<u8>>> {
+        let want: std::collections::HashSet<&str> = paths.iter().map(|s| s.as_str()).collect();
+        let mut out = HashMap::new();
+        self.for_each_entry(|p, data| {
+            if want.contains(p) {
+                out.insert(p.to_string(), data.to_vec());
+            }
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
     /// Whether the package carries an Ed25519 signature.
     pub fn is_signed(&self) -> bool {
         self.header.flags & FLAG_SIGNED != 0

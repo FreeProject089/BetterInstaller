@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+use i_slint_backend_winit::WinitWindowAccessor;
 use slint::{
     Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak,
 };
@@ -41,6 +42,9 @@ struct SystemIntegration {
 }
 
 slint::include_modules!();
+
+/// Pushes a legal document (by index) into the UI and gates the Next button.
+type RefreshLegal = Rc<dyn Fn(&MainWindow, usize)>;
 
 fn main() -> anyhow::Result<()> {
     // Uninstall mode: triggered from the ARP "Uninstall" button
@@ -80,6 +84,12 @@ fn resolve_sources() -> anyhow::Result<(InstallerConfig, Option<PathBuf>)> {
 }
 
 fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Result<()> {
+    // Select the winit backend so the custom (frameless) title bar can drive the
+    // window (drag / minimize / maximize). Must run before any Slint window.
+    if let Ok(backend) = i_slint_backend_winit::Backend::new() {
+        let _ = slint::platform::set_platform(Box::new(backend));
+    }
+
     let plat = platform::current();
     let app_meta = AppMeta {
         id: cfg.app.id.clone(),
@@ -131,26 +141,137 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
     let chosen: Rc<RefCell<BTreeMap<String, serde_json::Value>>> =
         Rc::new(RefCell::new(BTreeMap::new()));
 
-    // Build the options model for the Configuration page.
-    let rows: Vec<OptionRow> = setup_opts.iter().map(to_row).collect();
+    // Legal: a license option with `documents` becomes the Terms step (text read
+    // from the package). It's hidden from the Setup page; its acceptance is stored
+    // in `chosen` so the handoff still records privacy/tos acceptance.
+    let legal_opt_id: Option<String> = cfg
+        .setup_options
+        .iter()
+        .find(|o| matches!(o.kind, SetupOptionKind::License) && !o.documents.is_empty())
+        .map(|o| o.id.clone());
+    let legal_docs: Rc<Vec<(String, String)>> =
+        Rc::new(load_legal_docs(&cfg, package_path.as_deref()));
+    let legal_count = legal_docs.len();
+    let legal_index: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+    let legal_accepted: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    ui.set_legal_count(legal_count as i32);
+
+    // Setup rows + the option list used for "can proceed" exclude the legal option.
+    let visible_opts: Rc<Vec<SetupOption>> = Rc::new(
+        cfg.setup_options
+            .iter()
+            .filter(|o| Some(&o.id) != legal_opt_id.as_ref())
+            .cloned()
+            .collect(),
+    );
+    let rows: Vec<OptionRow> = visible_opts.iter().map(to_row).collect();
     let model = Rc::new(VecModel::from(rows));
     ui.set_options(ModelRc::from(model.clone()));
-    ui.set_can_proceed(compute_can_proceed(&setup_opts, &chosen.borrow()));
+    ui.set_can_proceed(true); // Welcome's Next is always enabled
 
-    // ── Navigation ──────────────────────────────────────────────────────
+    // Push a legal document into the UI + gate the Next button.
+    let refresh_legal: RefreshLegal = Rc::new({
+        let docs = legal_docs.clone();
+        let acc = legal_accepted.clone();
+        move |ui: &MainWindow, idx: usize| {
+            if let Some((title, text)) = docs.get(idx) {
+                ui.set_legal_title(title.clone().into());
+                ui.set_legal_text(text.clone().into());
+            }
+            let last = idx + 1 >= docs.len();
+            ui.set_legal_index(idx as i32);
+            ui.set_legal_is_last(last);
+            ui.set_legal_accepted(*acc.borrow());
+            ui.set_can_proceed(!last || *acc.borrow());
+        }
+    });
+
+    // ── Navigation (page-aware: Welcome → Terms* → Setup → Install → Done) ──
     {
         let w = ui.as_weak();
+        let visible = visible_opts.clone();
+        let chosen = chosen.clone();
+        let refresh = refresh_legal.clone();
+        let li = legal_index.clone();
         ui.on_go_next(move || {
-            if let Some(ui) = w.upgrade() {
-                ui.set_page(1);
+            let ui = match w.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            match ui.get_page() {
+                0 => {
+                    if legal_count > 0 {
+                        *li.borrow_mut() = 0;
+                        refresh(&ui, 0);
+                        ui.set_page(1);
+                    } else {
+                        ui.set_can_proceed(compute_can_proceed(&visible, &chosen.borrow()));
+                        ui.set_page(2);
+                    }
+                }
+                1 => {
+                    let next = *li.borrow() + 1;
+                    if next < legal_count {
+                        *li.borrow_mut() = next;
+                        refresh(&ui, next);
+                    } else {
+                        ui.set_can_proceed(compute_can_proceed(&visible, &chosen.borrow()));
+                        ui.set_page(2);
+                    }
+                }
+                _ => {}
             }
         });
     }
     {
         let w = ui.as_weak();
+        let refresh = refresh_legal.clone();
+        let li = legal_index.clone();
         ui.on_go_back(move || {
+            let ui = match w.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            match ui.get_page() {
+                1 => {
+                    if *li.borrow() > 0 {
+                        let prev = *li.borrow() - 1;
+                        *li.borrow_mut() = prev;
+                        refresh(&ui, prev);
+                    } else {
+                        ui.set_can_proceed(true);
+                        ui.set_page(0);
+                    }
+                }
+                2 => {
+                    if legal_count > 0 {
+                        let last = legal_count - 1;
+                        *li.borrow_mut() = last;
+                        refresh(&ui, last);
+                        ui.set_page(1);
+                    } else {
+                        ui.set_can_proceed(true);
+                        ui.set_page(0);
+                    }
+                }
+                _ => {}
+            }
+        });
+    }
+    {
+        let w = ui.as_weak();
+        let acc = legal_accepted.clone();
+        let chosen = chosen.clone();
+        let li = legal_index.clone();
+        let legal_id = legal_opt_id.clone();
+        ui.on_legal_accept_toggled(move |v| {
+            *acc.borrow_mut() = v;
+            if let Some(id) = &legal_id {
+                chosen.borrow_mut().insert(id.clone(), serde_json::json!(v));
+            }
             if let Some(ui) = w.upgrade() {
-                ui.set_page(0);
+                let last = (*li.borrow() + 1) >= legal_count;
+                ui.set_can_proceed(!last || v);
             }
         });
     }
@@ -162,12 +283,44 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
         });
     }
 
+    // ── Custom title bar (frameless window controls + drag) ─────────────
+    {
+        let w = ui.as_weak();
+        ui.on_start_drag(move || {
+            if let Some(ui) = w.upgrade() {
+                ui.window().with_winit_window(|win| {
+                    let _ = win.drag_window();
+                });
+            }
+        });
+    }
+    {
+        let w = ui.as_weak();
+        ui.on_minimize(move || {
+            if let Some(ui) = w.upgrade() {
+                ui.window().with_winit_window(|win| win.set_minimized(true));
+            }
+        });
+    }
+    {
+        let w = ui.as_weak();
+        ui.on_toggle_maximize(move || {
+            if let Some(ui) = w.upgrade() {
+                ui.window()
+                    .with_winit_window(|win| win.set_maximized(!win.is_maximized()));
+            }
+        });
+    }
+    ui.on_close_window(|| {
+        let _ = slint::quit_event_loop();
+    });
+
     // ── Option changes ──────────────────────────────────────────────────
     {
         let w = ui.as_weak();
         let model = model.clone();
         let chosen = chosen.clone();
-        let opts = setup_opts.clone();
+        let opts = visible_opts.clone();
         ui.on_option_bool_changed(move |id, v| {
             chosen
                 .borrow_mut()
@@ -194,12 +347,45 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
     // isn't Clone, so resolve the handoff directory up front).
     let handoff_cfg = cfg.handoff.clone();
     let app_data_dir = plat.app_data_dir(&app_meta);
-    let components: Vec<String> = cfg
-        .components
-        .iter()
-        .filter(|c| c.required || c.default)
-        .map(|c| c.id.clone())
-        .collect();
+    // Live component selection (the user toggles optional ones on the Welcome page).
+    let chosen_components: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+        cfg.components
+            .iter()
+            .filter(|c| c.required || c.default)
+            .map(|c| c.id.clone())
+            .collect(),
+    ));
+    {
+        let comp_rows: Vec<CompRow> = cfg
+            .components
+            .iter()
+            .map(|c| CompRow {
+                id: c.id.clone().into(),
+                name: c.name.clone().into(),
+                description: c.description.clone().into(),
+                size: if c.size_mb > 0 {
+                    format!("{} MB", c.size_mb).into()
+                } else {
+                    SharedString::new()
+                },
+                required: c.required,
+                checked: c.required || c.default,
+            })
+            .collect();
+        ui.set_components(ModelRc::from(Rc::new(VecModel::from(comp_rows))));
+        let chosen = chosen_components.clone();
+        ui.on_component_toggled(move |id, checked| {
+            let id = id.to_string();
+            let mut v = chosen.borrow_mut();
+            if checked {
+                if !v.contains(&id) {
+                    v.push(id);
+                }
+            } else {
+                v.retain(|x| *x != id);
+            }
+        });
+    }
     let app_version = cfg.app.version.clone();
     let integ = SystemIntegration {
         app: app_meta.clone(),
@@ -220,6 +406,7 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
     {
         let w = ui.as_weak();
         let chosen = chosen.clone();
+        let chosen_components = chosen_components.clone();
         let opts = setup_opts.clone();
         let prog_timer = prog_timer.clone();
         ui.on_install(move || {
@@ -235,7 +422,7 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
                 let doc = handoff::build(
                     &opts,
                     &chosen.borrow(),
-                    components.clone(),
+                    chosen_components.borrow().clone(),
                     &app_version,
                     bpkg_core::VERSION,
                 );
@@ -256,7 +443,7 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
             }
 
             // 2) Copy the files.
-            ui.set_page(2);
+            ui.set_page(3);
             ui.set_progress(0.0);
             ui.set_progress_label("Preparing…".into());
 
@@ -265,7 +452,7 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
                 // pushing progress back to the UI thread.
                 Some(pkg) => {
                     let dest = PathBuf::from(ui.get_install_dir().to_string());
-                    let comps = components.clone();
+                    let comps = chosen_components.borrow().clone();
                     let weak = ui.as_weak();
                     let handoff_msg = message.clone();
                     let handoff_ok = ok;
@@ -291,7 +478,7 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
                                 }
                             }
                             ui.set_progress(1.0);
-                            ui.set_page(3);
+                            ui.set_page(4);
                         });
                     });
                 }
@@ -313,7 +500,7 @@ fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Resul
                             ui.set_progress(1.0);
                             ui.set_success(ok);
                             ui.set_result_message(final_msg.clone().into());
-                            ui.set_page(3);
+                            ui.set_page(4);
                             if let Some(t) = pt.borrow().as_ref() {
                                 t.stop();
                             }
@@ -354,6 +541,15 @@ fn run_real_install(
             });
         })
         .map_err(|e| e.to_string())?;
+    }
+
+    // Writability preflight — fail with a clear message instead of a cryptic I/O
+    // error if the chosen folder needs administrator rights (e.g. Program Files).
+    if let Err(e) = std::fs::create_dir_all(dest) {
+        return Err(format!(
+            "Can't write to {}: {e}\nPick a folder you can write to (the default is under your user profile). Installing into Program Files needs an administrator (elevated) installer.",
+            dest.display()
+        ));
     }
 
     let mut p = Package::open(pkg).map_err(|e| e.to_string())?;
@@ -525,6 +721,53 @@ fn remove_dir_except(dir: &Path, keep: &Path) {
     }
 }
 
+/// Read the license documents' text from the package (shown on the Terms step).
+fn load_legal_docs(cfg: &InstallerConfig, pkg: Option<&Path>) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let lo = match cfg
+        .setup_options
+        .iter()
+        .find(|o| matches!(o.kind, SetupOptionKind::License) && !o.documents.is_empty())
+    {
+        Some(o) => o,
+        None => return out,
+    };
+    let pkg = match pkg {
+        Some(p) => p,
+        None => return out,
+    };
+    let mut p = match Package::open(pkg) {
+        Ok(p) => p,
+        Err(_) => return out,
+    };
+    let map = match p.read_files(&lo.documents) {
+        Ok(m) => m,
+        Err(_) => return out,
+    };
+    for doc in &lo.documents {
+        if let Some(bytes) = map.get(doc) {
+            out.push((doc_title(doc), String::from_utf8_lossy(bytes).to_string()));
+        }
+    }
+    out
+}
+
+/// Friendly title for a legal document filename.
+fn doc_title(file: &str) -> String {
+    let low = file.to_lowercase();
+    if low.contains("privacy") {
+        "Privacy Policy".to_string()
+    } else if low.contains("tos") || low.contains("terms") || low.contains("eula") {
+        "Terms of Service".to_string()
+    } else {
+        file.rsplit('/')
+            .next()
+            .unwrap_or(file)
+            .trim_end_matches(".md")
+            .to_string()
+    }
+}
+
 /// Map a [`SetupOption`] to the Slint row struct.
 fn to_row(o: &SetupOption) -> OptionRow {
     let kind = match o.kind {
@@ -533,10 +776,12 @@ fn to_row(o: &SetupOption) -> OptionRow {
         SetupOptionKind::License => "license",
     };
     let choices: Vec<SharedString> = o.choices.iter().map(|c| c.clone().into()).collect();
+    let label = o.label.clone().unwrap_or_else(|| humanize(&o.label_key));
     OptionRow {
         id: o.id.clone().into(),
         kind: kind.into(),
-        label: humanize(&o.label_key).into(),
+        label: label.into(),
+        description: o.description.clone().unwrap_or_default().into(),
         choices: ModelRc::from(Rc::new(VecModel::from(choices))),
         bool_value: o.default.as_bool().unwrap_or(false),
         string_value: o.default.as_str().unwrap_or("").into(),
