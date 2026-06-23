@@ -37,10 +37,13 @@ impl Manifest {
     }
 
     /// Files belonging to a given component id (or all files when `id` is None).
-    pub fn files_for<'a>(&'a self, id: Option<&'a str>) -> impl Iterator<Item = &'a FileEntry> + 'a {
+    pub fn files_for<'a>(
+        &'a self,
+        id: Option<&'a str>,
+    ) -> impl Iterator<Item = &'a FileEntry> + 'a {
         self.files
             .iter()
-            .filter(move |f| id.map_or(true, |c| f.component.as_deref() == Some(c)))
+            .filter(move |f| id.is_none_or(|c| f.component.as_deref() == Some(c)))
     }
 }
 

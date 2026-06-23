@@ -67,7 +67,8 @@ impl PlatformOps for WindowsOps {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let base = format!("Software\\Classes\\{scheme}");
         let (key, _) = hkcu.create_subkey(&base).map_err(Error::IoBare)?;
-        key.set_value("", &format!("URL:{scheme} Protocol")).map_err(Error::IoBare)?;
+        key.set_value("", &format!("URL:{scheme} Protocol"))
+            .map_err(Error::IoBare)?;
         key.set_value("URL Protocol", &"").map_err(Error::IoBare)?;
         let (cmd, _) = hkcu
             .create_subkey(format!("{base}\\shell\\open\\command"))
@@ -85,11 +86,17 @@ impl PlatformOps for WindowsOps {
             entry.app.id
         );
         let (key, _) = hkcu.create_subkey(&path).map_err(Error::IoBare)?;
-        key.set_value("DisplayName", &entry.app.name).map_err(Error::IoBare)?;
-        key.set_value("DisplayVersion", &entry.app.version).map_err(Error::IoBare)?;
-        key.set_value("Publisher", &entry.app.publisher).map_err(Error::IoBare)?;
-        key.set_value("InstallLocation", &entry.install_dir.to_string_lossy().to_string())
+        key.set_value("DisplayName", &entry.app.name)
             .map_err(Error::IoBare)?;
+        key.set_value("DisplayVersion", &entry.app.version)
+            .map_err(Error::IoBare)?;
+        key.set_value("Publisher", &entry.app.publisher)
+            .map_err(Error::IoBare)?;
+        key.set_value(
+            "InstallLocation",
+            &entry.install_dir.to_string_lossy().to_string(),
+        )
+        .map_err(Error::IoBare)?;
         key.set_value(
             "UninstallString",
             &format!("\"{}\" --uninstall", entry.uninstaller.display()),

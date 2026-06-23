@@ -38,24 +38,28 @@ component WelcomePage inherits VerticalLayout {
     in property <string> app-name;
     in property <string> app-version;
     in property <string> publisher;
+    in property <string> loc-label: "Install location";
     in-out property <string> install-dir;
     spacing: 10px;
     Text { text: "Install " + app-name; font-size: 24px; font-weight: 800; color: white; }
     Text { text: "Version " + app-version + (publisher != "" ? "  ·  " + publisher : ""); font-size: 13px; color: #8b93a7; }
     Rectangle { height: 16px; }
-    Text { text: "Install location"; font-size: 12px; color: #8b93a7; }
-    LineEdit { text <=> install-dir; placeholder-text: "Choose an install folder…"; }
+    Text { text: loc-label; font-size: 12px; color: #8b93a7; }
+    LineEdit { text <=> install-dir; }
     Rectangle { vertical-stretch: 1; }
 }
 
 component SetupPage inherits VerticalLayout {
     in property <[OptionRow]> options;
     in property <color> accent;
+    in property <string> title: "Configuration";
+    in property <string> hint;
+    in property <string> accept-label: "I accept";
     callback option-bool-changed(string, bool);
     callback option-select-changed(string, string);
     spacing: 8px;
-    Text { text: "Configuration"; font-size: 20px; font-weight: 800; color: white; }
-    Text { text: "These choices are applied on first launch — no setup needed inside the app."; font-size: 12px; color: #8b93a7; wrap: word-wrap; }
+    Text { text: title; font-size: 20px; font-weight: 800; color: white; }
+    Text { text: hint; font-size: 12px; color: #8b93a7; wrap: word-wrap; }
     Rectangle { height: 8px; }
     ScrollView {
         vertical-stretch: 1;
@@ -73,7 +77,7 @@ component SetupPage inherits VerticalLayout {
                         spacing: 4px;
                         Text { text: opt.label; font-size: 13px; color: white; vertical-alignment: center; }
                         if opt.kind == "license" : CheckBox {
-                            text: "I accept";
+                            text: accept-label;
                             checked: opt.bool-value;
                             toggled => { option-bool-changed(opt.id, self.checked); }
                         }
@@ -97,9 +101,10 @@ component SetupPage inherits VerticalLayout {
 component ProgressPage inherits VerticalLayout {
     in property <float> progress;
     in property <string> progress-label;
+    in property <string> installing-label: "Installing…";
     spacing: 14px;
     Rectangle { vertical-stretch: 1; }
-    Text { text: "Installing…"; font-size: 20px; font-weight: 800; color: white; horizontal-alignment: center; }
+    Text { text: installing-label; font-size: 20px; font-weight: 800; color: white; horizontal-alignment: center; }
     Text { text: progress-label; font-size: 12px; color: #8b93a7; horizontal-alignment: center; }
     ProgressIndicator { progress: progress; height: 8px; }
     Rectangle { vertical-stretch: 1; }
@@ -152,6 +157,17 @@ export component MainWindow inherits Window {
     in property <string> result-message;
     in property <color> accent: #3b82f6;
 
+    // i18n strings (set from Rust; English defaults)
+    in property <string> t-next: "Next";
+    in property <string> t-back: "Back";
+    in property <string> t-install: "Install";
+    in property <string> t-finish: "Finish";
+    in property <string> t-config-title: "Configuration";
+    in property <string> t-config-hint: "These choices are applied on first launch — no setup needed inside the app.";
+    in property <string> t-install-loc: "Install location";
+    in property <string> t-installing: "Installing…";
+    in property <string> t-accept: "I accept";
+
     // Callbacks to Rust
     callback go-back();
     callback go-next();
@@ -191,17 +207,22 @@ export component MainWindow inherits Window {
                         app-name: root.app-name;
                         app-version: root.app-version;
                         publisher: root.publisher;
+                        loc-label: root.t-install-loc;
                         install-dir <=> root.install-dir;
                     }
                     if root.page == 1 : SetupPage {
                         options: root.options;
                         accent: root.accent;
+                        title: root.t-config-title;
+                        hint: root.t-config-hint;
+                        accept-label: root.t-accept;
                         option-bool-changed(id, v) => { root.option-bool-changed(id, v); }
                         option-select-changed(id, v) => { root.option-select-changed(id, v); }
                     }
                     if root.page == 2 : ProgressPage {
                         progress: root.progress;
                         progress-label: root.progress-label;
+                        installing-label: root.t-installing;
                     }
                     if root.page == 3 : CompletePage {
                         app-name: root.app-name;
@@ -215,22 +236,22 @@ export component MainWindow inherits Window {
                     spacing: 10px;
                     Rectangle { horizontal-stretch: 1; }
                     if root.page == 1 : Button {
-                        text: "Back";
+                        text: root.t-back;
                         clicked => { root.go-back(); }
                     }
                     if root.page == 0 : Button {
-                        text: "Next";
+                        text: root.t-next;
                         primary: true;
                         clicked => { root.go-next(); }
                     }
                     if root.page == 1 : Button {
-                        text: "Install";
+                        text: root.t-install;
                         primary: true;
                         enabled: root.can-proceed;
                         clicked => { root.install(); }
                     }
                     if root.page == 3 : Button {
-                        text: "Finish";
+                        text: root.t-finish;
                         primary: true;
                         clicked => { root.finish(); }
                     }

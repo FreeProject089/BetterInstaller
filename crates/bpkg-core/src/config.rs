@@ -25,6 +25,48 @@ pub struct InstallerConfig {
     /// Options presented in the installer's "Configuration" page.
     #[serde(default, rename = "setup_option")]
     pub setup_options: Vec<SetupOption>,
+    /// Package-signature trust settings. Optional.
+    #[serde(default)]
+    pub security: Option<Security>,
+    /// System prerequisites to check (and optionally auto-install).
+    #[serde(default, rename = "prerequisite")]
+    pub prerequisites: Vec<Prerequisite>,
+}
+
+/// A prerequisite the target machine must satisfy (e.g. a runtime). Detection is
+/// by registry key, file path, or a command on PATH — whichever is set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Prerequisite {
+    pub id: String,
+    pub name: String,
+    /// `HKLM\...` or `HKCU\...` key that exists when the prereq is installed.
+    #[serde(default)]
+    pub check_registry: Option<String>,
+    /// A file that exists when the prereq is installed.
+    #[serde(default)]
+    pub check_file: Option<String>,
+    /// A command that resolves on PATH when the prereq is installed.
+    #[serde(default)]
+    pub check_command: Option<String>,
+    /// Where to download the installer if missing (auto-install support).
+    #[serde(default)]
+    pub download_url: Option<String>,
+    /// Silent-install arguments for the downloaded installer.
+    #[serde(default)]
+    pub silent_args: Option<String>,
+    #[serde(default = "default_true")]
+    pub required: bool,
+}
+
+/// Trust anchor for verifying the `.bpkg` signature before installing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Security {
+    /// Hex-encoded Ed25519 public key the package must be signed with.
+    #[serde(default)]
+    pub public_key: Option<String>,
+    /// Refuse to install if the signature is missing or invalid.
+    #[serde(default)]
+    pub require_signature: bool,
 }
 
 impl InstallerConfig {

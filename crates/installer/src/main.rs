@@ -12,7 +12,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
-use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak};
+use slint::{
+    Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak,
+};
 
 use bpkg_core::config::{InstallerConfig, SetupOption, SetupOptionKind};
 use bpkg_core::handoff;
@@ -30,6 +32,12 @@ struct SystemIntegration {
     protocol: Option<String>,
     create_shortcuts: bool,
     desktop: bool,
+    /// Hex Ed25519 public key the package must verify against (if any).
+    public_key: Option<String>,
+    /// Abort the install if the signature is missing/invalid.
+    require_signature: bool,
+    /// Prerequisites to verify before installing.
+    prereqs: Vec<bpkg_core::config::Prerequisite>,
 }
 
 slint::include_modules!();
@@ -41,14 +49,37 @@ fn main() -> anyhow::Result<()> {
         return run_uninstall();
     }
 
-    // Args: <installer.toml> [package.bpkg]. With a package, the Install step does
-    // a real verify+extract; without one it runs a simulated progress (UI preview).
+    let (cfg, package_path) = resolve_sources()?;
+    run_gui(cfg, package_path)
+}
+
+/// Config + payload come from the embedded self-extracting blob (an exe built
+/// with `bpkg build`) when present, else from CLI args (dev mode:
+/// `<installer.toml> [package.bpkg]`).
+fn resolve_sources() -> anyhow::Result<(InstallerConfig, Option<PathBuf>)> {
+    if let Some(emb) = std::env::current_exe()
+        .ok()
+        .and_then(|e| bpkg_core::embed::read_embedded(&e).ok().flatten())
+    {
+        let cfg = InstallerConfig::from_toml(&String::from_utf8_lossy(&emb.config))
+            .map_err(|e| anyhow::anyhow!("embedded config: {e}"))?;
+        // Stage the embedded .bpkg to a temp file so Package::open can read it.
+        let tmp = std::env::temp_dir().join(format!("betterinstaller-{}.bpkg", std::process::id()));
+        std::fs::write(&tmp, &emb.bpkg)?;
+        return Ok((cfg, Some(tmp)));
+    }
+
     let mut args = std::env::args().skip(1);
-    let config_path = args.next().unwrap_or_else(|| "examples/bmm/installer.toml".to_string());
+    let config_path = args
+        .next()
+        .unwrap_or_else(|| "examples/bmm/installer.toml".to_string());
     let package_path: Option<PathBuf> = args.next().map(PathBuf::from);
     let cfg = InstallerConfig::load(&config_path)
         .map_err(|e| anyhow::anyhow!("loading {config_path}: {e}"))?;
+    Ok((cfg, package_path))
+}
 
+fn run_gui(cfg: InstallerConfig, package_path: Option<PathBuf>) -> anyhow::Result<()> {
     let plat = platform::current();
     let app_meta = AppMeta {
         id: cfg.app.id.clone(),
@@ -63,9 +94,36 @@ fn main() -> anyhow::Result<()> {
     ui.set_app_name(cfg.app.name.clone().into());
     ui.set_app_version(cfg.app.version.clone().into());
     ui.set_publisher(cfg.app.publisher.clone().into());
-    ui.set_install_dir(plat.default_install_dir(&app_meta).to_string_lossy().to_string().into());
+    ui.set_install_dir(
+        plat.default_install_dir(&app_meta)
+            .to_string_lossy()
+            .to_string()
+            .into(),
+    );
     if let Some(accent) = cfg.branding.accent.as_deref().and_then(parse_hex) {
         ui.set_accent(accent);
+    }
+
+    // UI language: a non-"auto" default on the `language` setup option, else the OS.
+    let lang = cfg
+        .setup_options
+        .iter()
+        .find(|o| o.id == "language")
+        .and_then(|o| o.default.as_str())
+        .filter(|l| *l != "auto")
+        .map(str::to_string)
+        .unwrap_or_else(bpkg_core::i18n::detect_lang);
+    {
+        use bpkg_core::i18n::t;
+        ui.set_t_next(t(&lang, "next").into());
+        ui.set_t_back(t(&lang, "back").into());
+        ui.set_t_install(t(&lang, "install").into());
+        ui.set_t_finish(t(&lang, "finish").into());
+        ui.set_t_config_title(t(&lang, "config_title").into());
+        ui.set_t_config_hint(t(&lang, "config_hint").into());
+        ui.set_t_install_loc(t(&lang, "install_loc").into());
+        ui.set_t_installing(t(&lang, "installing").into());
+        ui.set_t_accept(t(&lang, "accept").into());
     }
 
     // Shared mutable state captured by callbacks.
@@ -111,7 +169,9 @@ fn main() -> anyhow::Result<()> {
         let chosen = chosen.clone();
         let opts = setup_opts.clone();
         ui.on_option_bool_changed(move |id, v| {
-            chosen.borrow_mut().insert(id.to_string(), serde_json::json!(v));
+            chosen
+                .borrow_mut()
+                .insert(id.to_string(), serde_json::json!(v));
             set_row(&model, &id, |r| r.bool_value = v);
             if let Some(ui) = w.upgrade() {
                 ui.set_can_proceed(compute_can_proceed(&opts, &chosen.borrow()));
@@ -147,6 +207,13 @@ fn main() -> anyhow::Result<()> {
         protocol: cfg.install.protocol.clone(),
         create_shortcuts: cfg.install.create_shortcuts,
         desktop: cfg.install.desktop_shortcut,
+        public_key: cfg.security.as_ref().and_then(|s| s.public_key.clone()),
+        require_signature: cfg
+            .security
+            .as_ref()
+            .map(|s| s.require_signature)
+            .unwrap_or(false),
+        prereqs: cfg.prerequisites.clone(),
     };
 
     let prog_timer: Rc<RefCell<Option<Timer>>> = Rc::new(RefCell::new(None));
@@ -210,7 +277,12 @@ fn main() -> anyhow::Result<()> {
                                 Ok(n) => {
                                     ui.set_success(handoff_ok);
                                     ui.set_result_message(
-                                        format!("Installed {n} files to {}\n{}", dest.display(), handoff_msg).into(),
+                                        format!(
+                                            "Installed {n} files to {}\n{}",
+                                            dest.display(),
+                                            handoff_msg
+                                        )
+                                        .into(),
                                     );
                                 }
                                 Err(e) => {
@@ -247,7 +319,9 @@ fn main() -> anyhow::Result<()> {
                             }
                         } else {
                             ui.set_progress(*p);
-                            ui.set_progress_label(format!("Installing…  {}%", (*p * 100.0) as i32).into());
+                            ui.set_progress_label(
+                                format!("Installing…  {}%", (*p * 100.0) as i32).into(),
+                            );
                         }
                     });
                     *prog_timer.borrow_mut() = Some(timer);
@@ -269,12 +343,41 @@ fn run_real_install(
     comps: &[String],
     integ: &SystemIntegration,
 ) -> Result<u64, String> {
+    // Prerequisites must be satisfied before touching anything.
+    let missing: Vec<String> = integ
+        .prereqs
+        .iter()
+        .filter(|p| p.required && !bpkg_core::prereq::check(p))
+        .map(|p| p.name.clone())
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!("Missing prerequisites: {}", missing.join(", ")));
+    }
+
     let mut p = Package::open(pkg).map_err(|e| e.to_string())?;
+
+    // Verify the Ed25519 signature before writing anything, when a trust key is set.
+    if let Some(pk_hex) = integ.public_key.as_ref() {
+        let vk = bpkg_core::sign::parse_public(pk_hex).map_err(|e| e.to_string())?;
+        let valid = p.verify_signature(&vk).map_err(|e| e.to_string())?;
+        if !valid && integ.require_signature {
+            return Err(if p.is_signed() {
+                "package signature is INVALID — refusing to install".to_string()
+            } else {
+                "package is not signed but a signature is required".to_string()
+            });
+        }
+    }
+
     let comp: Option<&[String]> = if comps.is_empty() { None } else { Some(comps) };
     let mut last_pct = -1i32;
     let written = p
         .install_with_progress(dest, comp, |done, total, file| {
-            let pct = if total > 0 { (done * 100 / total) as i32 } else { 100 };
+            let pct = if total > 0 {
+                (done * 100 / total) as i32
+            } else {
+                100
+            };
             if pct != last_pct {
                 last_pct = pct;
                 let fname = file.to_string();
@@ -347,7 +450,10 @@ fn do_system_integration(dest: &Path, integ: &SystemIntegration) {
 /// entry, and delete the install directory (except the running uninstaller).
 fn run_uninstall() -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
-    let dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+    let dir = exe
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
 
     let info: serde_json::Value = std::fs::read(dir.join("uninstall-info.json"))
         .ok()
@@ -423,10 +529,7 @@ fn set_row(model: &VecModel<OptionRow>, id: &str, f: impl Fn(&mut OptionRow)) {
 }
 
 /// "Next" is gated on every required `license` option being accepted.
-fn compute_can_proceed(
-    opts: &[SetupOption],
-    chosen: &BTreeMap<String, serde_json::Value>,
-) -> bool {
+fn compute_can_proceed(opts: &[SetupOption], chosen: &BTreeMap<String, serde_json::Value>) -> bool {
     opts.iter().all(|o| {
         if o.required && matches!(o.kind, SetupOptionKind::License) {
             chosen.get(&o.id).and_then(|v| v.as_bool()).unwrap_or(false)

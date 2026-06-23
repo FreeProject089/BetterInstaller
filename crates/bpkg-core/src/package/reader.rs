@@ -6,7 +6,9 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use super::format::{Header, HEADER_LEN};
+use ed25519_dalek::VerifyingKey;
+
+use super::format::{Header, FLAG_SIGNED, HEADER_LEN, SIGNATURE_LEN};
 use super::writer::hex;
 use crate::error::{Error, Result};
 use crate::manifest::Manifest;
@@ -30,11 +32,17 @@ impl Package {
         let header = Header::from_bytes(&head)?;
 
         let mut manifest_buf = vec![0u8; header.manifest_len as usize];
-        file.read_exact(&mut manifest_buf).map_err(|e| Error::io(path, e))?;
+        file.read_exact(&mut manifest_buf)
+            .map_err(|e| Error::io(path, e))?;
         let manifest: Manifest = serde_json::from_slice(&manifest_buf)?;
 
         let payload_offset = HEADER_LEN as u64 + header.manifest_len as u64;
-        Ok(Package { file, header, manifest, payload_offset })
+        Ok(Package {
+            file,
+            header,
+            manifest,
+            payload_offset,
+        })
     }
 
     /// Read and decompress the full inner archive into memory.
@@ -43,7 +51,9 @@ impl Package {
             .seek(SeekFrom::Start(self.payload_offset))
             .map_err(Error::IoBare)?;
         let mut compressed = vec![0u8; self.header.payload_len as usize];
-        self.file.read_exact(&mut compressed).map_err(Error::IoBare)?;
+        self.file
+            .read_exact(&mut compressed)
+            .map_err(Error::IoBare)?;
         zstd::decode_all(&compressed[..]).map_err(|e| Error::Compression(e.to_string()))
     }
 
@@ -86,6 +96,28 @@ impl Package {
                 None => Err(Error::Corrupt(format!("file {path} not in manifest"))),
             }
         })
+    }
+
+    /// Whether the package carries an Ed25519 signature.
+    pub fn is_signed(&self) -> bool {
+        self.header.flags & FLAG_SIGNED != 0
+    }
+
+    /// Verify the package signature against `vk`. Returns `Ok(false)` for an
+    /// unsigned package, `Ok(true)`/`Ok(false)` for a valid/invalid signature.
+    pub fn verify_signature(&mut self, vk: &VerifyingKey) -> Result<bool> {
+        if !self.is_signed() {
+            return Ok(false);
+        }
+        let mp_len = self.header.manifest_len as u64 + self.header.payload_len;
+        self.file
+            .seek(SeekFrom::Start(HEADER_LEN as u64))
+            .map_err(Error::IoBare)?;
+        let mut buf = vec![0u8; mp_len as usize];
+        self.file.read_exact(&mut buf).map_err(Error::IoBare)?;
+        let mut sig = [0u8; SIGNATURE_LEN];
+        self.file.read_exact(&mut sig).map_err(Error::IoBare)?;
+        Ok(crate::sign::verify_message(vk, &buf, &sig))
     }
 
     /// Whether a file's component is selected for install.
@@ -197,7 +229,9 @@ impl Package {
 }
 
 fn slice<'a>(buf: &'a [u8], pos: &mut usize, len: usize) -> Result<&'a [u8]> {
-    let end = pos.checked_add(len).ok_or_else(|| Error::Corrupt("length overflow".into()))?;
+    let end = pos
+        .checked_add(len)
+        .ok_or_else(|| Error::Corrupt("length overflow".into()))?;
     if end > buf.len() {
         return Err(Error::Corrupt("truncated archive".into()));
     }
@@ -213,5 +247,7 @@ fn read_u32(buf: &[u8], pos: &mut usize) -> Result<u32> {
 
 fn read_u64(buf: &[u8], pos: &mut usize) -> Result<u64> {
     let s = slice(buf, pos, 8)?;
-    Ok(u64::from_le_bytes([s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]]))
+    Ok(u64::from_le_bytes([
+        s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7],
+    ]))
 }

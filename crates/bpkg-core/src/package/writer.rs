@@ -92,7 +92,8 @@ pub fn create_from_dir(
     };
 
     let mut f = std::fs::File::create(out).map_err(|e| Error::io(out, e))?;
-    f.write_all(&header.to_bytes()).map_err(|e| Error::io(out, e))?;
+    f.write_all(&header.to_bytes())
+        .map_err(|e| Error::io(out, e))?;
     f.write_all(&manifest_json).map_err(|e| Error::io(out, e))?;
     f.write_all(&payload).map_err(|e| Error::io(out, e))?;
     f.flush().map_err(|e| Error::io(out, e))?;

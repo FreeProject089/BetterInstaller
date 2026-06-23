@@ -20,6 +20,11 @@ pub const MAGIC: &[u8; 6] = b"BPKG\x1a\x00";
 pub const FORMAT_VERSION: u16 = 1;
 pub const HEADER_LEN: usize = 24;
 
+/// `flags` bit 0: an Ed25519 signature (64 bytes) follows the payload.
+pub const FLAG_SIGNED: u16 = 0x0001;
+/// Length of the appended Ed25519 signature.
+pub const SIGNATURE_LEN: usize = 64;
+
 /// zstd level — high ratio, the package is built once and downloaded many times.
 pub const ZSTD_LEVEL: i32 = 19;
 
@@ -57,9 +62,13 @@ impl Header {
         }
         let flags = u16::from_le_bytes([b[8], b[9]]);
         let manifest_len = u32::from_le_bytes([b[12], b[13], b[14], b[15]]);
-        let payload_len = u64::from_le_bytes([
-            b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23],
-        ]);
-        Ok(Header { format_version, flags, manifest_len, payload_len })
+        let payload_len =
+            u64::from_le_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]);
+        Ok(Header {
+            format_version,
+            flags,
+            manifest_len,
+            payload_len,
+        })
     }
 }

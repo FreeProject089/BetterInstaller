@@ -86,7 +86,10 @@ pub fn build(
 
     for opt in options {
         // Resolve the value: explicit choice, else the declared default.
-        let value = chosen.get(&opt.id).cloned().unwrap_or_else(|| opt.default.clone());
+        let value = chosen
+            .get(&opt.id)
+            .cloned()
+            .unwrap_or_else(|| opt.default.clone());
         for key in opt.maps_to.keys() {
             let flat = key.strip_prefix("settings.").unwrap_or(key);
             doc.set(flat, value.clone());
@@ -155,11 +158,23 @@ mod tests {
             "0.1.0",
         );
 
-        assert_eq!(doc.settings.get("language").unwrap(), &serde_json::json!("fr"));
+        assert_eq!(
+            doc.settings.get("language").unwrap(),
+            &serde_json::json!("fr")
+        );
         // the single `license` accept fanned out to BOTH legal keys
-        assert_eq!(doc.settings.get("privacy_accepted").unwrap(), &serde_json::json!(true));
-        assert_eq!(doc.settings.get("tos_accepted").unwrap(), &serde_json::json!(true));
-        assert_eq!(doc.settings.get("telemetry").unwrap(), &serde_json::json!(true));
+        assert_eq!(
+            doc.settings.get("privacy_accepted").unwrap(),
+            &serde_json::json!(true)
+        );
+        assert_eq!(
+            doc.settings.get("tos_accepted").unwrap(),
+            &serde_json::json!(true)
+        );
+        assert_eq!(
+            doc.settings.get("telemetry").unwrap(),
+            &serde_json::json!(true)
+        );
         assert_eq!(doc.components, vec!["core", "mcp-server"]);
         assert_eq!(doc.source, "betterinstaller");
     }
@@ -170,7 +185,13 @@ mod tests {
         let chosen = BTreeMap::new(); // user changed nothing
         let doc = build(&cfg.setup_options, &chosen, vec![], "1.0.0", "0.1.0");
         // telemetry default is false (opt-in)
-        assert_eq!(doc.settings.get("telemetry").unwrap(), &serde_json::json!(false));
-        assert_eq!(doc.settings.get("language").unwrap(), &serde_json::json!("auto"));
+        assert_eq!(
+            doc.settings.get("telemetry").unwrap(),
+            &serde_json::json!(false)
+        );
+        assert_eq!(
+            doc.settings.get("language").unwrap(),
+            &serde_json::json!("auto")
+        );
     }
 }

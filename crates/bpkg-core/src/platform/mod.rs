@@ -8,12 +8,12 @@ use std::path::PathBuf;
 use crate::error::{Error, Result};
 use crate::manifest::AppMeta;
 
-#[cfg(target_os = "windows")]
-mod windows;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 
 /// A shortcut to create (Start Menu / desktop / `.desktop` / alias).
 #[derive(Debug, Clone)]
@@ -47,13 +47,19 @@ pub trait PlatformOps {
     fn app_data_dir(&self, app: &AppMeta) -> PathBuf;
 
     fn create_shortcuts(&self, _spec: &ShortcutSpec) -> Result<()> {
-        Err(Error::Other("create_shortcuts: implemented in Phase 3".into()))
+        Err(Error::Other(
+            "create_shortcuts: implemented in Phase 3".into(),
+        ))
     }
     fn register_protocol(&self, _scheme: &str, _exe: &std::path::Path) -> Result<()> {
-        Err(Error::Other("register_protocol: implemented in Phase 3".into()))
+        Err(Error::Other(
+            "register_protocol: implemented in Phase 3".into(),
+        ))
     }
     fn register_uninstaller(&self, _entry: &UninstallEntry) -> Result<()> {
-        Err(Error::Other("register_uninstaller: implemented in Phase 3".into()))
+        Err(Error::Other(
+            "register_uninstaller: implemented in Phase 3".into(),
+        ))
     }
     fn add_to_path(&self, _dir: &std::path::Path) -> Result<()> {
         Err(Error::Other("add_to_path: implemented in Phase 3".into()))
@@ -95,5 +101,7 @@ pub fn current() -> Box<dyn PlatformOps> {
 /// Helper for backends: read an env var into a PathBuf, with a fallback.
 #[allow(dead_code)]
 pub(crate) fn env_dir(var: &str, fallback: &str) -> PathBuf {
-    std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(fallback))
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(fallback))
 }

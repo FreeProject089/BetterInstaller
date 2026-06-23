@@ -13,11 +13,16 @@
 //! See `.Assets/.md/PLAN_BETTER_INSTALLER.md` (v2 + v3 Addendum) for the full plan.
 
 pub mod config;
+pub mod embed;
 pub mod error;
 pub mod handoff;
+pub mod i18n;
 pub mod manifest;
 pub mod package;
 pub mod platform;
+pub mod prereq;
+pub mod sign;
+pub mod update;
 
 pub use error::{Error, Result};
 

@@ -3,7 +3,7 @@
 //! Phase 1 subcommands: pack, info, verify, extract. Signing (`keygen`, `sign`)
 //! and `build` (embed into a self-extracting installer exe) arrive in later phases.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -34,12 +34,25 @@ enum Command {
         out: PathBuf,
     },
     /// Print a package's metadata.
-    Info {
-        package: PathBuf,
-    },
-    /// Verify every file's SHA-256 against the manifest.
+    Info { package: PathBuf },
+    /// Verify every file's SHA-256 against the manifest (and optionally the
+    /// Ed25519 signature with --key).
     Verify {
         package: PathBuf,
+        /// Public key to also verify the package signature.
+        #[arg(long)]
+        key: Option<PathBuf>,
+    },
+    /// Generate an Ed25519 signing keypair (writes private.key + public.key).
+    Keygen {
+        #[arg(long, default_value = "keys")]
+        out: PathBuf,
+    },
+    /// Sign a .bpkg in place with a private key.
+    Sign {
+        package: PathBuf,
+        #[arg(long)]
+        key: PathBuf,
     },
     /// Extract a package into a directory.
     Extract {
@@ -59,6 +72,28 @@ enum Command {
         #[arg(long, value_delimiter = ',')]
         components: Option<Vec<String>>,
     },
+    /// Stamp a project's config + package into a copy of the installer exe,
+    /// producing a single self-extracting installer.
+    Build {
+        /// The prebuilt BetterInstaller GUI exe to stamp.
+        #[arg(long)]
+        installer: PathBuf,
+        /// The project's installer.toml.
+        #[arg(long)]
+        config: PathBuf,
+        /// The project's .bpkg.
+        #[arg(long)]
+        package: PathBuf,
+        /// Output exe (e.g. MyAppSetup.exe).
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Update an existing install with a newer package (rolls back on failure).
+    Update {
+        package: PathBuf,
+        #[arg(long)]
+        dir: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -66,17 +101,37 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Pack { root, config, out } => cmd_pack(&root, &config, &out),
         Command::Info { package } => cmd_info(&package),
-        Command::Verify { package } => cmd_verify(&package),
-        Command::Extract { package, dest, components } => {
-            cmd_extract(&package, &dest, components.as_deref())
-        }
-        Command::Install { package, dest, components } => {
-            cmd_install(&package, &dest, components.as_deref())
-        }
+        Command::Verify { package, key } => cmd_verify(&package, key.as_deref()),
+        Command::Keygen { out } => cmd_keygen(&out),
+        Command::Sign { package, key } => cmd_sign(&package, &key),
+        Command::Extract {
+            package,
+            dest,
+            components,
+        } => cmd_extract(&package, &dest, components.as_deref()),
+        Command::Install {
+            package,
+            dest,
+            components,
+        } => cmd_install(&package, &dest, components.as_deref()),
+        Command::Build {
+            installer,
+            config,
+            package,
+            out,
+        } => cmd_build(&installer, &config, &package, &out),
+        Command::Update { package, dir } => cmd_update(&package, &dir),
     }
 }
 
-fn cmd_pack(root: &PathBuf, config: &PathBuf, out: &PathBuf) -> Result<()> {
+fn cmd_update(package: &Path, dir: &Path) -> Result<()> {
+    let n = bpkg_core::update::apply_package_update(package, dir, None)
+        .context("update failed (rolled back)")?;
+    println!("Updated {} ({n} files).", dir.display());
+    Ok(())
+}
+
+fn cmd_pack(root: &Path, config: &Path, out: &Path) -> Result<()> {
     let cfg = InstallerConfig::load(config).context("reading installer.toml")?;
     let app = AppMeta {
         id: cfg.app.id.clone(),
@@ -117,7 +172,7 @@ fn cmd_pack(root: &PathBuf, config: &PathBuf, out: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn cmd_info(path: &PathBuf) -> Result<()> {
+fn cmd_info(path: &Path) -> Result<()> {
     let pkg = Package::open(path).context("opening package")?;
     let m = &pkg.manifest;
     println!("App:        {} v{}", m.app.name, m.app.version);
@@ -133,29 +188,91 @@ fn cmd_info(path: &PathBuf) -> Result<()> {
     if !m.components.is_empty() {
         println!("Components:");
         for c in &m.components {
-            let tag = if c.required { "required" } else if c.default { "default" } else { "optional" };
+            let tag = if c.required {
+                "required"
+            } else if c.default {
+                "default"
+            } else {
+                "optional"
+            };
             println!("  - {} ({}, {} MB) [{}]", c.id, c.name, c.size_mb, tag);
         }
     }
     Ok(())
 }
 
-fn cmd_verify(path: &PathBuf) -> Result<()> {
+fn cmd_verify(path: &Path, key: Option<&std::path::Path>) -> Result<()> {
     let mut pkg = Package::open(path).context("opening package")?;
     let count = pkg.manifest.files.len();
     pkg.verify().context("integrity check failed")?;
     println!("OK — all {count} files verified (SHA-256).");
+
+    if let Some(key) = key {
+        let vk = bpkg_core::sign::load_public(key).context("loading public key")?;
+        if pkg.verify_signature(&vk).context("verifying signature")? {
+            println!("OK — Ed25519 signature valid.");
+        } else if pkg.is_signed() {
+            anyhow::bail!("signature INVALID (does not match this key)");
+        } else {
+            anyhow::bail!("package is not signed");
+        }
+    } else if pkg.is_signed() {
+        println!("Note: package is signed (pass --key <public.key> to verify it).");
+    }
     Ok(())
 }
 
-fn cmd_extract(path: &PathBuf, dest: &PathBuf, components: Option<&[String]>) -> Result<()> {
+fn cmd_keygen(out: &Path) -> Result<()> {
+    std::fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
+    let sk = bpkg_core::sign::generate();
+    let vk = sk.verifying_key();
+    let priv_path = out.join("private.key");
+    let pub_path = out.join("public.key");
+    bpkg_core::sign::save_private(&sk, &priv_path).context("writing private.key")?;
+    bpkg_core::sign::save_public(&vk, &pub_path).context("writing public.key")?;
+    println!("Generated keypair:");
+    println!(
+        "  private: {}  (keep secret — never commit)",
+        priv_path.display()
+    );
+    println!("  public:  {}", pub_path.display());
+    Ok(())
+}
+
+fn cmd_sign(package: &Path, key: &Path) -> Result<()> {
+    let sk = bpkg_core::sign::load_private(key).context("loading private key")?;
+    bpkg_core::package::sign_package(package, &sk).context("signing package")?;
+    println!("Signed {} (Ed25519).", package.display());
+    Ok(())
+}
+
+fn cmd_extract(path: &Path, dest: &Path, components: Option<&[String]>) -> Result<()> {
     let mut pkg = Package::open(path).context("opening package")?;
     let written = pkg.extract(dest, components).context("extracting")?;
     println!("Extracted {written} files → {}", dest.display());
     Ok(())
 }
 
-fn cmd_install(path: &PathBuf, dest: &PathBuf, components: Option<&[String]>) -> Result<()> {
+fn cmd_build(installer: &Path, config: &Path, package: &Path, out: &Path) -> Result<()> {
+    // Validate the config parses before stamping (fail early on a bad TOML).
+    let cfg_bytes =
+        std::fs::read(config).with_context(|| format!("reading {}", config.display()))?;
+    InstallerConfig::from_toml(&String::from_utf8_lossy(&cfg_bytes))
+        .context("invalid installer.toml")?;
+    let bpkg = std::fs::read(package).with_context(|| format!("reading {}", package.display()))?;
+
+    bpkg_core::embed::stamp(installer, &cfg_bytes, &bpkg, out).context("stamping installer")?;
+
+    let size = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
+    println!(
+        "Built self-extracting installer → {} ({:.2} MB)",
+        out.display(),
+        size as f64 / 1_048_576.0
+    );
+    Ok(())
+}
+
+fn cmd_install(path: &Path, dest: &Path, components: Option<&[String]>) -> Result<()> {
     let mut pkg = Package::open(path).context("opening package")?;
     let name = pkg.manifest.app.name.clone();
     let written = pkg
@@ -165,6 +282,9 @@ fn cmd_install(path: &PathBuf, dest: &PathBuf, components: Option<&[String]>) ->
             let _ = std::io::Write::flush(&mut std::io::stdout());
         })
         .context("install failed")?;
-    println!("\nInstalled {name}: {written} files (verified) → {}", dest.display());
+    println!(
+        "\nInstalled {name}: {written} files (verified) → {}",
+        dest.display()
+    );
     Ok(())
 }
