@@ -186,4 +186,4 @@ launch of a stamped self-extracting installer are verified end-to-end.
 
 ## License
 
-MIT OR Apache-2.0.
+GPL 3.0
