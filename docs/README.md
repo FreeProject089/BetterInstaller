@@ -11,6 +11,7 @@ maintenance mode (repair / update / uninstall).
 |---|---|
 | Configure an installer for your app | [../GUIDE.md](../GUIDE.md) — every `installer.toml` field |
 | Understand how it works internally | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| Ship one app on Windows + Linux + macOS | [PLATFORMS.md](PLATFORMS.md) (+ per-OS: [Windows](platform-windows.md) · [Linux](platform-linux.md) · [macOS](platform-macos.md)) |
 | Know the `.bpkg` / SFX byte layout | [BPKG-FORMAT.md](BPKG-FORMAT.md) |
 | Use the `bpkg` CLI | [CLI.md](CLI.md) |
 | Implement the first-run handoff in your app | [HANDOFF.md](HANDOFF.md) |

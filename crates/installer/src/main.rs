@@ -734,6 +734,7 @@ fn run_gui(
                 Some(u) => u,
                 None => return,
             };
+            ui.set_maintenance_verb("Repair".into());
             let pkg = match &pkg {
                 Some(p) => p.clone(),
                 None => {
@@ -775,6 +776,7 @@ fn run_gui(
                 Some(u) => u,
                 None => return,
             };
+            ui.set_maintenance_verb("Update".into());
             let comps_v = comps.borrow().clone();
 
             // Preferred path: a configured remote update was found.
@@ -855,6 +857,7 @@ fn run_gui(
                 Some(u) => u,
                 None => return,
             };
+            ui.set_maintenance_verb("Uninstall".into());
             ui.set_page(3);
             ui.set_progress(0.4);
             ui.set_progress_label("Uninstalling…".into());
