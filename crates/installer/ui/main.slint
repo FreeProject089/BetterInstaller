@@ -176,14 +176,14 @@ component TitleBar inherits Rectangle {
                 }
             }
             HorizontalLayout {
-                padding-left: 14px;
+                padding-left: 12px;
                 spacing: 9px;
                 alignment: start;
-                Rectangle {
-                    width: 16px; height: 16px;
+                Image {
+                    source: @image-url("../../../BetterInstaller.png");
+                    width: 18px; height: 18px;
                     y: (parent.height - self.height) / 2;
-                    background: Pal.accent; border-radius: 3px;
-                    border-width: 2px; border-color: Pal.accent-dark;
+                    image-fit: contain;
                 }
                 Text {
                     text: root.title;
@@ -626,6 +626,7 @@ component MaintenancePage inherits VerticalLayout {
 // ── Main window (frameless: OS decorations disabled from Rust) ──
 export component MainWindow inherits Window {
     title: "BetterInstaller";
+    icon: @image-url("../../../BetterInstaller.png");
     preferred-width: 800px;
     preferred-height: 560px;
     min-width: 720px;
@@ -706,7 +707,20 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     padding: 24px;
                     spacing: 6px;
-                    Text { text: "BetterInstaller"; font-size: 16px; font-weight: 900; color: white; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: start;
+                        Image {
+                            source: @image-url("../../../BetterInstaller.png");
+                            width: 28px; height: 28px;
+                            image-fit: contain;
+                        }
+                        Text {
+                            text: "BetterInstaller";
+                            font-size: 16px; font-weight: 900; color: white;
+                            vertical-alignment: center;
+                        }
+                    }
                     Rectangle { height: 20px; }
                     VerticalLayout {
                         spacing: 16px;
