@@ -985,25 +985,67 @@ fn do_uninstall_full(dir: &Path) -> Result<(), String> {
         let _ = plat.unregister_uninstaller(id);
     }
 
+    // Close the app if it's running, so its files aren't locked and the uninstall
+    // doesn't get blocked.
+    kill_running_apps(dir);
+
     let exe = std::env::current_exe().unwrap_or_default();
     if exe.starts_with(dir) {
-        // Locked uninstaller: remove all but the running exe, then self-delete.
+        // Locked uninstaller: remove all but the running exe, then schedule a
+        // detached self-delete that also removes the uninstaller + the folder.
         remove_dir_except(dir, &exe);
         schedule_self_delete(&exe, dir);
         Ok(())
     } else {
+        // Give the killed processes a moment to release their file handles.
+        std::thread::sleep(std::time::Duration::from_millis(400));
         std::fs::remove_dir_all(dir).map_err(|e| e.to_string())
     }
 }
+
+/// Force-close any app executable living in the install dir (e.g.
+/// better-mods-manager.exe, bmm-mcp-server.exe) before removing files. Never
+/// touches the running uninstaller itself.
+#[cfg(windows)]
+fn kill_running_apps(dir: &Path) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let self_exe = std::env::current_exe().unwrap_or_default();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p == self_exe {
+                continue;
+            }
+            let is_exe = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("exe"))
+                .unwrap_or(false);
+            if is_exe {
+                if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/IM", name])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output();
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn kill_running_apps(_dir: &Path) {}
 
 #[cfg(windows)]
 fn schedule_self_delete(exe: &Path, dir: &Path) {
     use std::os::windows::process::CommandExt;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    // Wait ~1s (let us exit + release the lock), delete the exe, remove the dir.
+    // Wait ~1s (let us exit + release the lock), delete the exe, then force-remove
+    // the whole folder (incl. the uninstaller + anything left behind).
     let script = format!(
-        "ping 127.0.0.1 -n 2 >nul & del /F /Q \"{}\" & rmdir \"{}\"",
+        "ping 127.0.0.1 -n 2 >nul & del /F /Q \"{}\" & rmdir /S /Q \"{}\"",
         exe.display(),
         dir.display()
     );

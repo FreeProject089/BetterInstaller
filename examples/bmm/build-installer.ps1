@@ -25,34 +25,40 @@ if (-not (Test-Path $bpkg) -or -not (Test-Path $inst)) {
     cargo build --release -p bpkg-cli -p installer
 }
 
-# 2) Assemble the payload from BMM's build artifacts + legal docs.
+# 2) Assemble the payload = the EXACT Tauri runtime layout, so the installed app
+#    has EVERYTHING (exe + sidecar + the whole resource tree: Lang, tutorial assets,
+#    builtin themes, Update docs, app.cfg, legal…). Just the exes is not enough.
 Write-Host "[2/5] Assembling payload..."
 $rel = Join-Path $BmmRoot "src-tauri/target/release"
+if (-not (Test-Path (Join-Path $rel "better-mods-manager.exe"))) {
+    throw "BMM is not built. Run 'npm run build' (or 'npx tauri build --no-bundle') first."
+}
 if (Test-Path $payload) { Remove-Item -Recurse -Force $payload }
 New-Item -ItemType Directory -Force $payload | Out-Null
 
 Copy-Item (Join-Path $rel "better-mods-manager.exe") $payload
 Copy-Item (Join-Path $rel "bmm-mcp-server.exe")      $payload
+# Tauri resource trees: "_up_" holds ../ resources (frontend/Lang, assets, Update,
+# legal, app.cfg); "resources" holds icon etc. This mirrors how the app runs from
+# target/release, so resolve_path() finds everything (incl. en/fr languages).
+foreach ($d in @("_up_", "resources")) {
+    $src = Join-Path $rel $d
+    if (Test-Path $src) { Copy-Item -Recurse $src (Join-Path $payload $d) }
+}
+# Legal docs at the payload ROOT too — the installer's Terms step reads TOS.md /
+# PRIVACY.md from the package root (separate from the in-app copies under _up_).
 foreach ($doc in @("TOS.md","PRIVACY.md")) {
     $p = Join-Path $BmmRoot $doc
     if (Test-Path $p) { Copy-Item $p $payload }
 }
-# Bundled content for the pre-import options. Lands at <install>/presets/ and the
-# first-run handoff copies it into BMM (languages -> Lang dir, themes -> themes dir).
-$presets = Join-Path $payload "presets"
-New-Item -ItemType Directory -Force (Join-Path $presets "Lang")   | Out-Null
-New-Item -ItemType Directory -Force (Join-Path $presets "themes") | Out-Null
-
-# BMM's language packs, so "Import extra languages" has real files to seed.
-$langSrc = Join-Path $BmmRoot "frontend/Lang"
-if (Test-Path $langSrc) {
-    Get-ChildItem (Join-Path $langSrc "*.json") |
-        Where-Object { $_.Name -ne "template.json" } |
-        ForEach-Object { Copy-Item $_.FullName (Join-Path $presets "Lang") }
-}
-# Maintainer extras: drop more languages / themes / a full bmm-preset.json here.
+# Optional pre-import EXTRAS (languages BEYOND en/fr, themes) -> <install>/presets/.
+# en/fr ship inside the app above and are always present; this is opt-in additions.
+$presets    = Join-Path $payload "presets"
 $userBundle = "examples/bmm/bundle/presets"
-if (Test-Path $userBundle) { Copy-Item -Recurse (Join-Path $userBundle "*") $presets }
+if (Test-Path $userBundle) {
+    New-Item -ItemType Directory -Force $presets | Out-Null
+    Copy-Item -Recurse (Join-Path $userBundle "*") $presets
+}
 if (Test-Path "examples/bmm/bundle/bmm-preset.json") {
     Copy-Item "examples/bmm/bundle/bmm-preset.json" $payload
 }

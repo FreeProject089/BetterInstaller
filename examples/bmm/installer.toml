@@ -129,7 +129,7 @@ id          = "import_languages"
 type        = "bool"
 label_key   = "setup.importLanguages"
 label       = "Import extra language packs"
-description  = "Installs the additional community translations bundled with this setup."
+description  = "Installs additional community translations beyond the built-in English & French (those two are always installed)."
 default     = true
 maps_to     = "settings.import_extra_languages"
 
