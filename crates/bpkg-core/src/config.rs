@@ -37,6 +37,26 @@ pub struct InstallerConfig {
     /// Auto-update settings (remote manifest check + apply). Optional.
     #[serde(default)]
     pub update: Option<UpdateConfig>,
+    /// Installer color theme — override any palette colour from the TOML. Optional.
+    #[serde(default)]
+    pub theme: ThemeConfig,
+}
+
+/// Hex colours (e.g. "#0d1117") overriding the installer's built-in palette. Any
+/// field left out keeps the default. Lets a project re-skin the installer entirely.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ThemeConfig {
+    pub bg: Option<String>,
+    pub panel: Option<String>,
+    pub panel2: Option<String>,
+    pub border: Option<String>,
+    pub accent: Option<String>,
+    pub accent_dark: Option<String>,
+    pub accent_hover: Option<String>,
+    pub text: Option<String>,
+    pub dim: Option<String>,
+    pub danger: Option<String>,
+    pub shadow: Option<String>,
 }
 
 /// Configures the updater: where to look for newer versions and whether to check

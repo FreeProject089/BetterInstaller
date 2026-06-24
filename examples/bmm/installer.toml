@@ -12,9 +12,25 @@ homepage  = "https://github.com/FreeProject089/BetterModsManager"
 platforms = ["windows"]
 
 [branding]
-accent     = "#3b82f6"             # drives the installer accent color
-logo       = "assets/logo.png"
+accent     = "#3b82f6"             # quick accent override (shortcut for [theme].accent)
+logo       = "assets/logo.png"     # shown in the sidebar IF bundled in the payload
 background = "assets/installer-bg.png"
+
+# ─── Theme (optional) ────────────────────────────────────────────────
+# Re-skin the whole installer from one place. Any field left out keeps the
+# default (dark navy + BMM blue). Uncomment + edit to customise.
+# [theme]
+# bg           = "#0d1117"   # window background
+# panel        = "#161b22"   # cards / inputs
+# panel2       = "#1c2333"   # raised surfaces
+# border       = "#2f3b52"
+# accent       = "#3b82f6"   # primary buttons, highlights
+# accent_dark  = "#1e3a8a"
+# accent_hover = "#4b8ef8"
+# text         = "#e6edf3"
+# dim          = "#8b95a7"   # secondary text
+# danger       = "#e3342f"
+# shadow       = "#04060b"
 
 [install]
 default_dir      = "{ProgramFiles}/Better Mods Manager"

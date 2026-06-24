@@ -6,6 +6,12 @@ and reusable by anyone for any app (Windows / Linux / macOS).
 
 > Design doc: `../.Assets/.md/PLAN_BETTER_INSTALLER.md` (v2 body + **v3 Addendum**).
 
+## 📚 Documentation
+
+- **[GUIDE.md](GUIDE.md)** — configure `installer.toml` (every field).
+- **[docs/](docs/README.md)** — architecture · `.bpkg` format · CLI · handoff ·
+  updates · **[updater setup (GitHub / own server)](docs/UPDATER-SETUP.md)** · signing.
+
 ---
 
 ## Why
@@ -28,7 +34,16 @@ and reusable by anyone for any app (Windows / Linux / macOS).
 |---|---|
 | `.bpkg` package format (build / verify / extract, roundtrip-tested) | ✅ |
 | `bpkg` CLI: `pack`, `info`, `verify`, `extract`, `install`, `build`, `keygen`, `sign`, `update` | ✅ |
-| Slint GUI: Welcome → Setup → Progress → Done | ✅ |
+| Slint GUI: Welcome → Terms → Setup → Install → Done | ✅ |
+| **Maintenance mode** GUI (repair / update / uninstall, confirm-gated) | ✅ |
+| **Terms step**: TOS + Privacy rendered as markdown, per-doc accept | ✅ |
+| **Post-install launch** (opt-in "launch now" on the Done page) | ✅ |
+| **Browse** folder picker + writability preflight | ✅ |
+| **Branding**: app logo + name in the sidebar (`[branding].logo`) | ✅ |
+| **Themeable**: re-skin the whole installer from `[theme]` in the TOML | ✅ |
+| **Pre-import**: bundle languages/themes/preset, opt-in on first run | ✅ |
+| **Auto-update config** (`[update]`: remote manifest, deltas, auto-check) | ✅ |
+| Action-aware Done screen (installed / updated / repaired / uninstalled) | ✅ |
 | First-run handoff (`installer-handoff.json`) — installer writes, app reads once | ✅ |
 | Real install (verify + extract + progress) | ✅ |
 | System integration (Windows): shortcuts, `bmm://` protocol, ARP uninstaller, PATH | ✅ |

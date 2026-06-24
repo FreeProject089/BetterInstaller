@@ -15,6 +15,7 @@ maintenance mode (repair / update / uninstall).
 | Use the `bpkg` CLI | [CLI.md](CLI.md) |
 | Implement the first-run handoff in your app | [HANDOFF.md](HANDOFF.md) |
 | Ship updates (manifest, deltas) | [UPDATES.md](UPDATES.md) |
+| Host the updater (GitHub / own server) | [UPDATER-SETUP.md](UPDATER-SETUP.md) |
 | Sign packages | [SIGNING.md](SIGNING.md) |
 
 ## The 60-second mental model

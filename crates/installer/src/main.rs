@@ -153,6 +153,43 @@ fn run_gui(
     if let Some(accent) = cfg.branding.accent.as_deref().and_then(parse_hex) {
         ui.set_accent(accent);
     }
+    // Theme: override any palette colour from `[theme]` in installer.toml.
+    {
+        let pal = ui.global::<Pal>();
+        let th = &cfg.theme;
+        if let Some(c) = th.bg.as_deref().and_then(parse_hex) { pal.set_bg(c); }
+        if let Some(c) = th.panel.as_deref().and_then(parse_hex) { pal.set_panel(c); }
+        if let Some(c) = th.panel2.as_deref().and_then(parse_hex) { pal.set_panel2(c); }
+        if let Some(c) = th.border.as_deref().and_then(parse_hex) { pal.set_border(c); }
+        if let Some(c) = th.accent.as_deref().and_then(parse_hex) { pal.set_accent(c); }
+        if let Some(c) = th.accent_dark.as_deref().and_then(parse_hex) { pal.set_accent_dark(c); }
+        if let Some(c) = th.accent_hover.as_deref().and_then(parse_hex) { pal.set_accent_hover(c); }
+        if let Some(c) = th.text.as_deref().and_then(parse_hex) { pal.set_text(c); }
+        if let Some(c) = th.dim.as_deref().and_then(parse_hex) { pal.set_dim(c); }
+        if let Some(c) = th.danger.as_deref().and_then(parse_hex) { pal.set_danger(c); }
+        if let Some(c) = th.shadow.as_deref().and_then(parse_hex) { pal.set_shadow(c); }
+    }
+    // App branding logo: read `[branding].logo` from the package and show it in the
+    // sidebar. Falls back to the BetterInstaller mark when absent.
+    if let (Some(logo_rel), Some(pkg)) = (cfg.branding.logo.as_deref(), package_path.as_deref()) {
+        if let Ok(mut p) = Package::open(pkg) {
+            if let Ok(map) = p.read_files(&[logo_rel.to_string()]) {
+                if let Some(bytes) = map.get(logo_rel) {
+                    let ext = std::path::Path::new(logo_rel)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("png");
+                    let tmp = std::env::temp_dir()
+                        .join(format!("bi-logo-{}.{ext}", std::process::id()));
+                    if std::fs::write(&tmp, bytes).is_ok() {
+                        if let Ok(img) = slint::Image::load_from_path(&tmp) {
+                            ui.set_app_logo(img);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // UI language: a non-"auto" default on the `language` setup option, else the OS.
     let lang = cfg
@@ -619,9 +656,11 @@ fn run_gui(
                     std::thread::spawn(move || {
                         let result = run_real_install(weak.clone(), &pkg, &dest, &comps, &integ);
                         let _ = weak.upgrade_in_event_loop(move |ui| {
+                            let name = ui.get_app_name().to_string();
                             match result {
                                 Ok(n) => {
                                     ui.set_success(handoff_ok);
+                                    ui.set_result_title(format!("{name} was installed").into());
                                     ui.set_result_message(
                                         format!(
                                             "Installed {n} files to {}\n{}",
@@ -634,6 +673,7 @@ fn run_gui(
                                 }
                                 Err(e) => {
                                     ui.set_success(false);
+                                    ui.set_result_title("Installation failed".into());
                                     ui.set_result_message(format!("Install failed: {e}").into());
                                 }
                             }
@@ -659,6 +699,9 @@ fn run_gui(
                         if *p >= 1.0 {
                             ui.set_progress(1.0);
                             ui.set_success(ok);
+                            ui.set_result_title(
+                                format!("{} was installed", ui.get_app_name()).into(),
+                            );
                             ui.set_result_message(final_msg.clone().into());
                             ui.set_page(4);
                             if let Some(t) = pt.borrow().as_ref() {
@@ -695,6 +738,7 @@ fn run_gui(
                 Some(p) => p.clone(),
                 None => {
                     ui.set_success(false);
+                    ui.set_result_title("Repair failed".into());
                     ui.set_result_message("Nothing to repair: no package embedded.".into());
                     ui.set_page(4);
                     return;
@@ -750,6 +794,10 @@ fn run_gui(
                         match res {
                             Ok(n) => {
                                 ui.set_success(true);
+                                ui.set_result_title(
+                                    format!("{} was updated to v{}", ui.get_app_name(), m.version)
+                                        .into(),
+                                );
                                 ui.set_result_message(
                                     format!(
                                         "Updated to v{}: {n} files in {}",
@@ -762,6 +810,7 @@ fn run_gui(
                             }
                             Err(e) => {
                                 ui.set_success(false);
+                                ui.set_result_title("Update failed".into());
                                 ui.set_result_message(format!("Update failed: {e}").into());
                             }
                         }
@@ -777,6 +826,7 @@ fn run_gui(
                 Some(p) => p.clone(),
                 None => {
                     ui.set_success(false);
+                    ui.set_result_title("Update failed".into());
                     ui.set_result_message("No update package available.".into());
                     ui.set_page(4);
                     return;
@@ -817,10 +867,14 @@ fn run_gui(
                     match result {
                         Ok(()) => {
                             ui.set_success(true);
-                            ui.set_result_message(format!("{name} was uninstalled.").into());
+                            ui.set_result_title(format!("{name} was uninstalled").into());
+                            ui.set_result_message(
+                                format!("{name} and its files were removed.").into(),
+                            );
                         }
                         Err(e) => {
                             ui.set_success(false);
+                            ui.set_result_title("Uninstall failed".into());
                             ui.set_result_message(format!("Uninstall failed: {e}").into());
                         }
                     }
@@ -1206,9 +1260,11 @@ fn spawn_reinstall(
     std::thread::spawn(move || {
         let result = run_real_install(weak.clone(), &pkg, &dest, &comps, &integ);
         let _ = weak.upgrade_in_event_loop(move |ui| {
+            let name = ui.get_app_name().to_string();
             match result {
                 Ok(n) => {
                     ui.set_success(true);
+                    ui.set_result_title(format!("{name} was {}", done_verb.to_lowercase()).into());
                     ui.set_result_message(
                         format!("{done_verb}: {n} files in {}", dest.display()).into(),
                     );
@@ -1216,6 +1272,7 @@ fn spawn_reinstall(
                 }
                 Err(e) => {
                     ui.set_success(false);
+                    ui.set_result_title(format!("{done_verb} failed").into());
                     ui.set_result_message(format!("{done_verb} failed: {e}").into());
                 }
             }

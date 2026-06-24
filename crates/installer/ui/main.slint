@@ -2,18 +2,20 @@ import { ComboBox, ScrollView } from "std-widgets.slint";
 
 // Brutalist BMM palette: dark navy + BMM blue (#3b82f6), thick borders, hard
 // (zero-blur) offset shadows, flat fills, bold type.
-global Pal {
-    out property <color> bg: #0d1117;
-    out property <color> panel: #161b22;
-    out property <color> panel2: #1c2333;
-    out property <color> border: #2f3b52;
-    out property <color> accent: #3b82f6;
-    out property <color> accent-dark: #1e3a8a;
-    out property <color> accent-hover: #4b8ef8;
-    out property <color> text: #e6edf3;
-    out property <color> dim: #8b95a7;
-    out property <color> danger: #e3342f;
-    out property <color> shadow: #04060b;
+// Every colour is `in-out` so the Rust side can override it from the `[theme]`
+// section of installer.toml — the whole installer is themeable from one TOML.
+export global Pal {
+    in-out property <color> bg: #0d1117;
+    in-out property <color> panel: #161b22;
+    in-out property <color> panel2: #1c2333;
+    in-out property <color> border: #2f3b52;
+    in-out property <color> accent: #3b82f6;
+    in-out property <color> accent-dark: #1e3a8a;
+    in-out property <color> accent-hover: #4b8ef8;
+    in-out property <color> text: #e6edf3;
+    in-out property <color> dim: #8b95a7;
+    in-out property <color> danger: #e3342f;
+    in-out property <color> shadow: #04060b;
 }
 
 export struct OptionRow {
@@ -461,6 +463,7 @@ component ProgressPage inherits VerticalLayout {
 component CompletePage inherits VerticalLayout {
     in property <string> app-name;
     in property <bool> success;
+    in property <string> result-title;     // e.g. "X was updated" / "X was uninstalled"
     in property <string> result-message;
     in property <[LaunchRow]> launch-items;
     callback launch-toggled(string, bool);
@@ -480,7 +483,8 @@ component CompletePage inherits VerticalLayout {
         }
     }
     Text {
-        text: root.success ? app-name + " is installed" : "Installation failed";
+        text: root.result-title != "" ? root.result-title
+            : (root.success ? app-name + " is installed" : "Installation failed");
         font-size: 21px; font-weight: 900; color: white; horizontal-alignment: center;
     }
     Text { text: result-message; font-size: 12px; color: Pal.dim; horizontal-alignment: center; wrap: word-wrap; }
@@ -641,6 +645,7 @@ export component MainWindow inherits Window {
     in property <string> new-version;
     in property <bool> update-available: false;
     in property <string> app-name: "Application";
+    in property <image> app-logo;
     in property <string> app-version: "1.0.0";
     in property <string> publisher: "";
     in property <bool> signed: false;
@@ -660,6 +665,7 @@ export component MainWindow inherits Window {
     in property <bool> can-proceed: true;
     in property <bool> success: true;
     in property <string> result-message;
+    in property <string> result-title;
     in property <color> accent: #3b82f6;
 
     in property <string> t-next: "Next";
@@ -699,6 +705,7 @@ export component MainWindow inherits Window {
             close-window => { root.close-window(); }
         }
         HorizontalLayout {
+            vertical-stretch: 1;          // fill the window below the title bar
             // Sidebar
             Rectangle {
                 width: 216px;
@@ -707,21 +714,31 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     padding: 24px;
                     spacing: 6px;
+                    // Branding header: the app's logo (if provided) + the app name.
                     HorizontalLayout {
                         spacing: 10px;
                         alignment: start;
-                        Image {
+                        if root.app-logo.width > 0 : Image {
+                            source: root.app-logo;
+                            width: 28px; height: 28px;
+                            image-fit: contain;
+                            vertical-alignment: center;
+                        }
+                        if root.app-logo.width <= 0 : Image {
                             source: @image-url("../../../BetterInstaller.png");
                             width: 28px; height: 28px;
                             image-fit: contain;
-                        }
-                        Text {
-                            text: "BetterInstaller";
-                            font-size: 16px; font-weight: 900; color: white;
                             vertical-alignment: center;
                         }
+                        Text {
+                            text: root.app-name;
+                            font-size: 16px; font-weight: 900; color: white;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                        }
                     }
-                    Rectangle { height: 20px; }
+                    Rectangle { vertical-stretch: 1; }   // push the steps toward the bottom
                     VerticalLayout {
                         spacing: 16px;
                         StepItem { label: "Welcome"; index: 0; current: root.page; }
@@ -787,6 +804,7 @@ export component MainWindow inherits Window {
                         if root.page == 4 : CompletePage {
                             app-name: root.app-name;
                             success: root.success;
+                            result-title: root.result-title;
                             result-message: root.result-message;
                             launch-items: root.launch-items;
                             launch-toggled(id, v) => { root.launch-toggled(id, v); }

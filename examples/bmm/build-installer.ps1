@@ -51,6 +51,13 @@ foreach ($doc in @("TOS.md","PRIVACY.md")) {
     $p = Join-Path $BmmRoot $doc
     if (Test-Path $p) { Copy-Item $p $payload }
 }
+
+# App logo for the installer sidebar ([branding].logo = "assets/logo.png").
+$logoSrc = Join-Path $BmmRoot "src-tauri/icons/128x128.png"
+if (Test-Path $logoSrc) {
+    New-Item -ItemType Directory -Force (Join-Path $payload "assets") | Out-Null
+    Copy-Item $logoSrc (Join-Path $payload "assets/logo.png")
+}
 # Optional pre-import EXTRAS (languages BEYOND en/fr, themes) -> <install>/presets/.
 # en/fr ship inside the app above and are always present; this is opt-in additions.
 $presets    = Join-Path $payload "presets"
