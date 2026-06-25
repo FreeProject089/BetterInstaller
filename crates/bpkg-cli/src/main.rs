@@ -355,7 +355,7 @@ fn cmd_install(path: &Path, dest: &Path, components: Option<&[String]>) -> Resul
     let name = pkg.manifest.app.name.clone();
     let written = pkg
         .install_with_progress(dest, components, |done, total, file| {
-            let pct = if total > 0 { done * 100 / total } else { 100 };
+            let pct = (done * 100).checked_div(total).unwrap_or(100);
             print!("\r  [{pct:3}%] {done}/{total}  {file:<48}");
             let _ = std::io::Write::flush(&mut std::io::stdout());
         })

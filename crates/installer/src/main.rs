@@ -936,6 +936,17 @@ fn run_real_install(
         .map_err(|e| e.to_string())?;
     }
 
+    // If a previous version is running, close it first — otherwise its locked .exe /
+    // resources make the overwrite (install / repair / update) fail. No-op on a fresh
+    // install where the dir doesn't exist yet.
+    if dest.exists() {
+        let _ = weak.upgrade_in_event_loop(|ui| {
+            ui.set_progress_label("Closing the running app…".into());
+        });
+        kill_running_apps(dest);
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    }
+
     // Writability preflight — fail with a clear message instead of a cryptic I/O
     // error if the chosen folder needs administrator rights (e.g. Program Files).
     if let Err(e) = std::fs::create_dir_all(dest) {
@@ -964,11 +975,10 @@ fn run_real_install(
     let mut last_pct = -1i32;
     let written = p
         .install_with_progress(dest, comp, |done, total, file| {
-            let pct = if total > 0 {
-                (done * 100 / total) as i32
-            } else {
-                100
-            };
+            let pct = (done * 100)
+                .checked_div(total)
+                .map(|p| p as i32)
+                .unwrap_or(100);
             if pct != last_pct {
                 last_pct = pct;
                 let fname = file.to_string();
