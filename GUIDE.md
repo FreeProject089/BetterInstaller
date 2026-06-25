@@ -43,10 +43,11 @@ cargo build --release -p bpkg-cli -p installer
                             --config installer.toml --package app.bpkg --out App-Setup.exe
 ```
 
-For BMM, all of this is automated — just run:
+A complete worked example lives in `examples/` — its build script automates every
+step above (assemble payload → pack → sign → stamp → emit `update.json`):
 
 ```powershell
-./examples/bmm/build-installer.ps1     # from the BetterInstaller root
+./examples/<app>/build-installer.ps1     # from the BetterInstaller root
 ```
 
 ---
@@ -57,8 +58,8 @@ For BMM, all of this is automated — just run:
 
 ```toml
 [app]
-id        = "com.bettermm.app"   # MUST equal the app's data-dir identifier *
-name      = "Better Mods Manager"
+id        = "com.acme.editor"   # MUST equal the app's data-dir identifier *
+name      = "Acme Editor"
 version   = "1.0.0"
 publisher = "BetterCommunity"
 homepage  = "https://…"          # optional
@@ -82,9 +83,9 @@ background = "assets/installer-bg.png"
 
 ```toml
 [install]
-default_dir      = "{ProgramFiles}/Better Mods Manager"  # see note below
+default_dir      = "{ProgramFiles}/Acme Editor"  # see note below
 main_exe         = "better-mods-manager.exe"  # for shortcuts + protocol
-protocol         = "bmm"                       # registers bmm:// deep links
+protocol         = "acme"                       # registers acme:// deep links
 create_shortcuts = true
 desktop_shortcut = true
 allow_portable   = true
@@ -148,7 +149,7 @@ setup is newer than what's installed (it re-extracts the embedded package).
 ```toml
 [[components]]
 id          = "core"
-name        = "Better Mods Manager"
+name        = "Acme Editor"
 description = "Main application — required."
 required    = true       # always installed, checkbox disabled
 default     = true        # pre-checked
@@ -160,7 +161,7 @@ name        = "MCP AI Server (sidecar)"
 required    = false
 default     = true
 size_mb     = 7
-paths       = ["bmm-mcp-server.exe", "mcp/"]   # payload paths owned by this component
+paths       = ["acme-helper.exe", "mcp/"]   # payload paths owned by this component
 ```
 
 `paths` are forward-slash prefixes; files matching none belong to `core` and are
@@ -221,14 +222,14 @@ maps_to = "settings.import_starter_themes"
 ```toml
 [[launch]]
 id = "app"
-label = "Launch Better Mods Manager"
+label = "Launch Acme Editor"
 exe = "better-mods-manager.exe"   # relative to the install dir
 default = true                     # pre-checked
 
 [[launch]]
 id = "mcp"
 label = "Start the MCP AI server now"
-exe = "bmm-mcp-server.exe"
+exe = "acme-helper.exe"
 default = false                    # opt-in
 component = "mcp-server"           # only offered if this component was installed
 ```
@@ -248,7 +249,7 @@ The installer writes (to `%APPDATA%/<app.id>/installer-handoff.json`):
   "source": "betterinstaller",
   "app_version": "1.0.0",
   "components": ["core", "mcp-server"],
-  "install_dir": "C:\\Users\\me\\AppData\\Local\\Programs\\Better Mods Manager",
+  "install_dir": "C:\\Users\\me\\AppData\\Local\\Programs\\Acme Editor",
   "settings": {
     "language": "fr",
     "tos_accepted": true,
@@ -265,19 +266,19 @@ The app must, **once** on first launch:
 2. Apply `settings` to its own config (clamp/validate every value).
 3. Rename it to `installer-handoff.consumed.json` so it never re-applies.
 
-BMM does this in `consume_installer_handoff` (Rust) + a small hook in `app.ts`.
+A typical app reads it in its own startup code (validate → apply → rename). See the
+worked example under `examples/` for one concrete implementation.
 
-### Pre-import presets (themes / languages / catalogue / plugins)
+### Pre-import presets (ship ready-made content)
 
-To ship ready-made content, drop a **BMM export file** (the normal *Export settings*
-`_bmm_backup` JSON) at `examples/bmm/bundle/bmm-preset.json`. The build script bundles
-`bundle/*` into the payload, so it lands in the install dir. When an `import_*` option
-stays checked, the handoff returns the preset path and BMM imports it via its existing
-`import_app_data` (themes, translations, catalogue, plugins, settings). Uncheck the
-option → nothing is imported.
+If your app can import its own export/backup file, you can ship one so a fresh install
+starts pre-configured. Drop the file in your payload's `bundle/` folder; the build
+bundles `bundle/*` into the install dir. Tie it to a `[[setup_option]]` of kind
+`import_*`: when the user leaves that option checked, the handoff returns the bundled
+file's path and your app imports it on first run; unchecked → nothing is imported.
 
-> Make a preset: in BMM, **Settings → Export**, pick what to include, save the file,
-> rename it `bmm-preset.json`, and put it in `examples/bmm/bundle/`.
+> The `examples/` config wires this end-to-end (a checkbox that imports a bundled
+> settings/theme/language preset) — copy its `bundle/` layout as a starting point.
 
 ---
 

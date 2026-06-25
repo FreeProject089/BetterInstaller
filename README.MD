@@ -1,7 +1,7 @@
 # BetterInstaller
 
 A proprietary, cross-platform **installer / updater framework** — one engine, one
-`installer.toml` per project. Built to replace NSIS / MSI for BMM and any other app,
+`installer.toml` per project. Built to replace NSIS / MSI for any desktop app,
 and reusable by anyone for any app (Windows / Linux / macOS).
 
 > Design doc: `../.Assets/.md/PLAN_BETTER_INSTALLER.md` (v2 body + **v3 Addendum**).
@@ -46,7 +46,7 @@ and reusable by anyone for any app (Windows / Linux / macOS).
 | Action-aware Done screen (installed / updated / repaired / uninstalled) | ✅ |
 | First-run handoff (`installer-handoff.json`) — installer writes, app reads once | ✅ |
 | Real install (verify + extract + progress) | ✅ |
-| System integration (Windows): shortcuts, `bmm://` protocol, ARP uninstaller, PATH | ✅ |
+| System integration (Windows): shortcuts, custom `app://` protocol, ARP uninstaller, PATH | ✅ |
 | Uninstall (`--uninstall`, reverses everything) | ✅ |
 | `asInvoker` manifest (no spurious UAC prompt) | ✅ |
 | **Single self-extracting installer** (`bpkg build` — config + payload in one exe) | ✅ |
@@ -87,7 +87,7 @@ crates/
   installer/   # the Slint GUI binary (`betterinstaller`)
     ui/main.slint
 examples/
-  bmm/installer.toml   # Better Mods Manager reference config
+  bmm/                 # a complete, real worked example (config + build script)
 .github/workflows/ci.yml
 ```
 
@@ -126,17 +126,17 @@ bpkg update app-v2.bpkg --dir <install-dir>
 
 ---
 
-## `installer.toml` reference (BMM example)
+## `installer.toml` reference (example)
 
 ```toml
 [app]
-id = "com.bettermm.app"; name = "Better Mods Manager"; version = "1.0.0"
+id = "com.acme.editor"; name = "Acme Editor"; version = "1.0.0"
 publisher = "BetterCommunity"; platforms = ["windows"]
 
 [install]
-default_dir = "{ProgramFiles}/Better Mods Manager"
+default_dir = "{ProgramFiles}/Acme Editor"
 main_exe = "better-mods-manager.exe"   # for shortcuts + protocol
-protocol = "bmm"                        # registers bmm:// deep links
+protocol = "acme"                      # registers acme:// deep links
 create_shortcuts = true; desktop_shortcut = true; allow_portable = true
 
 [[components]]                          # selectable parts (e.g. MCP sidecar)
@@ -183,7 +183,7 @@ data dir. The app reads it **once** on first launch, applies it, and renames it 
                 "skip_tutorial": true, "telemetry": false } }
 ```
 
-BMM consumes it Rust-side at boot (`consume_installer_handoff`) → no privacy/ToS/language/
+The app consumes it at boot (e.g. a `consume_installer_handoff` routine) → no privacy/ToS/language/
 tutorial modals.
 
 ---

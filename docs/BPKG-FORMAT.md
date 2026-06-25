@@ -36,8 +36,8 @@ UTF-8 JSON, `manifest_len` bytes, immediately after the header:
 {
   "schema": 1,
   "app": {
-    "id": "com.bettermm.app",
-    "name": "Better Mods Manager",
+    "id": "com.acme.editor",
+    "name": "Acme Editor",
     "version": "1.0.0",
     "publisher": "BetterCommunity",
     "homepage": "https://…",

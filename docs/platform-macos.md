@@ -20,8 +20,8 @@ the bundle's `Info.plist` rather than registered at runtime.
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
-      <key>CFBundleURLName</key>     <string>com.bettermm.app</string>
-      <key>CFBundleURLSchemes</key>  <array><string>bmm</string></array>
+      <key>CFBundleURLName</key>     <string>com.acme.editor</string>
+      <key>CFBundleURLSchemes</key>  <array><string>acme</string></array>
     </dict>
   </array>
   ```

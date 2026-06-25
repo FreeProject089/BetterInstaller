@@ -157,17 +157,39 @@ fn run_gui(
     {
         let pal = ui.global::<Pal>();
         let th = &cfg.theme;
-        if let Some(c) = th.bg.as_deref().and_then(parse_hex) { pal.set_bg(c); }
-        if let Some(c) = th.panel.as_deref().and_then(parse_hex) { pal.set_panel(c); }
-        if let Some(c) = th.panel2.as_deref().and_then(parse_hex) { pal.set_panel2(c); }
-        if let Some(c) = th.border.as_deref().and_then(parse_hex) { pal.set_border(c); }
-        if let Some(c) = th.accent.as_deref().and_then(parse_hex) { pal.set_accent(c); }
-        if let Some(c) = th.accent_dark.as_deref().and_then(parse_hex) { pal.set_accent_dark(c); }
-        if let Some(c) = th.accent_hover.as_deref().and_then(parse_hex) { pal.set_accent_hover(c); }
-        if let Some(c) = th.text.as_deref().and_then(parse_hex) { pal.set_text(c); }
-        if let Some(c) = th.dim.as_deref().and_then(parse_hex) { pal.set_dim(c); }
-        if let Some(c) = th.danger.as_deref().and_then(parse_hex) { pal.set_danger(c); }
-        if let Some(c) = th.shadow.as_deref().and_then(parse_hex) { pal.set_shadow(c); }
+        if let Some(c) = th.bg.as_deref().and_then(parse_hex) {
+            pal.set_bg(c);
+        }
+        if let Some(c) = th.panel.as_deref().and_then(parse_hex) {
+            pal.set_panel(c);
+        }
+        if let Some(c) = th.panel2.as_deref().and_then(parse_hex) {
+            pal.set_panel2(c);
+        }
+        if let Some(c) = th.border.as_deref().and_then(parse_hex) {
+            pal.set_border(c);
+        }
+        if let Some(c) = th.accent.as_deref().and_then(parse_hex) {
+            pal.set_accent(c);
+        }
+        if let Some(c) = th.accent_dark.as_deref().and_then(parse_hex) {
+            pal.set_accent_dark(c);
+        }
+        if let Some(c) = th.accent_hover.as_deref().and_then(parse_hex) {
+            pal.set_accent_hover(c);
+        }
+        if let Some(c) = th.text.as_deref().and_then(parse_hex) {
+            pal.set_text(c);
+        }
+        if let Some(c) = th.dim.as_deref().and_then(parse_hex) {
+            pal.set_dim(c);
+        }
+        if let Some(c) = th.danger.as_deref().and_then(parse_hex) {
+            pal.set_danger(c);
+        }
+        if let Some(c) = th.shadow.as_deref().and_then(parse_hex) {
+            pal.set_shadow(c);
+        }
     }
     // App branding logo: read `[branding].logo` from the package and show it in the
     // sidebar. Falls back to the BetterInstaller mark when absent.
@@ -179,8 +201,8 @@ fn run_gui(
                         .extension()
                         .and_then(|e| e.to_str())
                         .unwrap_or("png");
-                    let tmp = std::env::temp_dir()
-                        .join(format!("bi-logo-{}.{ext}", std::process::id()));
+                    let tmp =
+                        std::env::temp_dir().join(format!("bi-logo-{}.{ext}", std::process::id()));
                     if std::fs::write(&tmp, bytes).is_ok() {
                         if let Ok(img) = slint::Image::load_from_path(&tmp) {
                             ui.set_app_logo(img);

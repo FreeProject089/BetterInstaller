@@ -64,9 +64,27 @@ recent *non-prerelease* release. So:
 `manifest_url` stays `…/releases/latest/download/update.json` forever — each release
 just publishes a fresh `update.json`.
 
-> Automate it: a CI job (or BMM's `scripts/gen-update-manifest.mjs`) can generate
-> `update.json` from the built package's version and the asset URLs, then `gh release
-> create … update.json App-*.bpkg`.
+> Automate it: a CI job (or your build script) can generate `update.json` from the
+> built package's version and the asset URLs, then `gh release create … update.json
+> App-*.bpkg`.
+
+### Worked example (`examples/`)
+
+The bundled example's build script **emits `update.json` automatically** (it reads
+`[app].version` and derives the `.bpkg` URL from `[update].manifest_url`). So a release
+is three uploads:
+
+```
+gh release create v1.0.0 \
+  <App>-Setup.exe \
+  app.bpkg \
+  update.json
+```
+
+Its `[update]` block is already set (`manifest_url = …/releases/latest/download/update.json`,
+`auto_check = true`, `allow_delta = true`), so an installed copy shows **Update** in
+maintenance mode the moment a newer release is published. Bump `[app].version`,
+rebuild, upload — done.
 
 ---
 
@@ -75,12 +93,12 @@ just publishes a fresh `update.json`.
 Host the files anywhere that serves plain HTTP(S) (nginx, S3/R2/B2, a static host):
 
 ```
-https://downloads.example.com/bmm/update.json
-https://downloads.example.com/bmm/App-1.2.0.bpkg
-https://downloads.example.com/bmm/1.1.0-to-1.2.0.patch
+https://downloads.example.com/myapp/update.json
+https://downloads.example.com/myapp/App-1.2.0.bpkg
+https://downloads.example.com/myapp/1.1.0-to-1.2.0.patch
 ```
 
-1. `manifest_url = "https://downloads.example.com/bmm/update.json"`.
+1. `manifest_url = "https://downloads.example.com/myapp/update.json"`.
 2. On each release, upload the signed `.bpkg` (+ optional patch) and overwrite
    `update.json` with the new `version` + URLs.
 3. Serve with correct content types and **CORS not required** (the updater fetches
@@ -88,7 +106,7 @@ https://downloads.example.com/bmm/1.1.0-to-1.2.0.patch
 
 Minimal nginx:
 ```nginx
-location /bmm/ {
+location /myapp/ {
     root /var/www;
     autoindex off;
     add_header Cache-Control "no-cache" always;   # so update.json is re-fetched

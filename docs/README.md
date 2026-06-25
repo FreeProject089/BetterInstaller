@@ -48,7 +48,7 @@ BetterInstaller/
 │   ├── bpkg-core/     # library: format, signing, handoff, update, platform ops
 │   ├── bpkg-cli/      # the `bpkg` command-line tool
 │   └── installer/     # the Slint GUI engine (betterinstaller.exe)
-├── examples/bmm/      # a complete real config (Better Mods Manager)
+├── examples/bmm/      # a complete real config (Acme Editor)
 ├── GUIDE.md           # installer.toml configuration reference
 └── docs/              # this folder
 ```

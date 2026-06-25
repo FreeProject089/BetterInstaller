@@ -87,5 +87,28 @@ if (-not (Test-Path $priv)) {
 Write-Host "[5/5] Building $Out ..."
 & $bpkg build --installer $inst --config $Config --package $pkg --out $Out
 
+# 6) Emit update.json — the auto-update manifest. Upload BOTH this file and the
+#    signed bmm.bpkg to the GitHub release so installed copies can auto-update.
+#    (manifest_url in installer.toml points at .../releases/latest/download/update.json)
+$cfgText = Get-Content $Config -Raw
+$verMatch = [regex]::Match($cfgText, '(?m)^\s*version\s*=\s*"([^"]+)"')
+$urlMatch = [regex]::Match($cfgText, '(?m)^\s*manifest_url\s*=\s*"([^"]+)"')
+if ($verMatch.Success -and $urlMatch.Success) {
+    $ver    = $verMatch.Groups[1].Value
+    # The .bpkg lives next to update.json in the same release.
+    $pkgUrl = ($urlMatch.Groups[1].Value -replace 'update\.json$', 'bmm.bpkg')
+    $manifest = [ordered]@{
+        version = $ver
+        url     = $pkgUrl
+        notes   = "Better Mods Manager $ver"
+    }
+    $manifestPath = "examples/bmm/update.json"
+    ($manifest | ConvertTo-Json) | Set-Content -Encoding ASCII $manifestPath
+    Write-Host "      update.json -> $manifestPath (version $ver)"
+} else {
+    Write-Host "      (skipped update.json: version/manifest_url not found in config)"
+}
+
 Write-Host ""
 Write-Host "Done -> $Out"
+Write-Host "Release upload: $Out (setup) + examples/bmm/bmm.bpkg + examples/bmm/update.json"

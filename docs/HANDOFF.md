@@ -19,7 +19,7 @@ File name: `[handoff].file` (default `installer-handoff.json`).
   "app_version": "1.0.0",
   "installed_at": "2026-06-24T10:57:00Z",
   "components": ["core", "mcp-server"],
-  "install_dir": "C:\\Users\\me\\AppData\\Local\\Programs\\Better Mods Manager",
+  "install_dir": "C:\\Users\\me\\AppData\\Local\\Programs\\Acme Editor",
   "settings": {
     "language": "fr",
     "tos_accepted": true,
@@ -43,12 +43,15 @@ gets a concrete choice).
    blindly. Unknown keys are ignored.
 3. Rename it to `installer-handoff.consumed.json` so it never re-applies.
 
-### Reference implementation (BMM, Rust + TS)
-- `src-tauri/src/commands/installer_handoff.rs` — `consume_installer_handoff`:
-  reads the file, applies settings, copies bundled presets, marks consumed,
-  returns a small result (legal accepted, language set, preset path, counts).
-- `frontend/src/ui/app.ts` — calls the command before the first-run modals, sets the
-  localStorage gates, and imports any bundled preset via `import_app_data`.
+### Reference shape (any Tauri / Electron / native app)
+- A backend routine (e.g. `consume_installer_handoff`): reads the file, applies
+  settings, copies bundled presets, marks consumed, returns a small result (legal
+  accepted, language set, preset path, counts).
+- A frontend hook called before your first-run modals: sets the "already onboarded"
+  gates and imports any bundled preset via your normal import path.
+
+> The bundled example under `examples/` implements exactly this end-to-end — use it
+> as a template for your own app.
 
 ## Pre-import (bundled content)
 
@@ -58,7 +61,7 @@ checked, the app copies those files in on first run:
 
 - `presets/Lang/*.json` → the app's language dir (extra community languages).
 - `presets/themes/*.json` → the app's themes dir.
-- a full export `bmm-preset.json` → imported via the app's normal backup importer.
+- a full settings export (your app's backup file) → imported via the app's normal backup importer.
 
-Built-in languages (en/fr for BMM) ship inside the app and are always present — the
+Built-in languages ship inside the app and are always present — the
 `import_*` options only add content **beyond** the built-ins.
