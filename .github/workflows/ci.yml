@@ -24,12 +24,12 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      # Slint's GUI backend needs these on Linux.
+      # Slint's GUI backend + rfd's GTK3 file-dialog backend need these on Linux.
       - name: Linux GUI deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          sudo apt-get install -y libfontconfig-dev libxcb-shape0-dev libxcb-xfixes0-dev libgtk-3-dev
 
       - uses: Swatinem/rust-cache@v2
 

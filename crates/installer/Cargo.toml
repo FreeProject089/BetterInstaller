@@ -17,8 +17,14 @@ slint.workspace = true
 i-slint-backend-winit.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
-# Native folder picker for the "Browse…" button (Windows uses the OS dialog).
+# Native folder picker for the "Browse…" button. Windows + macOS use the OS dialog
+# (rfd's native backend). On Linux rfd needs an explicit backend feature, otherwise
+# its build script aborts ("choose at least one backend: gtk3 or xdg-portal").
 rfd = { version = "0.15", default-features = false }
+
+# Linux: pick the GTK3 backend for the native file dialog.
+[target.'cfg(target_os = "linux")'.dependencies]
+rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 
 [build-dependencies]
 slint-build.workspace = true
