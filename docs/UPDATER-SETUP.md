@@ -7,10 +7,16 @@ new signed `.bpkg` with rollback. Two common hosting setups below.
 ```toml
 # installer.toml
 [update]
-manifest_url = "https://…/update.json"   # the only thing that must be stable
-auto_check   = true
-allow_delta  = true
+manifest_url  = "https://…/update.json"   # primary source (stable URL)
+manifest_urls = []                        # OPTIONAL extra sources / mirrors (see below)
+auto_check    = true
+allow_delta   = true
 ```
+
+> **Multiple sources (optional).** Set `manifest_urls` to extra manifest URLs (a mirror,
+> your own server…). The updater fetches **all** sources and uses the **newest** version
+> found; unreachable sources are skipped. Leave it `[]` for a single source — multi is
+> opt-in and fully backward-compatible.
 
 The manifest:
 ```json

@@ -49,13 +49,21 @@ public_key        = "8e0647c277dd67158d34dd1c10d0a2d97191716dc4f92aebde6d349d1c0
 require_signature = true
 
 # ─── Auto-update ─────────────────────────────────────────────────────
-# In maintenance mode the installer checks this manifest; if it advertises a
-# newer version, the "Update" button downloads + applies it (delta when offered,
-# with rollback on failure). Point it at a stable JSON URL you control.
+# In maintenance mode the installer checks the manifest(s); if a newer version is
+# advertised, the "Update" button downloads + applies it (delta when offered, with
+# rollback on failure).
 [update]
-manifest_url = "https://github.com/FreeProject089/BetterModsManager/releases/latest/download/update.json"
-auto_check   = true
-allow_delta  = true
+# Primary source — GitHub Releases (stable "latest" URL, never changes).
+manifest_url  = "https://github.com/FreeProject089/BetterModsManager/releases/latest/download/update.json"
+
+# OPTIONAL extra sources (mirrors / your own server). The updater fetches ALL sources
+# and uses the NEWEST version found; unreachable ones are skipped. Leave empty for a
+# single GitHub source — fill it in later during a patch, e.g.:
+#   manifest_urls = ["https://downloads.bettermods.app/update.json"]
+manifest_urls = []
+
+auto_check    = true
+allow_delta   = true
 
 # ─── Optional components ─────────────────────────────────────────────
 [[components]]

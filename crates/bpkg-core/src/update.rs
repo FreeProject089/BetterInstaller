@@ -56,13 +56,60 @@ pub fn is_newer(a: &str, b: &str) -> bool {
 
 /// Fetch the manifest at `manifest_url`; return it only if newer than `current_version`.
 pub fn check_remote(manifest_url: &str, current_version: &str) -> Result<Option<UpdateManifest>> {
-    let text = crate::net::fetch_text(manifest_url)?;
-    let m: UpdateManifest = serde_json::from_str(&text)?;
+    let m = fetch_manifest(manifest_url)?;
     Ok(if is_newer(&m.version, current_version) {
         Some(m)
     } else {
         None
     })
+}
+
+/// Fetch + parse one manifest URL.
+fn fetch_manifest(url: &str) -> Result<UpdateManifest> {
+    let text = crate::net::fetch_text(url)?;
+    let m: UpdateManifest = serde_json::from_str(&text)?;
+    Ok(m)
+}
+
+/// Check **several** manifest sources and return the single newest update across all of
+/// them. Sources that fail to fetch/parse are skipped (one dead mirror never blocks the
+/// others). Returns:
+/// - `Ok(Some(m))` — the highest-version manifest found, when it's newer than `current`;
+/// - `Ok(None)`    — at least one source was reachable but none is newer;
+/// - `Err(_)`      — **every** source failed (so the caller can report it instead of
+///   silently claiming "up to date").
+///
+/// Backward-compatible: pass a single URL and it behaves like [`check_remote`], so
+/// multi-source is always opt-in (just list more URLs).
+pub fn check_remote_multi(
+    urls: &[String],
+    current_version: &str,
+) -> Result<Option<UpdateManifest>> {
+    let mut best: Option<UpdateManifest> = None;
+    let mut ok_count = 0u32;
+    let mut last_err: Option<Error> = None;
+
+    for url in urls.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        match fetch_manifest(url) {
+            Ok(m) => {
+                ok_count += 1;
+                // Keep the highest version seen so far across all reachable sources.
+                let take = best
+                    .as_ref()
+                    .is_none_or(|b| is_newer(&m.version, &b.version));
+                if take {
+                    best = Some(m);
+                }
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    if ok_count == 0 {
+        return Err(last_err.unwrap_or_else(|| Error::Other("no update source configured".into())));
+    }
+    // Only offer the best one if it's actually newer than what's installed.
+    Ok(best.filter(|m| is_newer(&m.version, current_version)))
 }
 
 /// Download the new package — using a binary delta from `current_version` when one

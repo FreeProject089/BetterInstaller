@@ -90,7 +90,7 @@ fn run_check_update(cfg: &InstallerConfig) -> anyhow::Result<()> {
             "update_available": false,
             "error": "no [update] manifest_url configured",
         }),
-        Some(uc) => match bpkg_core::update::check_remote(&uc.manifest_url, &current) {
+        Some(uc) => match bpkg_core::update::check_remote_multi(&uc.sources(), &current) {
             Ok(Some(m)) => serde_json::json!({
                 "app": app_name,
                 "current_version": current,
@@ -658,11 +658,11 @@ fn run_gui(
     // the maintenance "Update" button on when a newer version is published online.
     if maintenance {
         if let Some(uc) = cfg.update.as_ref().filter(|u| u.auto_check) {
-            let url = uc.manifest_url.clone();
+            let urls = uc.sources();
             let cur = current_version.clone();
             let weak = ui.as_weak();
             std::thread::spawn(move || {
-                if let Ok(Some(m)) = bpkg_core::update::check_remote(&url, &cur) {
+                if let Ok(Some(m)) = bpkg_core::update::check_remote_multi(&urls, &cur) {
                     let newv = m.version.clone();
                     let _ = weak.upgrade_in_event_loop(move |ui| {
                         ui.set_update_available(true);

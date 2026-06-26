@@ -63,14 +63,33 @@ pub struct ThemeConfig {
 /// automatically. The actual download/apply + rollback lives in `update.rs`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateConfig {
-    /// URL of a JSON update manifest: `{ "version", "url", "deltas": [...] }`.
+    /// Primary URL of a JSON update manifest: `{ "version", "url", "deltas": [...] }`.
+    /// Optional only if `manifest_urls` is set; normally this is your main source.
+    #[serde(default)]
     pub manifest_url: String,
+    /// OPTIONAL additional manifest sources (mirrors / a second host). When set, the
+    /// updater fetches every source and uses the **newest** version found; dead sources
+    /// are skipped. Leave empty (`[]`) for a single-source setup — multi is opt-in.
+    #[serde(default)]
+    pub manifest_urls: Vec<String>,
     /// Check the manifest automatically when the maintenance window opens.
     #[serde(default = "default_true")]
     pub auto_check: bool,
     /// Prefer a small binary delta patch over a full re-download when offered.
     #[serde(default = "default_true")]
     pub allow_delta: bool,
+}
+
+impl UpdateConfig {
+    /// All configured manifest sources (primary first, then extras), trimmed and
+    /// non-empty. A single `manifest_url` yields a 1-element list (back-compat).
+    pub fn sources(&self) -> Vec<String> {
+        std::iter::once(self.manifest_url.trim())
+            .chain(self.manifest_urls.iter().map(|s| s.trim()))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect()
+    }
 }
 
 /// A program offered as an opt-in "launch now" checkbox on the Done page.
