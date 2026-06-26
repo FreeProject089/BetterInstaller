@@ -61,6 +61,18 @@ if (Test-Path $logoSrc) {
 # Optional pre-import EXTRAS (languages BEYOND en/fr, themes) -> <install>/presets/.
 # en/fr ship inside the app above and are always present; this is opt-in additions.
 $presets    = Join-Path $payload "presets"
+
+# Bundle BMM's built-in themes so the "Import themes" setup option seeds them on first
+# run: payload presets/themes/ -> <install>/presets/themes/ -> the handoff consumer
+# copies them into the user themes dir when 'import_starter_themes' stays checked.
+$themesSrc = Join-Path $BmmRoot "frontend/assets/builtin-themes"
+if (Test-Path $themesSrc) {
+    $themesDst = Join-Path $presets "themes"
+    New-Item -ItemType Directory -Force $themesDst | Out-Null
+    Copy-Item (Join-Path $themesSrc "*.json") $themesDst
+    Write-Host ("      bundled {0} themes for import" -f (Get-ChildItem $themesDst -Filter *.json).Count)
+}
+
 $userBundle = "examples/bmm/bundle/presets"
 if (Test-Path $userBundle) {
     New-Item -ItemType Directory -Force $presets | Out-Null

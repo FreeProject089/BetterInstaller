@@ -129,3 +129,78 @@ bpkg fetch-update --url http://localhost:8000/update.json --dir <install_dir> --
 Or set `manifest_url` to the localhost URL, install an older build, then re-open the
 installer (maintenance mode) — the **Update** button appears when the manifest is
 newer.
+
+---
+
+## Checking / applying updates from your app (headless CLI)
+
+The installer **is** the updater. After install it leaves a full copy of itself at
+`<install_dir>/uninstall.exe` (it handles install / repair / **update** / uninstall).
+Your app can drive it with two flags — no GUI, no embedded package needed for the check:
+
+### `--check-update` → JSON + exit code
+
+```sh
+"<install_dir>/uninstall.exe" --check-update
+```
+
+Prints a JSON report to **stdout** and sets the **exit code**:
+
+| Exit | Meaning |
+|---|---|
+| `10` | An update is available |
+| `0`  | Already up to date |
+| `2`  | Error (no `manifest_url`, network/HTTP failure, bad manifest) |
+
+```jsonc
+// exit 10
+{
+  "app": "Your App",
+  "current_version": "1.0.0",      // what's installed (from the OS), else the bundled version
+  "update_available": true,
+  "latest_version": "2.0.0",
+  "notes": "Adds dark mode and faster scanning.",   // from the manifest, if provided
+  "url": "https://…/app.bpkg",
+  "has_delta": false
+}
+// exit 0  → { "app": …, "current_version": "2.0.0", "update_available": false }
+// exit 2  → { …, "update_available": false, "error": "HTTP 404 …" }
+```
+
+> It compares the **installed** version (read from the OS — the ARP entry on Windows)
+> against the manifest's `version`. It only reports `update_available: true` when the
+> manifest is strictly newer.
+
+### `--update` → apply it
+
+```sh
+"<install_dir>/uninstall.exe" --update
+```
+
+Opens the maintenance window and, as soon as the manifest confirms a newer version,
+**starts the update automatically** (download → verify signature → apply with rollback,
+delta when offered). Without `--update`, launching it normally shows the **Update**
+button for the user to click.
+
+### Wiring it into your app (example)
+
+```rust
+// In your app: "Check for updates" → spawn the bundled maintenance binary, read JSON.
+let exe = std::env::current_exe()?.parent().unwrap().join("uninstall.exe");
+let out = std::process::Command::new(&exe).arg("--check-update").output()?;
+let report: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+if report["update_available"] == true {
+    // show: "Update available: {current_version} → {latest_version}\n{notes}"
+    // on user confirm:
+    std::process::Command::new(&exe).arg("--update").spawn()?;
+    // (optionally exit your app so the updater can replace its files)
+}
+```
+
+Because the installer is a GUI-subsystem binary, when your app spawns it with a
+captured stdout pipe the output is delivered normally (the pipe is inherited); when run
+from a terminal it attaches to the parent console.
+
+> This is the intended path for an app's own *Check for updates* button: spawn
+> `<install>/uninstall.exe --check-update`, parse the JSON to show *current → latest*
+> with the release notes, then run `--update` on confirm.

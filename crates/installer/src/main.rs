@@ -53,10 +53,90 @@ thread_local! {
 }
 
 fn main() -> anyhow::Result<()> {
-    // `--uninstall` (from the ARP entry) opens the GUI straight in maintenance mode.
-    let uninstall = std::env::args().any(|a| a == "--uninstall");
+    let args: Vec<String> = std::env::args().collect();
+    let has = |flag: &str| args.iter().any(|a| a == flag);
     let (cfg, package_path) = resolve_sources()?;
-    run_gui(cfg, package_path, uninstall)
+
+    // `--check-update`: headless update check. Prints a JSON result to stdout and exits
+    // (10 = update available, 0 = up to date, 2 = error). Lets the installed app ask
+    // "is there a newer version?" by spawning the installer and reading its output.
+    if has("--check-update") {
+        return run_check_update(&cfg);
+    }
+
+    // `--uninstall` (from the ARP entry) opens the GUI straight in maintenance mode.
+    // `--update` does the same but auto-starts the update once the manifest confirms one.
+    let uninstall = has("--uninstall");
+    let auto_update = has("--update");
+    run_gui(cfg, package_path, uninstall, auto_update)
+}
+
+/// Headless update check — see `--check-update` in `main`.
+fn run_check_update(cfg: &InstallerConfig) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    attach_parent_console();
+
+    let plat = platform::current();
+    let app_name = cfg.app.name.clone();
+    // What's installed (from the OS), else the version bundled in this installer.
+    let current = plat
+        .installed_version(&cfg.app.id)
+        .unwrap_or_else(|| cfg.app.version.clone());
+
+    let result = match cfg.update.as_ref() {
+        None => serde_json::json!({
+            "app": app_name,
+            "current_version": current,
+            "update_available": false,
+            "error": "no [update] manifest_url configured",
+        }),
+        Some(uc) => match bpkg_core::update::check_remote(&uc.manifest_url, &current) {
+            Ok(Some(m)) => serde_json::json!({
+                "app": app_name,
+                "current_version": current,
+                "update_available": true,
+                "latest_version": m.version,
+                "notes": m.notes,
+                "url": m.url,
+                "has_delta": !m.deltas.is_empty(),
+            }),
+            Ok(None) => serde_json::json!({
+                "app": app_name,
+                "current_version": current,
+                "update_available": false,
+            }),
+            Err(e) => serde_json::json!({
+                "app": app_name,
+                "current_version": current,
+                "update_available": false,
+                "error": e.to_string(),
+            }),
+        },
+    };
+
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    let code = if result["update_available"].as_bool() == Some(true) {
+        10
+    } else if result.get("error").is_some() {
+        2
+    } else {
+        0
+    };
+    std::process::exit(code);
+}
+
+/// GUI-subsystem app: attach to the caller's console so `println!` is visible when run
+/// from a terminal. (When stdout is redirected to a pipe — e.g. the app spawns us and
+/// captures output — that pipe is inherited, so this is just a best-effort nicety.)
+#[cfg(windows)]
+fn attach_parent_console() {
+    extern "system" {
+        fn AttachConsole(dw_process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = 0xFFFF_FFFF;
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
 }
 
 /// Config + payload come from the embedded self-extracting blob (an exe built
@@ -89,6 +169,7 @@ fn run_gui(
     cfg: InstallerConfig,
     package_path: Option<PathBuf>,
     start_uninstall: bool,
+    auto_update: bool,
 ) -> anyhow::Result<()> {
     // Select the winit backend so the custom (frameless) title bar can drive the
     // window (drag / minimize / maximize). Must run before any Slint window.
@@ -587,6 +668,10 @@ fn run_gui(
                         ui.set_update_available(true);
                         ui.set_new_version(newv.into());
                         REMOTE_MANIFEST.with(|c| *c.borrow_mut() = Some(m));
+                        // `--update`: a newer version is confirmed → start it immediately.
+                        if auto_update {
+                            ui.invoke_update_app();
+                        }
                     });
                 }
             });
