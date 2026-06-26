@@ -1,5 +1,7 @@
 # Updates
 
+🇬🇧 English · [🇫🇷 Français](UPDATES.fr.md)
+
 The update engine (`bpkg-core/src/update.rs`) downloads a newer package and applies
 it over the install dir with an **atomic-ish rollback**: it snapshots the dir to a
 sibling `<name>.bak`, extracts the new package over it, and on **any** error wipes

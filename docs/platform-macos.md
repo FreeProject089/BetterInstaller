@@ -1,5 +1,7 @@
 # macOS
 
+🇬🇧 English · [🇫🇷 Français](platform-macos.fr.md)
+
 Per-user, no root. macOS apps are `.app` bundles, and the URL protocol is declared in
 the bundle's `Info.plist` rather than registered at runtime.
 
@@ -56,7 +58,6 @@ Gatekeeper doesn't block it. That's separate from BetterInstaller's package sign
 ## Gotchas
 
 - Don't end `[app].id` with `.app` if you can avoid it — it collides with the bundle
-  extension convention (you'll see a Tauri warning; it's cosmetic but rename when
-  possible).
+  extension convention (some toolkits emit a warning); rename it if you can.
 - Runtime protocol registration is **not** performed by the engine on macOS — it must
   be in the bundle's Info.plist (declarative).

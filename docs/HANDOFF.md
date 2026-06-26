@@ -1,5 +1,7 @@
 # First-run handoff contract
 
+🇬🇧 English · [🇫🇷 Français](HANDOFF.fr.md)
+
 The installer pre-configures the app at install time and drops a standard
 `installer-handoff.json`. The app reads it **once** on first launch, applies it, and
 marks it consumed — so there are no first-run privacy/ToS/language/tutorial modals.

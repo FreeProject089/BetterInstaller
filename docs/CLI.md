@@ -1,5 +1,7 @@
 # `bpkg` CLI reference
 
+🇬🇧 English · [🇫🇷 Français](CLI.fr.md)
+
 Build it once: `cargo build --release -p bpkg-cli` → `target/release/bpkg`.
 
 ## Commands
@@ -71,4 +73,4 @@ bpkg build --installer ./target/release/betterinstaller.exe \
            --config installer.toml --package app.bpkg --out App-Setup.exe
 ```
 
-For BMM this is automated: `./examples/bmm/build-installer.ps1`.
+The bundled example automates this: `./examples/<app>/build-installer.ps1`.

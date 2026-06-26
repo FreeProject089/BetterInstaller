@@ -1,5 +1,7 @@
 # BetterInstaller — Complete Configuration Guide
 
+🇬🇧 English · [🇫🇷 Français](GUIDE_FR.md)
+
 BetterInstaller turns **one `installer.toml` + one payload folder** into a single,
 signed, self-extracting `*-Setup.exe` (no NSIS/MSI, no WebView runtime — a native
 Slint GUI in one binary). It also handles **first-run configuration handoff**,
@@ -32,7 +34,7 @@ uninstall).
 cargo build --release -p bpkg-cli -p installer
 
 # 1. Generate a signing keypair (keep private.key SECRET, never commit it)
-./target/release/bpkg keygen --out examples/bmm/keys
+./target/release/bpkg keygen --out keys
 #   → copy keys/public.key into [security].public_key in installer.toml
 
 # 2. Assemble payload/  (your app exe + sidecars + TOS.md/PRIVACY.md + bundle/)
@@ -67,7 +69,7 @@ platforms = ["windows"]          # windows | linux | macos
 ```
 
 \* **Critical:** `id` must match what the app uses for its per-user data dir
-(Tauri's `identifier`). The handoff file is written to `%APPDATA%/<id>/`; if `id`
+(the identifier your app uses for that dir). The handoff file is written to `%APPDATA%/<id>/`; if `id`
 is wrong, the app never finds it and **none of the first-run settings apply**.
 
 ### `[branding]`
@@ -84,7 +86,7 @@ background = "assets/installer-bg.png"
 ```toml
 [install]
 default_dir      = "{ProgramFiles}/Acme Editor"  # see note below
-main_exe         = "better-mods-manager.exe"  # for shortcuts + protocol
+main_exe         = "myapp.exe"  # for shortcuts + protocol
 protocol         = "acme"                       # registers acme:// deep links
 create_shortcuts = true
 desktop_shortcut = true
@@ -223,7 +225,7 @@ maps_to = "settings.import_starter_themes"
 [[launch]]
 id = "app"
 label = "Launch Acme Editor"
-exe = "better-mods-manager.exe"   # relative to the install dir
+exe = "myapp.exe"   # relative to the install dir
 default = true                     # pre-checked
 
 [[launch]]

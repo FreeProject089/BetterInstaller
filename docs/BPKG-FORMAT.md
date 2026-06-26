@@ -1,5 +1,7 @@
 # The `.bpkg` package format
 
+🇬🇧 English · [🇫🇷 Français](BPKG-FORMAT.fr.md)
+
 A `.bpkg` is a single file: a fixed header, a JSON manifest, a compressed payload,
 and an optional signature. All multi-byte integers are **little-endian**.
 
@@ -44,7 +46,7 @@ UTF-8 JSON, `manifest_len` bytes, immediately after the header:
     "platforms": ["windows"]
   },
   "files": [
-    { "path": "better-mods-manager.exe", "size": 73964544,
+    { "path": "myapp.exe", "size": 73964544,
       "sha256": "…", "component": null, "executable": true }
   ],
   "components": [

@@ -1,5 +1,7 @@
 # Cross-platform packaging
 
+🇬🇧 English · [🇫🇷 Français](PLATFORMS.fr.md)
+
 **One `installer.toml`, one engine, three OSes.** The engine is written once against a
 `PlatformOps` trait; each OS has a backend that does shortcuts / protocol / uninstall
 the native way. You ship a **per-OS payload + a per-OS engine binary**, but the config

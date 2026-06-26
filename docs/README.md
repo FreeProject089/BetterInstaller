@@ -1,5 +1,7 @@
 # BetterInstaller — Documentation
 
+🇬🇧 English · [🇫🇷 Français](README.fr.md)
+
 A proprietary, cross-platform installer/updater framework: **one `installer.toml` +
 one payload folder → a single signed, self-extracting `*-Setup.exe`**. Native Slint
 GUI (no WebView runtime), first-run config handoff, auto-update with rollback, and a

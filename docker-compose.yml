@@ -1,0 +1,34 @@
+# BetterInstaller — dev / CI in a container.
+#
+#   docker compose run --rm ci          # the full gate (fmt + clippy + test + build)
+#   docker compose run --rm ci bash -lc "cargo clippy --workspace --all-targets -- -D warnings"
+#   docker compose run --rm shell       # interactive shell with the toolchain + deps
+#
+# Named volumes cache the Cargo registry + the Linux target dir, so repeat runs are fast
+# and Linux build artifacts never touch your host ./target.
+
+services:
+  ci:
+    build: .
+    image: betterinstaller-dev
+    working_dir: /app
+    environment:
+      CARGO_TARGET_DIR: /tmp/target
+    volumes:
+      - .:/app
+      - bi-target:/tmp/target
+      - bi-cargo-registry:/usr/local/cargo/registry
+      - bi-cargo-git:/usr/local/cargo/git
+    # default command = the image's CMD (fmt + clippy + test + build)
+
+  shell:
+    extends: ci
+    entrypoint: ["bash"]
+    command: ["-l"]
+    stdin_open: true
+    tty: true
+
+volumes:
+  bi-target:
+  bi-cargo-registry:
+  bi-cargo-git:

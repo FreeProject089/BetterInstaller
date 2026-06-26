@@ -1,5 +1,7 @@
 # Linux
 
+🇬🇧 English · [🇫🇷 Français](platform-linux.fr.md)
+
 Per-user under `$HOME`, freedesktop-compliant. No root needed.
 
 ## Locations

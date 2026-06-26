@@ -1,16 +1,59 @@
+<div align="center">
+
 # BetterInstaller
 
-A proprietary, cross-platform **installer / updater framework** — one engine, one
-`installer.toml` per project. Built to replace NSIS / MSI for any desktop app,
-and reusable by anyone for any app (Windows / Linux / macOS).
+**One engine, one `installer.toml` → a signed, self-extracting installer + auto-updater.**
+A cross-platform alternative to NSIS / MSI for any desktop app — native Slint UI (no
+WebView runtime), first-run config handoff, and updates with rollback.
 
-> Design doc: `../.Assets/.md/PLAN_BETTER_INSTALLER.md` (v2 body + **v3 Addendum**).
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-blue?style=flat-square)
+![UI](https://img.shields.io/badge/UI-Slint%20(native)-7c3aed?style=flat-square)
+![Signing](https://img.shields.io/badge/signing-Ed25519-green?style=flat-square)
+![CI](https://img.shields.io/badge/CI-fmt%20%C2%B7%20clippy%20%C2%B7%20test-success?style=flat-square)
+
+🇬🇧 English · [🇫🇷 Français](README_FR.MD)
+[Quick start](#quick-start) · [Documentation](#-documentation) · [Develop](#develop) · [Contributing](CONTRIBUTING.md)
+
+</div>
+
+---
+
+## Quick start
+
+```sh
+# 1. Build the engine + CLI
+cargo build --release -p bpkg-cli -p installer
+
+# 2. Pack → sign → stamp your app into a single Setup.exe
+bpkg keygen --out keys
+bpkg pack  --root payload --config installer.toml --out app.bpkg
+bpkg sign  --key keys/private.key app.bpkg
+bpkg build --installer ./target/release/betterinstaller[.exe] \
+           --config installer.toml --package app.bpkg --out App-Setup[.exe]
+```
+
+A complete worked example (with one-command build + release scripts) lives in
+[`examples/bmm/`](examples/bmm/) — see [GUIDE.md](GUIDE.md) for every config field.
 
 ## 📚 Documentation
 
 - **[GUIDE.md](GUIDE.md)** — configure `installer.toml` (every field).
 - **[docs/](docs/README.md)** — architecture · `.bpkg` format · CLI · handoff ·
-  updates · **[updater setup (GitHub / own server)](docs/UPDATER-SETUP.md)** · signing.
+  updates · **[updater setup (GitHub / own server / multi-source)](docs/UPDATER-SETUP.md)** ·
+  signing · **[cross-platform](docs/PLATFORMS.md)**.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** ([FR](CONTRIBUTING_FR.md)) — setup, the CI gate, issues & PRs.
+
+## Develop
+
+```sh
+# Run the exact CI gate locally on Linux (fmt + clippy + test + build), via Docker:
+docker compose run --rm ci            # cached registry + target → fast repeat runs
+docker compose run --rm shell         # interactive shell with toolchain + deps
+# (or without compose:)
+docker build -t betterinstaller-dev . && docker run --rm -e CARGO_TARGET_DIR=/tmp/t -v "${PWD}:/app" betterinstaller-dev
+```
+
+<sub>Design history: `../.Assets/.md/PLAN_BETTER_INSTALLER.md`.</sub>
 
 ---
 
@@ -99,7 +142,7 @@ examples/
 cargo build -p bpkg-cli -p installer
 
 # 1. Package an app's files (app meta + components come from installer.toml)
-bpkg pack  --root <app-files> --config examples/bmm/installer.toml --out app.bpkg
+bpkg pack  --root <app-files> --config installer.toml --out app.bpkg
 bpkg info  app.bpkg
 bpkg install app.bpkg --dest out/          # verify + extract with progress
 
@@ -110,7 +153,7 @@ bpkg verify app.bpkg --key keys/public.key  # SHA-256 + Ed25519
 
 # 3. Build ONE self-extracting installer (config + payload baked in)
 bpkg build --installer target/debug/betterinstaller.exe \
-           --config examples/bmm/installer.toml --package app.bpkg \
+           --config installer.toml --package app.bpkg \
            --out MyAppSetup.exe
 ./MyAppSetup.exe                            # double-click installs; no args needed
 
@@ -135,7 +178,7 @@ publisher = "BetterCommunity"; platforms = ["windows"]
 
 [install]
 default_dir = "{ProgramFiles}/Acme Editor"
-main_exe = "better-mods-manager.exe"   # for shortcuts + protocol
+main_exe = "myapp.exe"   # for shortcuts + protocol
 protocol = "acme"                      # registers acme:// deep links
 create_shortcuts = true; desktop_shortcut = true; allow_portable = true
 

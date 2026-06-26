@@ -1,5 +1,7 @@
 # Windows
 
+🇬🇧 English · [🇫🇷 Français](platform-windows.fr.md)
+
 The default + most complete backend. **Per-user** (HKCU + user profile), so nothing
 needs administrator rights — matching the `asInvoker` manifest the engine ships with.
 

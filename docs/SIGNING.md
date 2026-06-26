@@ -1,5 +1,7 @@
 # Signing
 
+🇬🇧 English · [🇫🇷 Français](SIGNING.fr.md)
+
 Packages are signed with **Ed25519** (ed25519-dalek). The installer can refuse to
 install anything not signed by your key, and the Welcome page shows a trust badge.
 

@@ -1,5 +1,7 @@
 # Architecture
 
+🇬🇧 English · [🇫🇷 Français](ARCHITECTURE.fr.md)
+
 BetterInstaller is a small Rust workspace. The engine is written once against a
 platform-abstraction trait; everything project-specific lives in `installer.toml`.
 
