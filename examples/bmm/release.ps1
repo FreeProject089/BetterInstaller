@@ -24,10 +24,13 @@ $ErrorActionPreference = "Stop"
 $cfgPath  = "examples/bmm/installer.toml"
 $tauriCfg = Join-Path $BmmRoot "src-tauri/tauri.conf.json"
 $cargoTml = Join-Path $BmmRoot "src-tauri/Cargo.toml"
-$pkg      = "examples/bmm/bmm.bpkg"
-$setup    = "examples/bmm/BMM-Setup.exe"
-$manifest = "examples/bmm/update.json"
-$archive  = "examples/bmm/releases"
+# Distributable artifacts go into <BmmRoot>/Release (gitignored), not examples/bmm.
+$relDir   = Join-Path $BmmRoot "Release"
+New-Item -ItemType Directory -Force $relDir | Out-Null
+$pkg      = Join-Path $relDir "bmm.bpkg"
+$setup    = Join-Path $relDir "BMM-Setup.exe"
+$manifest = Join-Path $relDir "update.json"
+$archive  = Join-Path $relDir "releases"
 $bpkg     = "./target/release/bpkg.exe"
 
 function Read-TomlVersion($path) {

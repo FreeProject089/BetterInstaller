@@ -8,16 +8,20 @@
 param(
     [string]$BmmRoot = "..",                       # BetterModsManager repo root
     [string]$Config  = "examples/bmm/installer.toml",
-    [string]$Out     = "examples/bmm/BMM-Setup.exe"
+    [string]$Out     = ""                          # default: <BmmRoot>/Release/BMM-Setup.exe
 )
 $ErrorActionPreference = "Stop"
 
 $bpkg    = "./target/release/bpkg.exe"
 $inst    = "./target/release/betterinstaller.exe"
-$payload = "examples/bmm/payload"
-$pkg     = "examples/bmm/bmm.bpkg"
-$keyDir  = "examples/bmm/keys"
+$payload = "examples/bmm/payload"          # build temp (stays here)
+$keyDir  = "examples/bmm/keys"             # signing key (stays here)
 $priv    = "$keyDir/private.key"
+# Distributable artifacts (setup + bpkg + update.json) go into <BmmRoot>/Release (gitignored).
+$relDir  = Join-Path $BmmRoot "Release"
+New-Item -ItemType Directory -Force $relDir | Out-Null
+$pkg     = Join-Path $relDir "bmm.bpkg"
+if (-not $Out) { $Out = Join-Path $relDir "BMM-Setup.exe" }
 
 # 1) Build the engine (release) if needed.
 if (-not (Test-Path $bpkg) -or -not (Test-Path $inst)) {
@@ -114,7 +118,7 @@ if ($verMatch.Success -and $urlMatch.Success) {
         url     = $pkgUrl
         notes   = "Better Mods Manager $ver"
     }
-    $manifestPath = "examples/bmm/update.json"
+    $manifestPath = Join-Path $relDir "update.json"
     ($manifest | ConvertTo-Json) | Set-Content -Encoding ASCII $manifestPath
     Write-Host "      update.json -> $manifestPath (version $ver)"
 } else {
@@ -123,4 +127,4 @@ if ($verMatch.Success -and $urlMatch.Success) {
 
 Write-Host ""
 Write-Host "Done -> $Out"
-Write-Host "Release upload: $Out (setup) + examples/bmm/bmm.bpkg + examples/bmm/update.json"
+Write-Host ("Release upload: {0} (setup) + {1} + {2}" -f $Out, $pkg, (Join-Path $relDir "update.json"))
