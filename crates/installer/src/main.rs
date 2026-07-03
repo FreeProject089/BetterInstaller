@@ -896,9 +896,20 @@ fn run_gui(
                 let cur = cur.clone();
                 let cur_bpkg = pkg.clone();
                 let weak = ui.as_weak();
+                // Pin the publisher key so a tampered/unsigned update from a hostile
+                // mirror is refused before it's applied (fail closed).
+                let update_vk = integ
+                    .public_key
+                    .as_ref()
+                    .and_then(|pk| bpkg_core::sign::parse_public(pk).ok());
                 std::thread::spawn(move || {
-                    let res =
-                        bpkg_core::update::download_and_apply(&m, &cur, cur_bpkg.as_deref(), &dir);
+                    let res = bpkg_core::update::download_and_apply(
+                        &m,
+                        &cur,
+                        cur_bpkg.as_deref(),
+                        &dir,
+                        update_vk.as_ref(),
+                    );
                     let _ = weak.upgrade_in_event_loop(move |ui| {
                         match res {
                             Ok(n) => {

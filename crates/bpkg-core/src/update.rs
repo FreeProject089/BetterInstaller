@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
+use ed25519_dalek::VerifyingKey;
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
@@ -119,6 +120,7 @@ pub fn download_and_apply(
     current_version: &str,
     current_bpkg: Option<&Path>,
     install_dir: &Path,
+    verify_key: Option<&VerifyingKey>,
 ) -> Result<u64> {
     let new_bytes = match (
         current_bpkg,
@@ -135,26 +137,41 @@ pub fn download_and_apply(
 
     let tmp = std::env::temp_dir().join(format!("bi-update-{}.bpkg", std::process::id()));
     std::fs::write(&tmp, &new_bytes).map_err(|e| Error::io(&tmp, e))?;
-    let res = apply_package_update(&tmp, install_dir, None);
+    let res = apply_package_update(&tmp, install_dir, None, verify_key);
     let _ = std::fs::remove_file(&tmp);
     res
 }
 
 /// Apply a newer `.bpkg` over `install_dir`, rolling back on failure.
 /// Returns the number of files written on success.
+///
+/// `verify_key`: when `Some`, the package MUST carry a valid Ed25519 signature for
+/// that key or the update is refused *before* the install dir is touched (fail
+/// closed). Pass the publisher key from `installer.toml`'s `security.public_key` so a
+/// tampered/unsigned package from a hostile mirror can never be applied. `None`
+/// preserves the legacy unverified behaviour for callers that don't pin a key.
 pub fn apply_package_update(
     new_bpkg: &Path,
     install_dir: &Path,
     components: Option<&[String]>,
+    verify_key: Option<&VerifyingKey>,
 ) -> Result<u64> {
+    // Authenticity gate FIRST — refuse an unsigned/invalid package before we snapshot
+    // or write anything.
+    let mut pkg = Package::open(new_bpkg)?;
+    if let Some(vk) = verify_key {
+        if !pkg.verify_signature(vk)? {
+            return Err(Error::Other(
+                "update rejected: package signature is missing or invalid".into(),
+            ));
+        }
+    }
+
     let backup = backup_path(install_dir);
     let _ = remove_path(&backup);
     copy_dir(install_dir, &backup)?; // snapshot
 
-    let outcome = (|| -> Result<u64> {
-        let mut pkg = Package::open(new_bpkg)?;
-        pkg.install_with_progress(install_dir, components, |_, _, _| {})
-    })();
+    let outcome = pkg.install_with_progress(install_dir, components, |_, _, _| {});
 
     match outcome {
         Ok(n) => {
@@ -271,8 +288,8 @@ mod tests {
             b"VERSION ONE"
         );
 
-        // Update to v2 → success.
-        apply_package_update(&p2, &install, None).unwrap();
+        // Update to v2 → success (no key pinned).
+        apply_package_update(&p2, &install, None, None).unwrap();
         assert_eq!(
             std::fs::read(install.join("f.txt")).unwrap(),
             b"VERSION TWO!!"
@@ -284,13 +301,45 @@ mod tests {
         bytes[n - 40] ^= 0xFF; // flip a byte inside the compressed payload
         let bad = base.join("bad.bpkg");
         std::fs::write(&bad, &bytes).unwrap();
-        let err = apply_package_update(&bad, &install, None);
+        let err = apply_package_update(&bad, &install, None, None);
         assert!(err.is_err(), "corrupt update must fail");
         assert_eq!(
             std::fs::read(install.join("f.txt")).unwrap(),
             b"VERSION TWO!!",
             "rollback should restore the pre-update state"
         );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn update_refuses_unsigned_package_when_key_pinned() {
+        let base = std::env::temp_dir().join(format!("bpkg-sig-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("f.txt"), b"payload").unwrap();
+
+        // An UNSIGNED package (the signer closure returns None).
+        let pkg = base.join("v.bpkg");
+        crate::package::create_from_dir(&src, app(), vec![], |_| None, &pkg).unwrap();
+
+        let install = base.join("install");
+        std::fs::create_dir_all(&install).unwrap();
+
+        // With a pinned key, an unsigned package must be REFUSED (fail closed) and the
+        // install dir left untouched.
+        let vk = crate::sign::generate().verifying_key();
+        let res = apply_package_update(&pkg, &install, None, Some(&vk));
+        assert!(res.is_err(), "unsigned package must be rejected when a key is pinned");
+        assert!(
+            !install.join("f.txt").exists(),
+            "nothing should be written when the signature gate fails"
+        );
+
+        // Without a pinned key, the same package still applies (legacy behaviour).
+        apply_package_update(&pkg, &install, None, None).unwrap();
+        assert!(install.join("f.txt").exists());
 
         let _ = std::fs::remove_dir_all(&base);
     }

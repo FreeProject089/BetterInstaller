@@ -186,7 +186,9 @@ fn cmd_fetch_update(url: &str, dir: &Path, current: &str) -> Result<()> {
         None => println!("Up to date (current {current})."),
         Some(m) => {
             println!("Update available: {current} → {}. Downloading…", m.version);
-            let n = bpkg_core::update::download_and_apply(&m, current, None, dir)
+            // CLI is a local developer tool; the installer is the surface that pins a
+            // publisher key and enforces signature verification on updates.
+            let n = bpkg_core::update::download_and_apply(&m, current, None, dir, None)
                 .context("update failed (rolled back)")?;
             println!("Updated to {} ({n} files).", m.version);
         }
@@ -195,7 +197,7 @@ fn cmd_fetch_update(url: &str, dir: &Path, current: &str) -> Result<()> {
 }
 
 fn cmd_update(package: &Path, dir: &Path) -> Result<()> {
-    let n = bpkg_core::update::apply_package_update(package, dir, None)
+    let n = bpkg_core::update::apply_package_update(package, dir, None, None)
         .context("update failed (rolled back)")?;
     println!("Updated {} ({n} files).", dir.display());
     Ok(())

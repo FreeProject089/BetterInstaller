@@ -54,7 +54,23 @@ impl Package {
         self.file
             .read_exact(&mut compressed)
             .map_err(Error::IoBare)?;
-        zstd::decode_all(&compressed[..]).map_err(|e| Error::Compression(e.to_string()))
+        // Bound decompression against a zip-bomb payload (a tiny compressed blob that
+        // inflates to gigabytes and OOMs the installer): stream-decode with a ceiling.
+        const MAX_ARCHIVE: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB decompressed
+        let mut decoder =
+            zstd::Decoder::new(&compressed[..]).map_err(|e| Error::Compression(e.to_string()))?;
+        let mut out = Vec::new();
+        decoder
+            .by_ref()
+            .take(MAX_ARCHIVE + 1)
+            .read_to_end(&mut out)
+            .map_err(|e| Error::Compression(e.to_string()))?;
+        if out.len() as u64 > MAX_ARCHIVE {
+            return Err(Error::Compression(
+                "decompressed archive exceeds size limit".into(),
+            ));
+        }
+        Ok(out)
     }
 
     /// Iterate the inner archive, calling `f(path, data)` for each file.
@@ -191,7 +207,7 @@ impl Package {
                     });
                 }
             }
-            if path.contains("..") || path.starts_with('/') || path.starts_with('\\') {
+            if unsafe_entry_path(path) {
                 return Err(Error::Corrupt(format!("unsafe path in archive: {path}")));
             }
             let out = dest.join(path);
@@ -228,7 +244,7 @@ impl Package {
                 }
             }
             // path-traversal guard
-            if path.contains("..") || path.starts_with('/') || path.starts_with('\\') {
+            if unsafe_entry_path(path) {
                 return Err(Error::Corrupt(format!("unsafe path in archive: {path}")));
             }
             let out = dest.join(path);
@@ -241,6 +257,27 @@ impl Package {
         })?;
         Ok(written)
     }
+}
+
+/// Reject any archive entry path that could escape the destination directory when
+/// joined: parent-dir traversal (`..`), POSIX-absolute (`/…`), Windows drive-absolute
+/// (`C:\…` / `C:foo`) or UNC (`\\server`). Host-OS-independent, so a package packed on
+/// one platform can't smuggle an absolute path past extraction on another — in
+/// particular `dest.join("C:\\Windows\\…")` on Windows silently discards `dest`.
+fn unsafe_entry_path(path: &str) -> bool {
+    if path.is_empty() || path.contains("..") {
+        return true;
+    }
+    if path.starts_with('/') || path.starts_with('\\') {
+        return true;
+    }
+    let b = path.as_bytes();
+    // Windows drive-letter prefix "X:" (optionally followed by \ or /).
+    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+        return true;
+    }
+    // Belt-and-suspenders: honour the current platform's own notion of "absolute".
+    Path::new(path).is_absolute()
 }
 
 fn slice<'a>(buf: &'a [u8], pos: &mut usize, len: usize) -> Result<&'a [u8]> {
@@ -265,4 +302,29 @@ fn read_u64(buf: &[u8], pos: &mut usize) -> Result<u64> {
     Ok(u64::from_le_bytes([
         s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7],
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unsafe_entry_path;
+
+    #[test]
+    fn rejects_escaping_entry_paths() {
+        // Traversal, POSIX-absolute, UNC, and Windows drive-absolute must all be blocked
+        // (host-OS-independent — this test passes on Linux CI too).
+        for p in [
+            "../evil",
+            "a/../../evil",
+            "/etc/passwd",
+            "\\\\server\\share\\x",
+            "C:\\Windows\\System32\\evil.dll",
+            "C:evil",
+            "",
+        ] {
+            assert!(unsafe_entry_path(p), "should reject: {p:?}");
+        }
+        for p in ["ok.txt", "dir/ok.txt", "a/b/c.dll", "deep/nested/file"] {
+            assert!(!unsafe_entry_path(p), "should allow: {p:?}");
+        }
+    }
 }
