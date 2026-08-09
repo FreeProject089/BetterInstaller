@@ -4,7 +4,13 @@
 # ══════════════════════════════════════════════════════════════════
 
 [app]
-id        = "com.bettermm.app"     # MUST match the app's data-dir identifier
+# MUST match the app's data-dir identifier — tauri.conf.json "identifier". BMM migrated
+# com.bettermm.app -> com.bettermm.desktop; this said the old one, so the installer wrote
+# installer-handoff.json into %APPDATA%\com.bettermm.app while BMM reads it from
+# %APPDATA%\com.bettermm.desktop. Every setup choice was silently dropped on any install
+# where BMM already had a data.json (the legacy-appdata copy only runs on a virgin one).
+# app.id also keys the uninstall entry and the upgrade check, so it must not drift again.
+id        = "com.bettermm.desktop"
 name      = "Better Mods Manager"
 version   = "1.0.0"
 publisher = "BetterCommunity"
@@ -59,8 +65,19 @@ manifest_url  = "https://github.com/FreeProject089/BetterModsManager/releases/la
 # OPTIONAL extra sources (mirrors / your own server). The updater fetches ALL sources
 # and uses the NEWEST version found; unreachable ones are skipped. Leave empty for a
 # single GitHub source — fill it in later during a patch, e.g.:
-#   manifest_urls = ["https://downloads.bettermods.app/update.json"]
-manifest_urls = []
+#   manifest_urls = ["https://bettercommunity.ch/api/assets/update.json"]
+# Mirrors for the MANIFEST, tried after manifest_url; the newest version across all reachable
+# sources wins and a dead one never blocks the others. These are BCWEB platform-asset slots —
+# upload Release/update.json to the "bmm-update-json" slot in Admin -> Downloads & assets.
+manifest_urls = ["https://bettercommunity.ch/api/assets/bmm-update-json"]
+
+# Mirrors for the PACKAGE itself, written into update.json as its `urls` array. Upload
+# Release/bmm.bpkg to the "bmm-bpkg" slot. Listed rather than derived: BCWEB serves assets by
+# key, so the package URL is not the manifest URL with the filename swapped.
+#
+# Until both slots are filled these simply fail and GitHub answers as before — one wasted
+# request in the case where GitHub is already down, which costs nothing that is not already lost.
+package_urls = ["https://bettercommunity.ch/api/assets/bmm-bpkg"]
 
 auto_check    = true
 allow_delta   = true
@@ -136,6 +153,62 @@ label       = "Anonymous telemetry"
 description  = "Opt-in. Sends anonymous usage data only — app version, OS, hardware specs (CPU/GPU/RAM), and which features you use. No personal data, no file contents, no account. You can turn it off later in Settings."
 default     = false                  # opt-in: never pre-checked
 maps_to     = "settings.telemetry"
+
+# ─── Optional preferences pre-set at install (each maps to a real BMM setting) ───
+# Defaults MATCH BMM's own defaults, so leaving them alone changes nothing; the user
+# can flip any of them here to have BMM start already configured, or change them later
+# in Settings. Absent from the handoff → BMM keeps its default.
+[[setup_option]]
+id          = "discord_rpc"
+type        = "bool"
+label_key   = "setup.discordRpc"
+label       = "Discord Rich Presence"
+description  = "Show what you're doing in BMM on your Discord profile. Off by default; no data leaves your machine beyond Discord's own status."
+default     = false                  # matches BMM's default (opt-in)
+maps_to     = "settings.discord_rpc"
+
+[[setup_option]]
+id          = "smart_io"
+type        = "bool"
+label_key   = "setup.smartIo"
+label       = "Smart I/O (recommended)"
+description  = "Speeds up mod install/enable/disable by batching disk operations and picking the fastest strategy for your drive. On by default."
+default     = true                   # matches BMM's default
+maps_to     = "settings.smart_io"
+
+[[setup_option]]
+id          = "sound_effects"
+type        = "bool"
+label_key   = "setup.soundEffects"
+label       = "Interface sound effects"
+description  = "Subtle click/confirm sounds in the UI. On by default."
+default     = true                   # matches BMM's default
+maps_to     = "settings.sound_effects"
+
+# Local session recorder — records a masked, on-device replay of your session so a
+# crash report can attach the moments before a crash. Stays on your machine unless
+# you send a report. On by default; matches BMM's own default (bmm_replay_enabled).
+[[setup_option]]
+id          = "session_recorder"
+type        = "bool"
+label_key   = "setup.sessionRecorder"
+label       = "Session recorder (local)"
+description  = "Keeps a masked, on-device recording of your session so a crash report can include what happened right before. Local-only; never sent unless you submit a report. On by default."
+default     = true
+maps_to     = "settings.session_recorder"
+
+# System Access Control — how much of the filesystem BMM's own operations may reach.
+# "full" = normal (manage mods anywhere you point it); "limited" = confined to the
+# folders you configure. Maps to BMM's fs_security_mode setting.
+[[setup_option]]
+id          = "system_access"
+type        = "select"
+label_key   = "setup.systemAccess"
+label       = "System Access Control"
+description  = "How much filesystem access BMM's operations get. 'Full access' is the normal mode. 'Limited' confines file operations to the folders you configure — safer, but some flows may prompt more. You can change this later in Settings."
+choices     = ["full", "limited"]
+default     = "full"
+maps_to     = "settings.fs_security_mode"
 
 # Pre-import: bundled content the installer seeds on first launch. Checked by
 # default; unchecking it means BMM starts with only its built-in content.

@@ -113,10 +113,33 @@ if ($verMatch.Success -and $urlMatch.Success) {
     $ver    = $verMatch.Groups[1].Value
     # The .bpkg lives next to update.json in the same release.
     $pkgUrl = ($urlMatch.Groups[1].Value -replace 'update\.json$', 'bmm.bpkg')
+    # Package mirrors, listed explicitly in [update].package_urls.
+    #
+    # This used to DERIVE them by rewriting "update.json" to "bmm.bpkg" in each manifest_urls
+    # entry. That only holds for a GitHub release, where the two files sit side by side under the
+    # same name. It is wrong for the shape BCWEB actually serves — /api/assets/<key>, where the
+    # package lives under a different key entirely — so the guess would have produced a URL that
+    # 404s. Declaring them beats inferring them.
+    #
+    # bpkg-core tries `url` first, then each of these. Safe by construction: the Ed25519
+    # signature is verified before anything is applied, so a mirror can serve a bad file and
+    # never get it installed.
+    $mirrors = @()
+    $pkgMatch = [regex]::Match($cfgText, '(?ms)^\s*package_urls\s*=\s*\[(.*?)\]')
+    if ($pkgMatch.Success) {
+        foreach ($q in [regex]::Matches($pkgMatch.Groups[1].Value, '"([^"]+)"')) {
+            $m = $q.Groups[1].Value.Trim()
+            if ($m -and $m -ne $pkgUrl) { $mirrors += $m }
+        }
+    }
     $manifest = [ordered]@{
         version = $ver
         url     = $pkgUrl
         notes   = "Better Mods Manager $ver"
+    }
+    if ($mirrors.Count -gt 0) {
+        $manifest.urls = @($mirrors)
+        Write-Host ("      {0} package mirror(s) in update.json" -f $mirrors.Count)
     }
     $manifestPath = Join-Path $relDir "update.json"
     ($manifest | ConvertTo-Json) | Set-Content -Encoding ASCII $manifestPath

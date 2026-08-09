@@ -1,6 +1,6 @@
 # Updates
 
-🇬🇧 English · [🇫🇷 Français](UPDATES.fr.md)
+🇬🇧 English · [🇫🇷 Français](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/UPDATES.fr.md)
 
 The update engine (`bpkg-core/src/update.rs`) downloads a newer package and applies
 it over the install dir with an **atomic-ish rollback**: it snapshots the dir to a
@@ -27,14 +27,22 @@ what's installed (it re-extracts the embedded package).
 {
   "version": "1.2.0",
   "url": "https://…/App-1.2.0.bpkg",
+  "urls": ["https://mirror.example/App-1.2.0.bpkg"],
   "notes": "optional changelog text",
   "deltas": [
-    { "from": "1.1.0", "url": "https://…/1.1.0-to-1.2.0.patch" }
+    { "from": "1.1.0", "url": "https://…/1.1.0-to-1.2.0.patch",
+      "urls": ["https://mirror.example/1.1.0-to-1.2.0.patch"] }
   ]
 }
 ```
 
 - `version` is compared numerically component-wise (`is_newer`).
+- `urls` (optional, on the manifest and on each delta) are **mirrors for the same file**,
+  tried in order after `url` when a download fails. One unreachable host then stops being
+  the reason nobody can update. This is safe by construction rather than by trust: the
+  Ed25519 signature is verified before the install directory is touched, so a mirror can
+  serve a bad file and still never get it applied. Only the last error is reported — three
+  identical "no network" failures are not three pieces of information.
 - If a `deltas` entry matches the installed version **and** the current `.bpkg` is
   available, a small bsdiff patch is downloaded and the new package is reconstructed
   locally; otherwise the full `url` is downloaded.

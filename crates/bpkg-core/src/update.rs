@@ -22,6 +22,12 @@ pub struct UpdateManifest {
     pub version: String,
     /// URL of the full `.bpkg` for that version.
     pub url: String,
+    /// Additional sources for the SAME package, tried in order after `url` when a download
+    /// fails. Safe by construction: `apply_package_update` verifies the Ed25519 signature
+    /// before touching the install directory, so a mirror can serve a bad file but never get
+    /// it applied. Without this, one unreachable host means nobody can update at all.
+    #[serde(default)]
+    pub urls: Vec<String>,
     /// Optional hex Ed25519 signature note (verification uses the package's own sig).
     #[serde(default)]
     pub notes: Option<String>,
@@ -36,6 +42,9 @@ pub struct DeltaEntry {
     pub from: String,
     /// URL of the bsdiff patch (old.bpkg → new.bpkg).
     pub url: String,
+    /// Mirrors for that patch, same rule as [`UpdateManifest::urls`].
+    #[serde(default)]
+    pub urls: Vec<String>,
 }
 
 /// `a` is a strictly newer dotted version than `b` (numeric, component-wise).
@@ -129,10 +138,10 @@ pub fn download_and_apply(
         (Some(old_path), Some(delta)) => {
             // Delta path: download a small patch and reconstruct the new package.
             let old = std::fs::read(old_path).map_err(|e| Error::io(old_path, e))?;
-            let patch = crate::net::download(&delta.url)?;
+            let patch = download_any(&delta.url, &delta.urls)?;
             crate::delta::apply_delta(&old, &patch)?
         }
-        _ => crate::net::download(&m.url)?, // full download
+        _ => download_any(&m.url, &m.urls)?, // full download
     };
 
     let tmp = std::env::temp_dir().join(format!("bi-update-{}.bpkg", std::process::id()));
@@ -140,6 +149,24 @@ pub fn download_and_apply(
     let res = apply_package_update(&tmp, install_dir, None, verify_key);
     let _ = std::fs::remove_file(&tmp);
     res
+}
+
+/// Download from the primary URL, falling back to each mirror in turn.
+///
+/// Only the LAST error is surfaced: a caller shown "mirror 3 failed" learns nothing useful when
+/// mirrors 1 and 2 also failed for the same reason (usually: no network).
+fn download_any(primary: &str, mirrors: &[String]) -> Result<Vec<u8>> {
+    let mut last = match crate::net::download(primary) {
+        Ok(b) => return Ok(b),
+        Err(e) => e,
+    };
+    for url in mirrors.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        match crate::net::download(url) {
+            Ok(b) => return Ok(b),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
 }
 
 /// Apply a newer `.bpkg` over `install_dir`, rolling back on failure.
@@ -258,6 +285,13 @@ mod tests {
         assert!(is_newer("1.0.1", "1.0")); // missing components = 0
         assert!(!is_newer("1.0.0", "1.0.0"));
         assert!(!is_newer("1.0.0", "1.0.1"));
+        // Numeric, not lexical: "1.10.0" > "1.9.0" (string compare would get this wrong).
+        assert!(is_newer("1.10.0", "1.9.0"));
+        assert!(!is_newer("1.9.0", "1.10.0"));
+        assert!(is_newer("1.0.10", "1.0.9"));
+        // Trailing-zero components are equal, not newer ("1.2" == "1.2.0").
+        assert!(!is_newer("1.2", "1.2.0"));
+        assert!(!is_newer("1.2.0", "1.2"));
     }
 
     #[test]
@@ -331,7 +365,10 @@ mod tests {
         // install dir left untouched.
         let vk = crate::sign::generate().verifying_key();
         let res = apply_package_update(&pkg, &install, None, Some(&vk));
-        assert!(res.is_err(), "unsigned package must be rejected when a key is pinned");
+        assert!(
+            res.is_err(),
+            "unsigned package must be rejected when a key is pinned"
+        );
         assert!(
             !install.join("f.txt").exists(),
             "nothing should be written when the signature gate fails"
@@ -342,5 +379,49 @@ mod tests {
         assert!(install.join("f.txt").exists());
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::download_any;
+
+    // The HTTPS gate rejects a plain-http URL before any socket is opened, which makes it a
+    // deterministic, offline stand-in for "this source failed" — enough to prove the loop
+    // actually walks the mirrors instead of stopping at the primary.
+    #[test]
+    fn tries_every_mirror_and_reports_the_last_failure() {
+        let err = download_any(
+            "http://primary.invalid/a.bpkg",
+            &[
+                "http://one.invalid/a.bpkg".into(),
+                "http://two.invalid/a.bpkg".into(),
+            ],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("two.invalid"),
+            "expected the LAST mirror's error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn blank_mirrors_are_skipped() {
+        let err = download_any("http://primary.invalid/a.bpkg", &["".into(), "   ".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("primary.invalid"),
+            "expected the primary's error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn no_mirrors_behaves_exactly_as_before() {
+        let err = download_any("http://primary.invalid/a.bpkg", &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("primary.invalid"));
     }
 }

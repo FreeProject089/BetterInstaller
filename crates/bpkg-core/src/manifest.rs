@@ -101,3 +101,61 @@ pub struct Component {
 fn default_true() -> bool {
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta() -> AppMeta {
+        AppMeta {
+            id: "com.test.app".into(),
+            name: "Test".into(),
+            version: "1.0.0".into(),
+            publisher: "Test".into(),
+            homepage: None,
+            platforms: vec!["windows".into()],
+        }
+    }
+
+    fn entry(path: &str, comp: Option<&str>) -> FileEntry {
+        FileEntry {
+            path: path.into(),
+            size: 1,
+            sha256: "0".repeat(64),
+            component: comp.map(String::from),
+            executable: false,
+        }
+    }
+
+    #[test]
+    fn files_for_filters_by_component() {
+        let mut m = Manifest::new(meta());
+        m.files = vec![
+            entry("core.exe", None),
+            entry("mcp.exe", Some("mcp")),
+            entry("extra.dat", Some("extra")),
+        ];
+        // None → every file (nothing filtered out).
+        assert_eq!(m.files_for(None).count(), 3);
+        // A component id → only that component's files (core/None is NOT included).
+        let mcp: Vec<_> = m.files_for(Some("mcp")).map(|f| f.path.as_str()).collect();
+        assert_eq!(mcp, vec!["mcp.exe"]);
+        // An unknown component → nothing.
+        assert_eq!(m.files_for(Some("nope")).count(), 0);
+    }
+
+    #[test]
+    fn appmeta_platforms_default_and_component_flags() {
+        // `platforms` defaults to ["windows"] when absent; optional fields have defaults.
+        let am: AppMeta =
+            serde_json::from_str(r#"{"id":"a","name":"A","version":"1","publisher":"P"}"#).unwrap();
+        assert_eq!(am.platforms, vec!["windows".to_string()]);
+        assert!(am.homepage.is_none());
+
+        // A Component omits `default`/`required` → default=true, required=false.
+        let c: Component = serde_json::from_str(r#"{"id":"core","name":"Core"}"#).unwrap();
+        assert!(c.default, "component default should be true when omitted");
+        assert!(!c.required);
+        assert_eq!(c.size_mb, 0);
+    }
+}

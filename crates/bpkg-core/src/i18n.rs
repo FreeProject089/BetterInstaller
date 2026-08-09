@@ -86,3 +86,30 @@ pub fn t(lang: &str, key: &str) -> String {
     };
     s.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_lang, t};
+
+    #[test]
+    fn translates_and_falls_back() {
+        assert_eq!(t("fr", "next"), "Suivant");
+        assert_eq!(t("en", "next"), "Next");
+        assert_eq!(t("fr", "install"), "Installer");
+        // Non-fr locales collapse to English.
+        assert_eq!(t("de", "back"), "Back");
+        // A key with no per-language variant is identical in both.
+        assert_eq!(t("fr", "config_title"), "Configuration");
+        assert_eq!(t("en", "config_title"), "Configuration");
+        // Unknown keys return the key itself (never an empty string).
+        assert_eq!(t("fr", "totally_unknown_key"), "totally_unknown_key");
+        assert_eq!(t("en", ""), "");
+    }
+
+    #[test]
+    fn detect_lang_is_always_a_known_code() {
+        // Reads process env; assert only the invariant (never flaky under parallel tests).
+        let l = detect_lang();
+        assert!(l == "en" || l == "fr", "unexpected detected lang: {l:?}");
+    }
+}
