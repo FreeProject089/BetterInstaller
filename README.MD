@@ -63,7 +63,9 @@ docker build -t betterinstaller-dev . && docker run --rm -e CARGO_TARGET_DIR=/tm
   Any app, in any language, can opt in (it just reads one JSON file on first launch).
 - **Native & beautiful** — UI in [Slint](https://slint.dev): a single static binary, **no
   WebView2 runtime**, GPU-rendered, themeable.
-- **Portable & small** — one self-contained exe; release profile targets `<5 MB`; zstd payload.
+- **Portable & compact** — one self-contained exe, no runtime to install. The engine alone
+  is ~11 MB; a shipped setup is that plus the zstd-compressed payload (BMM: 57 MB for a
+  49 MB app).
 - **Secure** — per-file SHA-256, **Ed25519 signing**, integrity verified at install time.
 - **First-run handoff** — the installer pre-configures the app (language, privacy/ToS,
   tutorial, telemetry, components) so there are **no first-launch modals**.
