@@ -186,10 +186,13 @@ pub struct Branding {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// NOTE: `default_dir` and `allow_portable` used to live here and were never read by
+/// anything. The install root always comes from `Platform::default_install_dir` — on
+/// Windows `%LOCALAPPDATA%\Programs\<name>`, which is what the `asInvoker` manifest can
+/// actually write to; honouring a configured `{ProgramFiles}` path would have required an
+/// elevated build and failed at runtime. There is no portable mode to gate. Old TOML files
+/// keep parsing — serde ignores unknown keys here.
 pub struct InstallSection {
-    /// e.g. "{ProgramFiles}/Better Mods Manager" — placeholders resolved at runtime.
-    #[serde(default)]
-    pub default_dir: Option<String>,
     /// Main executable, relative to the install root (for shortcuts + protocol).
     #[serde(default)]
     pub main_exe: Option<String>,
@@ -201,19 +204,15 @@ pub struct InstallSection {
     /// Also drop a desktop shortcut (Start Menu is implied by create_shortcuts).
     #[serde(default)]
     pub desktop_shortcut: bool,
-    #[serde(default = "default_true")]
-    pub allow_portable: bool,
 }
 
 impl Default for InstallSection {
     fn default() -> Self {
         InstallSection {
-            default_dir: None,
             main_exe: None,
             protocol: None,
             create_shortcuts: true,
             desktop_shortcut: false,
-            allow_portable: true,
         }
     }
 }

@@ -86,19 +86,17 @@ background = "assets/installer-bg.png"
 
 ```toml
 [install]
-default_dir      = "{ProgramFiles}/Acme Editor"  # voir la note plus bas
 main_exe         = "myapp.exe"  # pour les raccourcis + le protocole
 protocol         = "acme"                       # enregistre les deep links acme://
 create_shortcuts = true
 desktop_shortcut = true
-allow_portable   = true
 ```
 
-> **Note admin :** l'installeur livre un manifeste `asInvoker` (pas de prompt UAC), donc
-> il installe **par-utilisateur** par défaut (`%LOCALAPPDATA%\Programs\<name>`). Installer
-> dans `C:\Program Files` nécessite un build élevé — le GUI affiche une erreur claire si
-> le dossier choisi n'est pas accessible en écriture, et le bouton **Parcourir…** permet
-> de choisir un emplacement accessible.
+> **Emplacement d'installation :** il n'y a pas de réglage `default_dir`. L'installeur
+> livre un manifeste `asInvoker` (pas de prompt UAC) et propose toujours la racine
+> par-utilisateur `%LOCALAPPDATA%\Programs\<name>`, où il peut écrire sans élévation.
+> Le bouton **Parcourir…** permet d'en choisir une autre ; `C:\Program Files` nécessite
+> un build élevé, et le GUI affiche une erreur claire si le dossier n'est pas accessible.
 
 ### `[security]` — signature de paquet (recommandé)
 

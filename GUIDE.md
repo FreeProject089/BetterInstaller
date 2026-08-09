@@ -85,19 +85,17 @@ background = "assets/installer-bg.png"
 
 ```toml
 [install]
-default_dir      = "{ProgramFiles}/Acme Editor"  # see note below
 main_exe         = "myapp.exe"  # for shortcuts + protocol
 protocol         = "acme"                       # registers acme:// deep links
 create_shortcuts = true
 desktop_shortcut = true
-allow_portable   = true
 ```
 
-> **Admin note:** the installer ships an `asInvoker` manifest (no UAC prompt), so it
-> installs **per-user** by default (`%LOCALAPPDATA%\Programs\<name>`). Installing
-> into `C:\Program Files` needs an elevated build — the GUI shows a clear error if
-> the chosen folder isn't writable, and the **Browse…** button lets the user pick a
-> writable location.
+> **Install location:** there is no `default_dir` setting. The installer ships an
+> `asInvoker` manifest (no UAC prompt) and always proposes the per-user root
+> `%LOCALAPPDATA%\Programs\<name>`, which it can write to without elevation. The
+> **Browse…** button lets the user pick anywhere else; `C:\Program Files` needs an
+> elevated build, and the GUI shows a clear error if the chosen folder isn't writable.
 
 ### `[security]` — package signing (recommended)
 

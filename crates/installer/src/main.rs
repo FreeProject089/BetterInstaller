@@ -878,6 +878,10 @@ fn run_gui(
         let cur = current_version.clone();
         let launch_cfg = launch_cfg.clone();
         let launch_checked = launch_checked.clone();
+        // `[update] allow_delta` (default true). The delta path in `download_and_apply` is
+        // reached only when a current .bpkg is passed, so withholding it IS the off switch —
+        // set it here, once, rather than re-reading config on the worker thread.
+        let allow_delta = cfg.update.as_ref().is_none_or(|u| u.allow_delta);
         ui.on_update_app(move || {
             let ui = match w.upgrade() {
                 Some(u) => u,
@@ -894,7 +898,7 @@ fn run_gui(
                 ui.set_progress_label(format!("Downloading v{}…", m.version).into());
                 let dir = loc.clone();
                 let cur = cur.clone();
-                let cur_bpkg = pkg.clone();
+                let cur_bpkg = if allow_delta { pkg.clone() } else { None };
                 let weak = ui.as_weak();
                 // Pin the publisher key so a tampered/unsigned update from a hostile
                 // mirror is refused before it's applied (fail closed).
@@ -1058,13 +1062,7 @@ fn run_real_install(
     if let Some(pk_hex) = integ.public_key.as_ref() {
         let vk = bpkg_core::sign::parse_public(pk_hex).map_err(|e| e.to_string())?;
         let valid = p.verify_signature(&vk).map_err(|e| e.to_string())?;
-        if !valid && integ.require_signature {
-            return Err(if p.is_signed() {
-                "package signature is INVALID — refusing to install".to_string()
-            } else {
-                "package is not signed but a signature is required".to_string()
-            });
-        }
+        signature_verdict(valid, p.is_signed(), integ.require_signature)?;
     }
 
     let comp: Option<&[String]> = if comps.is_empty() { None } else { Some(comps) };
@@ -1292,6 +1290,33 @@ fn detect_signature(cfg: &InstallerConfig, pkg: Option<&Path>) -> (bool, String)
         }
     }
     (true, format!("Signed  ·  {publisher}"))
+}
+
+/// Decide whether a package may install, given the outcome of verifying it against the
+/// publisher's pinned key.
+///
+/// A BAD signature and a MISSING one are different failures, and only one of them is
+/// `require_signature`'s business.
+///
+/// `require_signature` answers "may an UNSIGNED package install?" — a deployment choice,
+/// and it defaults to false. A signature that is present but does not verify is not a
+/// policy question: the bytes were altered after the publisher signed them, or they came
+/// from someone else entirely. That is refused unconditionally.
+///
+/// Conflating the two (`if !valid && require_signature`) meant the DEFAULT configuration —
+/// trust key set, `require_signature` unset — installed a tampered package without a word,
+/// which is the exact attack that pinning the key was meant to stop.
+fn signature_verdict(valid: bool, is_signed: bool, require_signature: bool) -> Result<(), String> {
+    if valid {
+        return Ok(());
+    }
+    if is_signed {
+        return Err("package signature is INVALID — refusing to install".to_string());
+    }
+    if require_signature {
+        return Err("package is not signed but a signature is required".to_string());
+    }
+    Ok(())
 }
 
 /// Compare dotted version strings numerically: is `a` newer than `b`?
@@ -1585,4 +1610,38 @@ fn parse_hex(s: &str) -> Option<Color> {
     let g = u8::from_str_radix(&s[2..4], 16).ok()?;
     let b = u8::from_str_radix(&s[4..6], 16).ok()?;
     Some(Color::from_rgb_u8(r, g, b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::signature_verdict;
+
+    #[test]
+    fn a_tampered_package_is_refused_even_when_signatures_are_optional() {
+        // The regression this guards: signed, does not verify, require_signature = false
+        // (the DEFAULT). This must fail closed — it used to install silently.
+        let err = signature_verdict(false, true, false)
+            .expect_err("a package with a broken signature must never install");
+        assert!(err.contains("INVALID"), "unexpected message: {err}");
+        // …and it stays refused when signatures are mandatory, for the same reason.
+        assert!(signature_verdict(false, true, true).is_err());
+    }
+
+    #[test]
+    fn an_unsigned_package_is_a_policy_question() {
+        // Not signed at all: this one IS require_signature's call.
+        assert!(
+            signature_verdict(false, false, false).is_ok(),
+            "opting out of signatures must still allow an unsigned package"
+        );
+        let err = signature_verdict(false, false, true).expect_err("required means required");
+        assert!(err.contains("not signed"), "unexpected message: {err}");
+    }
+
+    #[test]
+    fn a_good_signature_always_installs() {
+        for require in [false, true] {
+            assert!(signature_verdict(true, true, require).is_ok());
+        }
+    }
 }
