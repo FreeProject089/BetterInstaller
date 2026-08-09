@@ -1,6 +1,6 @@
 # Architecture
 
-[🇬🇧 English](ARCHITECTURE.md) · 🇫🇷 Français
+[🇬🇧 English](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/ARCHITECTURE.md) · 🇫🇷 Français
 
 BetterInstaller est un petit workspace Rust. Le moteur est écrit une fois contre un trait
 d'abstraction de plateforme ; tout ce qui est spécifique au projet vit dans

@@ -1,6 +1,6 @@
 # Contrat de handoff (1er lancement)
 
-[🇬🇧 English](HANDOFF.md) · 🇫🇷 Français
+[🇬🇧 English](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/HANDOFF.md) · 🇫🇷 Français
 
 L'installeur pré-configure l'app au moment de l'install et dépose un
 `installer-handoff.json` standard. L'app le lit **une fois** au 1er lancement, l'applique,
@@ -72,7 +72,7 @@ Chaque bloc ajoute un contrôle à la page Setup de l'installeur et une entrée 
 du handoff. Ajoute ceux que tu veux, supprime le reste — aucune option n'est requise.
 
 Chaque bloc a besoin de `id`, `type` (`bool` | `select` | `license`), un `label` (ou
-`label_key`), et `maps_to`. Référence complète des champs dans [../GUIDE.md](../GUIDE.md).
+`label_key`), et `maps_to`. Référence complète des champs dans [../GUIDE.md](https://github.com/FreeProject089/BetterInstaller/blob/master/GUIDE.md).
 
 ```toml
 # Un toggle oui/non → bool

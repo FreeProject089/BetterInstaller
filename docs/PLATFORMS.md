@@ -1,6 +1,6 @@
 # Cross-platform packaging
 
-🇬🇧 English · [🇫🇷 Français](PLATFORMS.fr.md)
+🇬🇧 English · [🇫🇷 Français](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/PLATFORMS.fr.md)
 
 **One `installer.toml`, one engine, three OSes.** The engine is written once against a
 `PlatformOps` trait; each OS has a backend that does shortcuts / protocol / uninstall
@@ -56,7 +56,7 @@ bpkg build --installer ./target/release/betterinstaller[.exe] \
 - **`[[components]].paths`** are forward-slash, OS-agnostic.
 
 > A single CI matrix (windows-latest / ubuntu-latest / macos-latest) can produce all
-> three setups from the same repo — see [../.github/workflows/ci.yml](../.github/workflows/ci.yml).
+> three setups from the same repo — see [../.github/workflows/ci.yml](https://github.com/FreeProject089/BetterInstaller/blob/master/.github/workflows/ci.yml).
 
 ## Tips for an app that targets all three
 

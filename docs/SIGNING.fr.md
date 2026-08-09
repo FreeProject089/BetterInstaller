@@ -1,6 +1,6 @@
 # Signature
 
-[🇬🇧 English](SIGNING.md) · 🇫🇷 Français
+[🇬🇧 English](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/SIGNING.md) · 🇫🇷 Français
 
 Les paquets sont signés avec **Ed25519** (ed25519-dalek). L'installeur peut refuser
 d'installer quoi que ce soit qui n'est pas signé par ta clé, et la page Bienvenue

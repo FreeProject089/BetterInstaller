@@ -1,6 +1,6 @@
 # Windows
 
-🇬🇧 English · [🇫🇷 Français](platform-windows.fr.md)
+🇬🇧 English · [🇫🇷 Français](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/platform-windows.fr.md)
 
 The default + most complete backend. **Per-user** (HKCU + user profile), so nothing
 needs administrator rights — matching the `asInvoker` manifest the engine ships with.

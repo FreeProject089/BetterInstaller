@@ -91,6 +91,11 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
+      # Unicode-aware slugs. The default strips accents, so "## Pré-import (contenu
+      # bundlé)" became `pre-import-contenu-bundle` while every link in the French pages
+      # pointed at the accented form — silently dead anchors on half the site. This keeps
+      # the accents, which is the only sane default for a bilingual FR/EN site.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
   - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true

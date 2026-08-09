@@ -1,6 +1,6 @@
 # Mises à jour
 
-[🇬🇧 English](UPDATES.md) · 🇫🇷 Français
+[🇬🇧 English](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/UPDATES.md) · 🇫🇷 Français
 
 Le moteur d'update (`bpkg-core/src/update.rs`) télécharge un paquet plus récent et
 l'applique sur le dossier d'install avec un **rollback quasi-atomique** : il snapshot le

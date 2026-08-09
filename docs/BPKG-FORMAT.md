@@ -1,6 +1,6 @@
 # The `.bpkg` package format
 
-🇬🇧 English · [🇫🇷 Français](BPKG-FORMAT.fr.md)
+🇬🇧 English · [🇫🇷 Français](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/BPKG-FORMAT.fr.md)
 
 A `.bpkg` is a single file: a fixed header, a JSON manifest, a compressed payload,
 and an optional signature. All multi-byte integers are **little-endian**.

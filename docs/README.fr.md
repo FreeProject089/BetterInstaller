@@ -1,6 +1,6 @@
 # BetterInstaller — Documentation
 
-[🇬🇧 English](README.md) · 🇫🇷 Français
+[🇬🇧 English](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/README.md) · 🇫🇷 Français
 
 Un framework d'installeur/updater multiplateforme : **un `installer.toml` + un dossier
 payload → un seul `*-Setup.exe` signé et auto-extractible**. GUI native Slint (pas de
@@ -11,7 +11,7 @@ mode maintenance (réparer / mettre à jour / désinstaller).
 
 | Tu veux… | Lire |
 |---|---|
-| Configurer un installeur pour ton app | [../GUIDE.md](../GUIDE.md) — chaque champ d'`installer.toml` |
+| Configurer un installeur pour ton app | [../GUIDE.md](https://github.com/FreeProject089/BetterInstaller/blob/master/GUIDE.md) — chaque champ d'`installer.toml` |
 | Comprendre le fonctionnement interne | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Livrer une app sur Windows + Linux + macOS | [PLATFORMS.md](PLATFORMS.md) (+ par OS : [Windows](platform-windows.md) · [Linux](platform-linux.md) · [macOS](platform-macos.md)) |
 | Connaître le layout octet du `.bpkg` / SFX | [BPKG-FORMAT.md](BPKG-FORMAT.md) |

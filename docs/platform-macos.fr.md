@@ -1,6 +1,6 @@
 # macOS
 
-[🇬🇧 English](platform-macos.md) · 🇫🇷 Français
+[🇬🇧 English](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/platform-macos.md) · 🇫🇷 Français
 
 Par-utilisateur, aucun root. Les apps macOS sont des bundles `.app`, et le protocole URL
 est déclaré dans l'`Info.plist` du bundle plutôt qu'enregistré au runtime.

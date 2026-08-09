@@ -1,6 +1,6 @@
 # `bpkg` CLI reference
 
-🇬🇧 English · [🇫🇷 Français](CLI.fr.md)
+🇬🇧 English · [🇫🇷 Français](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/CLI.fr.md)
 
 Build it once: `cargo build --release -p bpkg-cli` → `target/release/bpkg`.
 

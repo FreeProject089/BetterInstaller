@@ -1,6 +1,6 @@
 # Packaging multiplateforme
 
-[🇬🇧 English](PLATFORMS.md) · 🇫🇷 Français
+[🇬🇧 English](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/PLATFORMS.md) · 🇫🇷 Français
 
 **Un `installer.toml`, un moteur, trois OS.** Le moteur est écrit une fois contre un
 trait `PlatformOps` ; chaque OS a un backend qui fait raccourcis / protocole /
@@ -57,7 +57,7 @@ bpkg build --installer ./target/release/betterinstaller[.exe] \
 - **`[[components]].paths`** sont en slash avant, agnostiques de l'OS.
 
 > Une seule matrice CI (windows-latest / ubuntu-latest / macos-latest) peut produire les
-> trois setups depuis le même dépôt — voir [../.github/workflows/ci.yml](../.github/workflows/ci.yml).
+> trois setups depuis le même dépôt — voir [../.github/workflows/ci.yml](https://github.com/FreeProject089/BetterInstaller/blob/master/.github/workflows/ci.yml).
 
 ## Conseils pour une app qui vise les trois
 

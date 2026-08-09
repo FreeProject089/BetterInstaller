@@ -1,6 +1,6 @@
 # BetterInstaller — Documentation
 
-🇬🇧 English · [🇫🇷 Français](README.fr.md)
+🇬🇧 English · [🇫🇷 Français](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/README.fr.md)
 
 A proprietary, cross-platform installer/updater framework: **one `installer.toml` +
 one payload folder → a single signed, self-extracting `*-Setup.exe`**. Native Slint
@@ -11,7 +11,7 @@ maintenance mode (repair / update / uninstall).
 
 | You want to… | Read |
 |---|---|
-| Configure an installer for your app | [../GUIDE.md](../GUIDE.md) — every `installer.toml` field |
+| Configure an installer for your app | [../GUIDE.md](https://github.com/FreeProject089/BetterInstaller/blob/master/GUIDE.md) — every `installer.toml` field |
 | Understand how it works internally | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Ship one app on Windows + Linux + macOS | [PLATFORMS.md](PLATFORMS.md) (+ per-OS: [Windows](platform-windows.md) · [Linux](platform-linux.md) · [macOS](platform-macos.md)) |
 | Know the `.bpkg` / SFX byte layout | [BPKG-FORMAT.md](BPKG-FORMAT.md) |

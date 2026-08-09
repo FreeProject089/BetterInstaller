@@ -1,6 +1,6 @@
 # Linux
 
-[🇬🇧 English](platform-linux.md) · 🇫🇷 Français
+[🇬🇧 English](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/platform-linux.md) · 🇫🇷 Français
 
 Par-utilisateur sous `$HOME`, conforme freedesktop. Aucun root nécessaire.
 

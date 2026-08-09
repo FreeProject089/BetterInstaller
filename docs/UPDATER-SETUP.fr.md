@@ -1,6 +1,6 @@
 # Configurer l'updater
 
-[🇬🇧 English](UPDATER-SETUP.md) · 🇫🇷 Français
+[🇬🇧 English](https://github.com/FreeProject089/BetterInstaller/blob/master/docs/UPDATER-SETUP.md) · 🇫🇷 Français
 
 L'installeur/updater récupère un petit **manifest de mise à jour** JSON depuis une URL que
 tu contrôles, compare son `version` à l'installé, et (si plus récent) télécharge + applique
