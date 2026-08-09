@@ -4,3 +4,13 @@
 mkdocs==1.6.1
 mkdocs-material==9.5.44
 mkdocs-static-i18n==1.2.3
+
+# The PDF edition.
+mkdocs-with-pdf==0.9.3
+# WeasyPrint is a TRANSITIVE dependency of mkdocs-with-pdf and pinning it is not optional:
+# unpinned, the renderer changes under the build while everything else stays put, and the
+# apt list in .github/workflows/docs.yml has to match what THIS version dlopens.
+weasyprint==69.0
+# Reads the built PDF back, so a render that silently drops most of the book fails the
+# build instead of shipping. See tools/check_pdf.py.
+pypdf==5.1.0

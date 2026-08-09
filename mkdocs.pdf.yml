@@ -1,0 +1,40 @@
+# The PDF edition — one file, every page, in reading order.
+#
+# INHERIT pulls in the whole site config, so the nav, the markdown extensions and the
+# slugify setting are the ones the site uses; only what a PDF needs differs.
+#
+# The plugin list has to be REPEATED in full, not extended: mkdocs replaces the key rather
+# than merging it, so omitting i18n here would silently build a single-language PDF from
+# the English pages while the site stayed bilingual.
+#
+# No mermaid hook here, unlike BMM Docs. That repo needs headless Chrome to draw its
+# diagrams because WeasyPrint cannot run mermaid's JavaScript; these pages contain zero
+# mermaid blocks (checked), so the whole browser step — and its unpinned CDN script — is
+# simply not needed. If a diagram is ever added, this is where that machinery goes.
+INHERIT: mkdocs.yml
+
+plugins:
+  - search:
+      lang: [en, fr]
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: fr
+          name: Français
+          build: true
+  - with-pdf:
+      cover_title: BetterInstaller
+      cover_subtitle: Documentation
+      author: FreeProject089
+      copyright: GPL-3.0 — Built for the Better* community
+      toc_level: 3
+      ordered_chapter_level: 2
+      output_path: pdf/betterinstaller.pdf
+
+extra_css:
+  - assets/pdf-print.css

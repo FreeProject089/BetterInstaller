@@ -86,6 +86,25 @@ jobs:
           test "$en" -ge 10 || { echo "::error::only $en English pages built"; exit 1; }
           test "$fr" -ge 10 || { echo "::error::only $fr French pages built"; exit 1; }
 
+      # WeasyPrint dlopens these at runtime; the list has to match the PINNED version in
+      # requirements.txt (v53 dropped cairo, v57 added harfbuzz-subset). Pinning one without
+      # the other is how the PDF build breaks on a runner image update and nowhere else.
+      - name: PDF system libraries
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu
+
+      - name: Build the PDF edition
+        run: mkdocs build -f mkdocs.pdf.yml
+
+      # mkdocs-with-pdf reports success as long as it wrote a file — it did exactly that
+      # while emitting a tenth of the book. Open the result and count.
+      - name: The PDF is not truncated
+        run: python tools/check_pdf.py site/pdf/betterinstaller.pdf --min-pages 25 --expect "BetterInstaller" --expect ".bpkg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: betterinstaller-pdf
+          path: site/pdf/betterinstaller.pdf
+
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/master'
         with:

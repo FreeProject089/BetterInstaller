@@ -1,0 +1,73 @@
+/* Print rules for the PDF edition.
+ *
+ * Every rule here exists because WeasyPrint got something wrong that a browser gets right,
+ * and each one cost a build to find in the BMM Docs pipeline. They are carried over rather
+ * than rediscovered.
+ */
+
+/* THE ONE THAT TRUNCATES THE BOOK.
+ * Material sets `html { height: 100% }`, which WeasyPrint honours literally: the document
+ * becomes exactly one viewport tall and everything past it is clipped. The symptom is a
+ * PDF that looks fine and is a tenth of its length — no error, no warning. */
+html { height: auto !important; }
+body { height: auto !important; }
+
+/* The combined PDF document carries no `data-md-color-scheme`, so every rule Material
+ * scopes to a scheme is inert and the page falls back to unstyled colours. Setting the
+ * custom properties at :root is what makes the palette apply at all. */
+:root {
+  --md-default-fg-color: #1a1a1a;
+  --md-default-fg-color--light: #4a4a4a;
+  --md-default-bg-color: #ffffff;
+  --md-code-fg-color: #24292f;
+  --md-code-bg-color: #f4f4f4;
+  --md-typeset-a-color: #b4460f;
+}
+
+/* Material paints h1 with a gradient via background-clip:text, which WeasyPrint does not
+ * implement — the heading renders as a solid block of colour with invisible text. */
+.md-typeset h1,
+.md-typeset h2 {
+  background: none !important;
+  background-clip: border-box;
+  color: inherit;
+}
+
+/* Tables. A table may break across pages — forbidding that pushes a long one off the end
+ * entirely — but a ROW must never split, and the header must repeat on each page. */
+.md-typeset table:not([class]) { break-inside: auto; border-radius: 0; }
+.md-typeset table:not([class]) thead { display: table-header-group; break-inside: avoid; }
+.md-typeset table:not([class]) tr,
+.md-typeset table:not([class]) th,
+.md-typeset table:not([class]) td { break-inside: avoid; }
+/* Material wraps tables in a scroll container; on paper there is nothing to scroll and the
+ * overflow simply hides the right-hand columns. */
+.md-typeset__table { display: block; overflow: visible; padding: 0; }
+
+/* Admonition icons are mask-image on a pseudo-element, and WeasyPrint has no mask support,
+ * so the icon area renders as a solid square over the title. Use the background image
+ * directly and place it explicitly. */
+.md-typeset .admonition-title::before,
+.md-typeset summary::before {
+  position: absolute; top: .55rem; left: .6rem;
+  width: 1rem; height: 1rem;
+  background-size: 1rem 1rem;
+  mask-image: none; -webkit-mask-image: none;
+}
+
+/* Keep a heading with the text it introduces, and never strand a code block's first line. */
+.md-typeset h1, .md-typeset h2, .md-typeset h3, .md-typeset h4 { break-after: avoid; }
+.md-typeset pre, .md-typeset .highlight { break-inside: avoid; }
+.md-typeset blockquote, .md-typeset .admonition { break-inside: avoid; }
+
+/* A link's text is useless on paper if the address is only in the href. Print external
+ * targets after the label; leave in-document links alone, since their targets are in the
+ * same file and the address would be noise. */
+.md-typeset a[href^="http"]::after {
+  content: " (" attr(href) ")";
+  font-size: .78em; word-break: break-all; color: #666;
+}
+
+/* Site chrome that means nothing on paper. */
+.md-header, .md-tabs, .md-sidebar, .md-footer, .md-search,
+.md-content__button, .md-top { display: none !important; }
