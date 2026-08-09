@@ -36,6 +36,9 @@ pub struct UninstallEntry {
 /// OS-specific operations. Backends only need to implement the path methods for
 /// Phase 1; the mutating methods have default stubs that error cleanly until
 /// Phase 3 wires them per platform.
+#[cfg(not(target_os = "windows"))]
+pub mod receipt;
+
 pub trait PlatformOps {
     /// Human label for logs/UI, e.g. "Windows".
     fn name(&self) -> &'static str;

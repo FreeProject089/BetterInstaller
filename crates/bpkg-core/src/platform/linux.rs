@@ -92,9 +92,23 @@ impl PlatformOps for LinuxOps {
         Ok(())
     }
 
-    fn register_uninstaller(&self, _entry: &UninstallEntry) -> Result<()> {
-        // No ARP equivalent on Linux; the install dir's uninstaller is invoked directly.
-        Ok(())
+    fn register_uninstaller(&self, entry: &UninstallEntry) -> Result<()> {
+        // No ARP equivalent on Linux, so the install is recorded as a receipt instead —
+        // without one, `installed_dir` and `installed_version` below have nothing to read
+        // and every run looks like a first install.
+        super::receipt::write(&entry.app, &entry.install_dir)
+    }
+
+    fn unregister_uninstaller(&self, app_id: &str) -> Result<()> {
+        super::receipt::remove(app_id)
+    }
+
+    fn installed_dir(&self, app_id: &str) -> Option<PathBuf> {
+        super::receipt::installed_dir(app_id)
+    }
+
+    fn installed_version(&self, app_id: &str) -> Option<String> {
+        super::receipt::installed_version(app_id)
     }
 
     fn remove_shortcuts(&self, name: &str, desktop: bool, start_menu: bool) -> Result<()> {

@@ -50,8 +50,23 @@ impl PlatformOps for MacOps {
         Ok(())
     }
 
-    fn register_uninstaller(&self, _entry: &UninstallEntry) -> Result<()> {
-        Ok(()) // macOS uninstall = drag the .app to Trash; the engine deletes the dir.
+    fn register_uninstaller(&self, entry: &UninstallEntry) -> Result<()> {
+        // Uninstalling on macOS is "drag the .app to the Trash" and the engine deletes the
+        // directory — but the installer still has to RECOGNISE an existing install to offer
+        // Update / Repair at all, and there is no registry to ask. Hence a receipt.
+        super::receipt::write(&entry.app, &entry.install_dir)
+    }
+
+    fn unregister_uninstaller(&self, app_id: &str) -> Result<()> {
+        super::receipt::remove(app_id)
+    }
+
+    fn installed_dir(&self, app_id: &str) -> Option<PathBuf> {
+        super::receipt::installed_dir(app_id)
+    }
+
+    fn installed_version(&self, app_id: &str) -> Option<String> {
+        super::receipt::installed_version(app_id)
     }
 
     fn remove_shortcuts(&self, name: &str, _desktop: bool, _start_menu: bool) -> Result<()> {
