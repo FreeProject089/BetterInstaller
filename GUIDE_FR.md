@@ -326,6 +326,25 @@ lancé avec `--uninstall` (le bouton « Désinstaller » de Windows fait ça), l
 
 Le moteur est écrit une fois contre un trait `PlatformOps` ; chaque OS fournit un backend.
 
+**Comment une installation existante est reconnue.** Windows relit sa propre entrée ARP sous
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\<app_id>`. Linux et macOS n'ont pas
+de base de registre : ils écrivent un **reçu d'installation** — un JSON par application sous
+le répertoire de données de l'utilisateur (`$XDG_DATA_HOME` ou
+`~/.local/share/betterinstaller/receipts` sous Linux,
+`~/Library/Application Support/BetterInstaller/receipts` sous macOS) contenant l'identifiant
+de l'application, la version installée et le dossier d'installation.
+
+C'est ce qui rend le mode maintenance atteignable. Sans lui, l'installeur ne peut pas
+distinguer une installation existante d'une nouvelle : il ne propose ni Mettre à jour, ni
+Réparer, ni Désinstaller, et une mise à jour n'a aucune version à comparer.
+
+- Supprimez le reçu à la main et le lancement suivant considère l'application non installée.
+- Supprimez le *dossier* d'installation en laissant le reçu : le reçu est ignoré — il est
+  toujours confronté au disque, donc « Réparer » n'est jamais proposé sur du vide.
+
+Les reçus sont par-utilisateur, comme les installations elles-mêmes : le manifeste est
+`asInvoker` et n'élève jamais les privilèges.
+
 ---
 
 ## 8. Checklist pour une nouvelle app

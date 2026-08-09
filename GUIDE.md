@@ -319,6 +319,24 @@ in **maintenance mode** with three actions, each behind a confirmation with **Ca
 
 The engine is written once against a `PlatformOps` trait; each OS provides a backend.
 
+**How an existing install is recognised.** Windows reads its own ARP entry under
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\<app_id>`. Linux and macOS have no
+registry, so they write an **install receipt** — one JSON per app under the user's data
+directory (`$XDG_DATA_HOME` or `~/.local/share/betterinstaller/receipts` on Linux,
+`~/Library/Application Support/BetterInstaller/receipts` on macOS) holding the app id, the
+installed version and the install directory.
+
+This is what makes maintenance mode reachable at all. Without it the installer cannot tell an
+existing install from a fresh one, so it offers neither Update nor Repair nor Uninstall, and
+an update has no version to compare against.
+
+- Delete the receipt by hand and the next run treats the app as not installed.
+- Delete the install *directory* but leave the receipt and the receipt is ignored — it is
+  always checked against the disk, so Repair is never offered on nothing.
+
+Receipts are per-user, matching where these installers actually put things: they ship an
+`asInvoker` manifest and never elevate.
+
 ---
 
 ## 8. Checklist for a new app

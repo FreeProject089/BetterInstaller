@@ -102,12 +102,15 @@ docker build -t betterinstaller-dev . && docker run --rm -e CARGO_TARGET_DIR=/tm
 | i18n (en / fr) for the UI chrome | ✅ |
 | Component-aware packing (`[[components]].paths` → per-file mapping) | ✅ |
 | Self-deleting uninstaller | ✅ |
-| Linux backend (`.desktop` shortcuts + `xdg-mime` protocol) | ✅ |
-| macOS backend (symlink shortcuts + paths; protocol via Info.plist) | ✅ / partial |
+| Linux backend (`.desktop` shortcuts, `xdg-mime` protocol, install receipt) | ✅ |
+| macOS backend (symlink shortcuts + paths, `Info.plist` protocol, install receipt) | ✅ / partial |
+| Maintenance mode (update · repair · uninstall) on all three | ✅ |
 | CI (GitHub Actions: fmt + clippy + test + release, Windows & Linux) | ✅ |
 
 **Not yet** (honest, minor): macOS runtime protocol registration (it's declared in the `.app`
-Info.plist, not at runtime); reactive UI language switch mid-flow. SmartScreen still needs
+Info.plist, not at runtime); reactive UI language switch mid-flow. The macOS backend is
+written and compiles, but has never been RUN — there is no macOS in the CI matrix, so read
+that row as compiled, not exercised. SmartScreen still needs
 Authenticode (Ed25519 only covers package integrity, not Windows reputation).
 
 ---
