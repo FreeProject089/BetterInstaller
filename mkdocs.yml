@@ -1,0 +1,137 @@
+# BetterInstaller — documentation site.
+#
+# Built on the same stack as BMM Docs, deliberately: mkdocs-material + static-i18n with the
+# `.fr.md` suffix convention, and the same pinned versions. Two sites that render the same
+# markdown should not drift into two different renderers.
+#
+# The content was already here — 24 pages under docs/, already paired en/fr with the exact
+# suffix this plugin expects. This file is the site around them, not new prose.
+site_name: BetterInstaller — Documentation
+site_description: The reusable installer engine behind Better* — packaging, signing, updates, and shipping it on three platforms
+site_url: https://freeproject089.github.io/BetterInstaller/
+repo_url: https://github.com/FreeProject089/BetterInstaller
+edit_uri: edit/master/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  icon:
+    logo: material/package-variant-closed
+    repo: fontawesome/brands/github
+  palette:
+    # Light and dark are both selectable, with the OS preference as the entry point —
+    # a docs site that ignores the reader's setting is the first thing people notice.
+    - media: "(prefers-color-scheme)"
+      toggle: { icon: material/brightness-auto, name: Follow system }
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      accent: amber
+      toggle: { icon: material/brightness-7, name: Switch to dark }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      accent: amber
+      toggle: { icon: material/brightness-4, name: Switch to light }
+  features:
+    # NOT navigation.instant: mkdocs-static-i18n warns it breaks the language switcher's
+    # contextual link, which is the one control a bilingual site cannot afford to lose.
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+plugins:
+  - search:
+      lang: [en, fr]
+  # One tree, two languages: every page has an `.fr.md` sibling. `fallback_to_default`
+  # means an untranslated page serves English rather than 404ing, so the FR site is always
+  # navigable and the gaps show up in the build log instead of in a reader's face.
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: fr
+          name: Français
+          build: true
+          nav_translations:
+            Start here: Commencer ici
+            Packaging: Empaquetage
+            Shipping: Distribution
+            Platforms: Plateformes
+            Reference: Référence
+            Overview: Vue d'ensemble
+            Architecture: Architecture
+            The .bpkg format: Le format .bpkg
+            Signing: Signature
+            Updates: Mises à jour
+            Updater setup: Configurer le updater
+            First-run handoff: Passation au premier lancement
+            Command line: Ligne de commande
+            Windows: Windows
+            Linux: Linux
+            macOS: macOS
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      # Mermaid blocks are handed to the JS renderer on the site; the PDF build draws them
+      # in headless Chrome first (see BMM Docs' pdf_event_hook.py for why that is needed).
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+nav:
+  - Start here:
+      - Overview: README.md
+      - Platforms: PLATFORMS.md
+  - Packaging:
+      - The .bpkg format: BPKG-FORMAT.md
+      - Signing: SIGNING.md
+      - Command line: CLI.md
+  - Shipping:
+      - Updates: UPDATES.md
+      - Updater setup: UPDATER-SETUP.md
+      - First-run handoff: HANDOFF.md
+  - Platforms:
+      - Windows: platform-windows.md
+      - Linux: platform-linux.md
+      - macOS: platform-macos.md
+  - Reference:
+      - Architecture: ARCHITECTURE.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/FreeProject089
+  generator: false
+
+copyright: >
+  BetterInstaller — GPL-3.0. Built for the Better* community.

@@ -1,0 +1,6 @@
+# Pinned to the same versions BMM Docs builds with, on purpose: two sites rendering the
+# same markdown conventions should not sit on two different renderers, or a fix made once
+# has to be found twice.
+mkdocs==1.6.1
+mkdocs-material==9.5.44
+mkdocs-static-i18n==1.2.3
