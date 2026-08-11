@@ -133,3 +133,35 @@ workspace.
 | Unbounded decompress/download | Low | **Fixed** — size caps |
 | Unsigned default | Info | Documented; encourage `require_signature` |
 | Ed25519 signing, SHA-256, parser bounds, no-admin install, TLS, rollback | — | Sound — kept |
+
+---
+
+## Dependency audit — 11 August 2026
+
+`cargo audit` reports two advisories, both **RUSTSEC-2026-0194 / -0195** against
+`quick-xml 0.39.4`, each rated 7.5 (high): unbounded allocation in `NsReader` enabling
+memory-exhaustion denial of service. Both are fixed in `>= 0.41.0`.
+
+**Not actionable, and not exposed.** The dependency chain is:
+
+```
+quick-xml → wayland-scanner (proc-macro) → smithay-client-toolkit → winit → slint → installer
+```
+
+Three things follow from that, and all three have to hold for it to be dismissible:
+
+1. **Transitive, not direct.** Nothing here declares `quick-xml`; it arrives through Slint's
+   Wayland backend. A version bump is not ours to make — it needs `wayland-scanner` to move,
+   or a `[patch]` override that would pin a transitive crate we do not control.
+2. **Wayland only.** The shipped installer targets Windows, where this chain is not compiled
+   at all.
+3. **Build time, own input.** `wayland-scanner` is a proc-macro that parses Wayland protocol
+   XML during compilation. The XML is the protocol definitions shipped with the crate, not
+   anything a user supplies — so "hostile XML causes memory exhaustion" has no reachable
+   path.
+
+Re-check when Slint updates its winit dependency. If the chain ever reaches a runtime code
+path, or a Linux build ships, this stops being dismissible.
+
+The remaining 8 warnings are unmaintained gtk-rs GTK3 bindings, pulled in transitively for
+the same reason.
