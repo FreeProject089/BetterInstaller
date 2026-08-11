@@ -581,6 +581,91 @@ fn run_gui(
         });
     }
 
+    // ── The one-time picker on the Done page ────────────────────────────────
+    //
+    // A `swatch` option may ask (`show_at_end`) to be offered a second time once
+    // the install has succeeded — the first moment the user can judge the choice
+    // with nothing else on their mind. It is never the only chance to answer: the
+    // value picked during setup is already written, and skipping keeps it.
+    let final_opt: Option<SetupOption> = visible_opts
+        .iter()
+        .find(|o| matches!(o.kind, SetupOptionKind::Swatch) && o.show_at_end)
+        .cloned();
+    // The handoff written at the start of the install, kept so answering the
+    // picker can rewrite exactly that file rather than guess at its path again.
+    let written_handoff: Rc<RefCell<Option<(PathBuf, handoff::HandoffDoc)>>> =
+        Rc::new(RefCell::new(None));
+    if let Some(o) = final_opt.as_ref() {
+        ui.set_final_previews(ModelRc::from(Rc::new(VecModel::from(swatch_rows(o)))));
+        ui.set_final_title(
+            o.label
+                .clone()
+                .unwrap_or_else(|| humanize(&o.label_key))
+                .into(),
+        );
+        ui.set_final_hint(o.description.clone().unwrap_or_default().into());
+        ui.set_final_value(o.default.as_str().unwrap_or("").into());
+    }
+    {
+        let w = ui.as_weak();
+        ui.on_final_picked(move |v| {
+            // Highlighted immediately, committed only by Apply — so clicking
+            // through the tiles to look at them changes nothing.
+            if let Some(ui) = w.upgrade() {
+                ui.set_final_value(v);
+            }
+        });
+    }
+    {
+        let w = ui.as_weak();
+        let chosen = chosen.clone();
+        let model = model.clone();
+        let state = written_handoff.clone();
+        let opt = final_opt.clone();
+        ui.on_final_apply(move || {
+            let ui = match w.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            let value = ui.get_final_value().to_string();
+            if let Some(o) = opt.as_ref() {
+                chosen
+                    .borrow_mut()
+                    .insert(o.id.clone(), serde_json::json!(value.clone()));
+                set_row(&model, &o.id, |r| r.string_value = value.clone().into());
+                // Rewrite the handoff in place. Same prefix rule as handoff::build,
+                // or the app would look for `settings.active_theme` and find
+                // `active_theme` sitting next to it.
+                if let Some((path, doc)) = state.borrow_mut().as_mut() {
+                    for key in o.maps_to.keys() {
+                        let flat = key.strip_prefix("settings.").unwrap_or(key);
+                        doc.set(flat, serde_json::json!(value.clone()));
+                    }
+                    if doc.write_atomic(&*path).is_err() {
+                        // The install itself is fine; only this last choice failed
+                        // to persist, and saying so beats a silent no-op.
+                        ui.set_result_message(
+                            format!(
+                                "{}\nCould not save that choice — the one picked during setup stands.",
+                                ui.get_result_message()
+                            )
+                            .into(),
+                        );
+                    }
+                }
+            }
+            ui.set_final_visible(false);
+        });
+    }
+    {
+        let w = ui.as_weak();
+        ui.on_final_skip(move || {
+            if let Some(ui) = w.upgrade() {
+                ui.set_final_visible(false);
+            }
+        });
+    }
+
     // ── Install ─────────────────────────────────────────────────────────
     // Pre-compute everything the install closure needs (Box<dyn PlatformOps>
     // isn't Clone, so resolve the handoff directory up front).
@@ -687,6 +772,11 @@ fn run_gui(
         let prog_timer = prog_timer.clone();
         let launch_cfg = launch_cfg.clone();
         let launch_checked = launch_checked.clone();
+        let written_handoff = written_handoff.clone();
+        let final_opt_id: Option<String> = final_opt.as_ref().map(|o| o.id.clone());
+        // Only a fresh install offers the picker — Repair and Update do not
+        // rewrite the handoff, so there would be nothing for it to change.
+        let show_final = final_opt.is_some();
         ui.on_install(move || {
             let ui = match w.upgrade() {
                 Some(u) => u,
@@ -735,11 +825,23 @@ fn run_gui(
                 };
                 let path = dir.join(&h.file);
                 match doc.write_atomic(&path) {
-                    Ok(()) => message = format!("First-run config written to {}", path.display()),
+                    Ok(()) => {
+                        message = format!("First-run config written to {}", path.display());
+                        // Kept so the Done-page picker can amend this exact file.
+                        *written_handoff.borrow_mut() = Some((path.clone(), doc.clone()));
+                    }
                     Err(e) => {
                         ok = false;
                         message = format!("Could not write first-run config: {e}");
                     }
+                }
+            }
+
+            // The picker opens on whatever setup already settled on, so its
+            // highlighted tile matches what the app will actually start with.
+            if let Some(o) = final_opt_id.as_ref() {
+                if let Some(v) = chosen.borrow().get(o).and_then(|v| v.as_str()) {
+                    ui.set_final_value(v.into());
                 }
             }
 
@@ -777,6 +879,9 @@ fn run_gui(
                                         .into(),
                                     );
                                     apply_launch_rows(&ui, lrows);
+                                    // Only after a real success: a failed install
+                                    // has nothing to pick a look for.
+                                    ui.set_final_visible(show_final && handoff_ok);
                                 }
                                 Err(e) => {
                                     ui.set_success(false);
@@ -811,6 +916,7 @@ fn run_gui(
                             );
                             ui.set_result_message(final_msg.clone().into());
                             ui.set_page(4);
+                            ui.set_final_visible(show_final && ok);
                             if let Some(t) = pt.borrow().as_ref() {
                                 t.stop();
                             }
@@ -1552,6 +1658,7 @@ fn to_row(o: &SetupOption) -> OptionRow {
         SetupOptionKind::Bool => "bool",
         SetupOptionKind::Select => "select",
         SetupOptionKind::License => "license",
+        SetupOptionKind::Swatch => "swatch",
     };
     let choices: Vec<SharedString> = o.choices.iter().map(|c| c.clone().into()).collect();
     let label = o.label.clone().unwrap_or_else(|| humanize(&o.label_key));
@@ -1561,9 +1668,35 @@ fn to_row(o: &SetupOption) -> OptionRow {
         label: label.into(),
         description: o.description.clone().unwrap_or_default().into(),
         choices: ModelRc::from(Rc::new(VecModel::from(choices))),
+        previews: ModelRc::from(Rc::new(VecModel::from(swatch_rows(o)))),
         bool_value: o.default.as_bool().unwrap_or(false),
         string_value: o.default.as_str().unwrap_or("").into(),
     }
+}
+
+/// Build the tile models for a `swatch` option.
+fn swatch_rows(o: &SetupOption) -> Vec<SwatchRow> {
+    o.previews
+        .iter()
+        .map(|p| {
+            // Falls back to the installer's own palette, so a preview declared with
+            // two colors renders as a dull tile instead of an invisible one.
+            let at = |i: usize, fallback: Color| {
+                p.colors
+                    .get(i)
+                    .and_then(|c| parse_hex(c))
+                    .unwrap_or(fallback)
+            };
+            SwatchRow {
+                value: p.value.clone().into(),
+                label: p.label.clone().unwrap_or_else(|| p.value.clone()).into(),
+                bg: at(0, Color::from_rgb_u8(0x0d, 0x11, 0x17)),
+                surface: at(1, Color::from_rgb_u8(0x16, 0x1b, 0x22)),
+                accent: at(2, Color::from_rgb_u8(0x3b, 0x82, 0xf6)),
+                ink: at(3, Color::from_rgb_u8(0xe6, 0xed, 0xf3)),
+            }
+        })
+        .collect()
 }
 
 /// Update the model row whose `id` matches.
@@ -1603,13 +1736,20 @@ fn humanize(key: &str) -> String {
 
 fn parse_hex(s: &str) -> Option<Color> {
     let s = s.trim().trim_start_matches('#');
-    if s.len() != 6 {
-        return None;
+    match s.len() {
+        6 => {
+            let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+            Some(Color::from_rgb_u8(r, g, b))
+        }
+        // #abc is #aabbcc.
+        3 => {
+            let n = |i: usize| u8::from_str_radix(&s[i..i + 1], 16).ok().map(|v| v * 17);
+            Some(Color::from_rgb_u8(n(0)?, n(1)?, n(2)?))
+        }
+        _ => None,
     }
-    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
-    Some(Color::from_rgb_u8(r, g, b))
 }
 
 #[cfg(test)]

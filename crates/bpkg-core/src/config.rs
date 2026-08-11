@@ -302,6 +302,20 @@ pub struct SetupOption {
     /// For `select`: allowed choices. "auto" may be used as a sentinel (e.g. OS language).
     #[serde(default)]
     pub choices: Vec<String>,
+    /// For `swatch`: one entry per choice, giving a readable name and the handful
+    /// of colors the preview tile is painted with. Declarative on purpose — the
+    /// installer paints a generic little window out of them and never learns what
+    /// the app means by them.
+    #[serde(default)]
+    pub previews: Vec<SetupChoicePreview>,
+    /// Ask again on the final page, once the install has actually succeeded.
+    ///
+    /// For a choice like a theme, deciding on a picture is easier than deciding on
+    /// a name in a dropdown, and the last page is the first moment the user has
+    /// nothing else to do. Answering is optional: the value chosen during setup
+    /// already stands, and skipping keeps it.
+    #[serde(default)]
+    pub show_at_end: bool,
     /// Default value as a JSON value (bool, string, …).
     #[serde(default)]
     pub default: serde_json::Value,
@@ -326,6 +340,24 @@ pub enum SetupOptionKind {
     Select,
     /// A scrollable legal panel + "I accept" checkbox.
     License,
+    /// A grid of picture tiles → string. Same value shape as `select`; it differs
+    /// only in being shown rather than named.
+    Swatch,
+}
+
+/// One tile of a `swatch` option.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetupChoicePreview {
+    /// The value written to the handoff when this tile is picked.
+    pub value: String,
+    /// Human name under the tile. Falls back to `value`.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// `#rrggbb` colors, in order: background, surface, accent, text. Fewer is
+    /// allowed — the missing ones fall back to the installer's own palette, so a
+    /// half-filled entry renders as a dull tile rather than an invisible one.
+    #[serde(default)]
+    pub colors: Vec<String>,
 }
 
 /// `maps_to` accepts either a single key or a list of keys.
@@ -371,5 +403,63 @@ mod tests {
         assert!(c.matches("mcp/data.json")); // prefix
         assert!(!c.matches("better-mods-manager.exe")); // core
         assert!(!c.matches("mcpx.txt")); // not under mcp/
+    }
+
+    // The BMM manifest is the only real consumer of `swatch`, and its previews are
+    // hand-copied from the app's theme tokens. A typo in the table is invisible at
+    // runtime — serde's `default` turns an unparseable `previews` into an empty
+    // list, and the picker then renders as an empty box with two buttons.
+    #[test]
+    fn bmm_manifest_declares_a_complete_swatch() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/bmm/installer.toml"
+        );
+        let cfg = InstallerConfig::load(path).expect("the BMM manifest must parse");
+        let theme = cfg
+            .setup_options
+            .iter()
+            .find(|o| o.id == "theme")
+            .expect("BMM declares a theme option");
+
+        assert!(matches!(theme.kind, SetupOptionKind::Swatch));
+        assert!(
+            theme.show_at_end,
+            "the theme option asks for the final picker"
+        );
+
+        // Every choice must have a tile, and every tile a known choice: a preview
+        // for a value that is not offered is dead, and a value with no preview
+        // renders as a blank tile the user cannot tell apart.
+        assert_eq!(theme.previews.len(), theme.choices.len());
+        for c in &theme.choices {
+            assert!(
+                theme.previews.iter().any(|p| &p.value == c),
+                "choice {c} has no preview tile"
+            );
+        }
+        // Four usable colors each, or the tile silently falls back to the
+        // installer's own palette and every theme looks identical.
+        for p in &theme.previews {
+            assert_eq!(
+                p.colors.len(),
+                4,
+                "{} needs bg/surface/accent/text",
+                p.value
+            );
+            for c in &p.colors {
+                assert!(
+                    c.len() == 7
+                        && c.starts_with('#')
+                        && c[1..].chars().all(|ch| ch.is_ascii_hexdigit()),
+                    "{} has a malformed color {c}",
+                    p.value
+                );
+            }
+        }
+        // The default must be one of the tiles, or the picker opens with nothing
+        // highlighted.
+        let default = theme.default.as_str().expect("a string default");
+        assert!(theme.previews.iter().any(|p| p.value == default));
     }
 }

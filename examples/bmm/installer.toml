@@ -128,7 +128,7 @@ maps_to     = "settings.language"
 
 [[setup_option]]
 id          = "theme"
-type        = "select"
+type        = "swatch"
 label_key   = "setup.theme"
 label       = "Theme"
 description  = "Starting look. Every one of these ships with BMM, and you can change it at any time in Settings."
@@ -138,6 +138,29 @@ description  = "Starting look. Every one of these ships with BMM, and you can ch
 choices     = ["bmm-default", "bmm-sombre", "bmm-void", "bmm-white", "bmm-discord", "bmm-orange", "bmm-spotify", "bmm-brutal", "bmm-glass", "bmm-claude", "bmm-nord", "bmm-sakura"]
 default     = "bmm-default"
 maps_to     = "settings.active_theme"
+# Offer it once more on the final page — a theme is a decision about a picture,
+# and that is the first moment the user has nothing else to think about.
+show_at_end = true
+
+# Four colors per theme, in order: background · surface · accent · text. Taken from
+# each preset's own tokens (--bmm-bg-base, --bmm-bg-elevated, --bmm-accent,
+# --bmm-text-primary), so a tile that looks wrong means the preset changed.
+previews = [
+  { value = "bmm-default", label = "BMM Default", colors = ["#0a0e17", "#111827", "#3b82f6", "#f1f5f9"] },
+  { value = "bmm-sombre",  label = "Sombre",      colors = ["#1a1a1e", "#232328", "#5865f2", "#dbdee1"] },
+  { value = "bmm-void",    label = "Void / Noir", colors = ["#000000", "#0b0b0d", "#d4d4d8", "#f5f5f7"] },
+  { value = "bmm-white",   label = "Full White",  colors = ["#f5f6f8", "#ffffff", "#1d4ed8", "#18181b"] },
+  { value = "bmm-discord", label = "Discord",     colors = ["#313338", "#2b2d31", "#5865f2", "#ffffff"] },
+  { value = "bmm-orange",  label = "Orange / Noir", colors = ["#0a0a0a", "#161614", "#ff6a00", "#f6f1ea"] },
+  { value = "bmm-spotify", label = "Spotify Green", colors = ["#121212", "#181818", "#1ed760", "#ffffff"] },
+  { value = "bmm-brutal",  label = "Brutalist",   colors = ["#e7e3d8", "#fcfbf6", "#e8590c", "#111111"] },
+  # Glass builds its surfaces from translucent white over the base; the tile uses the
+  # composited result, because a preview cannot show what is behind the window.
+  { value = "bmm-glass",   label = "Glass",       colors = ["#0a0c12", "#171a22", "#7c8cff", "#f6f7fb"] },
+  { value = "bmm-claude",  label = "Clay",        colors = ["#f0eee6", "#fbfaf5", "#c8613f", "#2b2a27"] },
+  { value = "bmm-nord",    label = "Nord",        colors = ["#2e3440", "#3b4252", "#81a1c1", "#ffffff"] },
+  { value = "bmm-sakura",  label = "Sakura",      colors = ["#faf4f2", "#ffffff", "#db507c", "#3b2230"] },
+]
 
 [[setup_option]]
 id          = "legal"
