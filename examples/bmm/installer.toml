@@ -127,6 +127,19 @@ default     = "auto"                 # "auto" is resolved to the OS language
 maps_to     = "settings.language"
 
 [[setup_option]]
+id          = "theme"
+type        = "select"
+label_key   = "setup.theme"
+label       = "Theme"
+description  = "Starting look. Every one of these ships with BMM, and you can change it at any time in Settings."
+# Ids, not display names: they are written straight into settings.active_theme, and the
+# app resolves them against builtin-themes/. A display name would drift the moment a
+# preset is renamed.
+choices     = ["bmm-default", "bmm-sombre", "bmm-void", "bmm-white", "bmm-discord", "bmm-orange", "bmm-spotify", "bmm-brutal", "bmm-glass", "bmm-claude", "bmm-nord", "bmm-sakura"]
+default     = "bmm-default"
+maps_to     = "settings.active_theme"
+
+[[setup_option]]
 id          = "legal"
 type        = "license"
 label_key   = "setup.acceptLegal"
