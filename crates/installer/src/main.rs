@@ -339,7 +339,7 @@ fn run_gui(
         .iter()
         .find(|o| matches!(o.kind, SetupOptionKind::License) && !o.documents.is_empty())
         .map(|o| o.id.clone());
-    let legal_docs: Rc<Vec<LegalDoc>> = Rc::new(load_legal_docs(&cfg, package_path.as_deref()));
+    let legal_docs: Rc<Vec<LegalDoc>> = Rc::new(load_legal_docs(&cfg, package_path.as_deref(), &lang));
     let legal_count = legal_docs.len();
     let legal_index: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
     // One acceptance flag PER document (separate accept for TOS and Privacy).
@@ -1551,7 +1551,27 @@ struct LegalDoc {
 }
 
 /// Read the license documents from the package and render them to markdown blocks.
-fn load_legal_docs(cfg: &InstallerConfig, pkg: Option<&Path>) -> Vec<LegalDoc> {
+/// Terms and a privacy policy shown in a language the reader may not have, in an
+/// installer that is otherwise translated, is a consent problem before it is a
+/// polish one — someone clicks "I accept" on text they cannot read.
+///
+/// The config names the documents once (`TOS.md`, `PRIVACY.md`) and this looks for a
+/// `_<lang>` sibling of each inside the package: `TOS_FR.md` for `fr`. Found, it is
+/// used; absent, the original is — so a package that ships only English behaves
+/// exactly as before and no config has to change to gain this.
+fn localized_doc_name(doc: &str, lang: &str) -> Option<String> {
+    let l = lang.split(['-', '_']).next().unwrap_or(lang).to_uppercase();
+    if l.is_empty() || l == "EN" {
+        return None;
+    }
+    let (stem, ext) = match doc.rsplit_once('.') {
+        Some((s, e)) => (s, e),
+        None => return None,
+    };
+    Some(format!("{stem}_{l}.{ext}"))
+}
+
+fn load_legal_docs(cfg: &InstallerConfig, pkg: Option<&Path>, lang: &str) -> Vec<LegalDoc> {
     let mut out = Vec::new();
     let lo = match cfg
         .setup_options
@@ -1569,14 +1589,26 @@ fn load_legal_docs(cfg: &InstallerConfig, pkg: Option<&Path>) -> Vec<LegalDoc> {
         Ok(p) => p,
         Err(_) => return out,
     };
-    let map = match p.read_files(&lo.documents) {
+    // Ask for both spellings in one read, then prefer the localized one per document.
+    // Requesting them together keeps this to a single pass over the archive.
+    let mut wanted: Vec<String> = Vec::new();
+    for doc in &lo.documents {
+        if let Some(loc) = localized_doc_name(doc, lang) {
+            wanted.push(loc);
+        }
+        wanted.push(doc.clone());
+    }
+    let map = match p.read_files(&wanted) {
         Ok(m) => m,
         Err(_) => return out,
     };
     for doc in &lo.documents {
-        if let Some(bytes) = map.get(doc) {
+        let picked = localized_doc_name(doc, lang)
+            .and_then(|loc| map.get(&loc).map(|b| (loc, b)))
+            .or_else(|| map.get(doc).map(|b| (doc.clone(), b)));
+        if let Some((name, bytes)) = picked {
             out.push(LegalDoc {
-                title: doc_title(doc),
+                title: doc_title(&name),
                 blocks: parse_md(&String::from_utf8_lossy(bytes)),
             });
         }
