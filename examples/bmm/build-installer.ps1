@@ -24,10 +24,14 @@ $pkg     = Join-Path $relDir "bmm.bpkg"
 if (-not $Out) { $Out = Join-Path $relDir "BMM-Setup.exe" }
 
 # 1) Build the engine (release) if needed.
-if (-not (Test-Path $bpkg) -or -not (Test-Path $inst)) {
-    Write-Host "[1/5] Building the engine (release)..."
-    cargo build --release -p bpkg-cli -p installer
-}
+# Always build: cargo is incremental, so this is nearly free when up to date, and
+# testing for mere PRESENCE is a trap. Stale exes from an older commit sat here while
+# installer.toml had moved on, and the build died with "unknown variant swatch" --
+# a config error pointing at a perfectly valid config, because the binary reading it
+# predated the feature.
+Write-Host "[1/5] Building the engine (release)..."
+cargo build --release -p bpkg-cli -p installer
+if ($LASTEXITCODE -ne 0) { throw "engine build failed" }
 
 # 2) Assemble the payload = the EXACT Tauri runtime layout, so the installed app
 #    has EVERYTHING (exe + sidecar + the whole resource tree: Lang, tutorial assets,
@@ -89,6 +93,7 @@ if (Test-Path "examples/bmm/bundle/bmm-preset.json") {
 # 3) Pack the .bpkg.
 Write-Host "[3/5] Packing $pkg ..."
 & $bpkg pack --root $payload --config $Config --out $pkg
+if ($LASTEXITCODE -ne 0) { throw "pack failed" }
 
 # 4) Sign it (keygen if no key yet). public_key in installer.toml must match.
 Write-Host "[4/5] Signing..."
@@ -98,10 +103,12 @@ if (-not (Test-Path $priv)) {
     Write-Host "      IMPORTANT: copy $keyDir/public.key into [security].public_key"
 }
 & $bpkg sign --key $priv $pkg
+if ($LASTEXITCODE -ne 0) { throw "sign failed" }
 
 # 5) Stamp the self-extracting installer.
 Write-Host "[5/5] Building $Out ..."
 & $bpkg build --installer $inst --config $Config --package $pkg --out $Out
+if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
 # 6) Emit update.json — the auto-update manifest. Upload BOTH this file and the
 #    signed bmm.bpkg to the GitHub release so installed copies can auto-update.
