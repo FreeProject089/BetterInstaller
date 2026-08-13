@@ -508,6 +508,9 @@ fn run_gui(
             launch_checked.borrow_mut().insert(id.to_string(), v);
         });
     }
+    ui.on_open_url(move |url| {
+        open_web_url(&url);
+    });
     {
         let w = ui.as_weak();
         ui.on_browse_location(move || {
@@ -1660,6 +1663,7 @@ fn parse_md(text: &str) -> Vec<MdBlock> {
                 out.push(MdBlock {
                     text: t.into(),
                     level: 4,
+                    link: String::new().into(),
                 });
             }
             i += 1;
@@ -1678,10 +1682,23 @@ fn parse_md(text: &str) -> Vec<MdBlock> {
         } else {
             (0, line)
         };
+        let (text, links) = inline_md(content);
         out.push(MdBlock {
-            text: strip_inline_md(content).into(),
+            text: text.into(),
             level,
+            link: String::new().into(),
         });
+        // Each link becomes its own row beneath the prose: level 5, carrying the URL both
+        // as its text and as its target. The sentence above reads as a sentence, and the
+        // address is on screen exactly once — clickable, and still copyable by eye for
+        // anyone who does not trust an installer to open their browser.
+        for url in links {
+            out.push(MdBlock {
+                text: url.clone().into(),
+                level: 5,
+                link: url.into(),
+            });
+        }
         i += 1;
     }
     out
@@ -1765,8 +1782,23 @@ fn strip_html_tags(s: &str) -> String {
 }
 
 fn strip_inline_md(s: &str) -> String {
+    inline_md(s).0
+}
+
+/// Inline markdown -> (prose, links found in reading order).
+///
+/// `[text](url)` used to flatten to `text (url)`, which is why a policy's one useful
+/// line read as `BetterModsManager (https://github.com/FreeProject089/BetterModsManager)`
+/// — a URL printed mid-sentence that the reader then had to retype into a browser,
+/// because a `Text` run is not clickable.
+///
+/// The prose now keeps only the LABEL, and the URL comes back separately so the caller
+/// can render it as something you can actually click. A bare `https://…` sitting in the
+/// text counts as a link too: policies write them both ways, and the reader does not care
+/// which syntax the author used.
+fn inline_md(s: &str) -> (String, Vec<String>) {
     let mut r = strip_html_tags(s).replace("**", "").replace('`', "");
-    // [text](url) -> "text (url)"
+    let mut links: Vec<String> = Vec::new();
     while let (Some(lb), Some(rb)) = (r.find('['), r.find("](")) {
         if rb <= lb {
             break;
@@ -1776,18 +1808,73 @@ fn strip_inline_md(s: &str) -> String {
             None => break,
         };
         let txt = r[lb + 1..rb].to_string();
-        let url = r[rb + 2..close].to_string();
-        let repl = if url.is_empty() {
-            txt
+        let url = r[rb + 2..close].trim().to_string();
+        if is_web_url(&url) {
+            links.push(url);
+        }
+        // The label alone. An empty label (`[](url)`) would leave a hole in the sentence,
+        // so it falls back to the URL — visible, if ugly, beats invisible.
+        let repl = if txt.trim().is_empty() {
+            r[rb + 2..close].to_string()
         } else {
-            format!("{txt} ({url})")
+            txt
         };
         r.replace_range(lb..close + 1, &repl);
     }
-    r.replace('*', "")
+    let text = r
+        .replace('*', "")
         .trim_start_matches('>')
         .trim()
-        .to_string()
+        .to_string();
+    // Bare URLs, after the markdown pass so a link's own URL is not collected twice.
+    for tok in text.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '<' || c == '>') {
+        // Trailing sentence punctuation is not part of the address.
+        let tok = tok.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | '"'));
+        if is_web_url(tok) && !links.iter().any(|l| l == tok) {
+            links.push(tok.to_string());
+        }
+    }
+    (text, links)
+}
+
+/// Only `http(s)` is ever handed to the OS opener.
+///
+/// The documents are bundled, not fetched, so this is not a defence against a hostile
+/// policy file — it is a defence against handing the shell something that is not a web
+/// page at all. `file:`, `javascript:` and bare paths open *something* on Windows, and an
+/// installer must not be the thing that launches it.
+fn is_web_url(u: &str) -> bool {
+    let u = u.trim();
+    (u.starts_with("https://") || u.starts_with("http://")) && u.len() > 8 && !u.contains(char::is_whitespace)
+}
+
+/// Hand a web address to the OS browser.
+///
+/// Re-checks the scheme even though the parser only ever produces `http(s)` links: this is
+/// the function that reaches the shell, and a guard that lives at the call site is a guard
+/// that the next call site forgets.
+///
+/// Windows goes through `explorer.exe`, which is a GUI process — `cmd /c start` would flash
+/// a console window over the installer. Failure is silent by design: a browser that will
+/// not open is not a reason to interrupt an install, and the URL is on screen to be typed.
+fn open_web_url(url: &str) {
+    if !is_web_url(url) {
+        return;
+    }
+    let _ = {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer.exe").arg(url).spawn()
+        }
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open").arg(url).spawn()
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            std::process::Command::new("xdg-open").arg(url).spawn()
+        }
+    };
 }
 
 /// Friendly title for a legal document filename.
@@ -1916,7 +2003,7 @@ fn parse_hex(s: &str) -> Option<Color> {
 
 #[cfg(test)]
 mod tests {
-    use super::{doc_title, parse_md, signature_verdict};
+    use super::{doc_title, is_web_url, parse_md, signature_verdict};
 
     // The exact shape of PRIVACY.md's "what leaves your PC" summary. Before table
     // support this reached the user as raw pipe-delimited lines.
@@ -1952,8 +2039,58 @@ After the table.";
 
         // The link TEXT survives — stripping a tag must not delete what it wrapped.
         assert!(text.iter().any(|l| l.contains("BetterModsManager")), "{text:?}");
-        // And a real markdown link still resolves to "text (url)".
+        // And a real markdown link still puts its address on screen.
         assert!(joined.contains("https://example.com/repo"), "{joined}");
+    }
+
+    #[test]
+    fn a_link_becomes_a_clickable_row_and_leaves_the_sentence_alone() {
+        let blocks = parse_md("Questions? Open an issue on [BetterModsManager](https://example.com/repo).");
+
+        // The prose keeps the LABEL and drops the address: the old renderer inlined
+        // "text (url)", so a policy's one useful line arrived with a URL wedged into the
+        // middle of it and no way to follow it.
+        let prose = &blocks[0];
+        assert_eq!(prose.level, 0);
+        assert!(prose.text.contains("BetterModsManager"), "{}", prose.text);
+        assert!(!prose.text.contains("https://"), "{}", prose.text);
+        assert_eq!(prose.link.to_string(), "");
+
+        // The address follows as its own row, carrying the URL as a target.
+        let link = &blocks[1];
+        assert_eq!(link.level, 5);
+        assert_eq!(link.link.to_string(), "https://example.com/repo");
+        assert_eq!(link.text.to_string(), "https://example.com/repo");
+    }
+
+    #[test]
+    fn a_bare_url_is_clickable_too_and_is_never_collected_twice() {
+        // Policies write links both ways; the reader does not care which.
+        let blocks = parse_md("Write to https://example.com/contact for anything else.");
+        let links: Vec<String> = blocks.iter().filter(|b| b.level == 5).map(|b| b.link.to_string()).collect();
+        assert_eq!(links, vec!["https://example.com/contact".to_string()]);
+
+        // A markdown link's own URL must not ALSO be picked up by the bare-URL scan —
+        // it is not in the prose to be found, and a doubled row would look like a bug.
+        let blocks = parse_md("See [the policy](https://example.com/p).");
+        assert_eq!(blocks.iter().filter(|b| b.level == 5).count(), 1);
+    }
+
+    #[test]
+    fn only_web_urls_are_ever_handed_to_the_shell() {
+        // This is the guard on what open_web_url will launch. `file:` and `javascript:`
+        // open *something* on Windows, and an installer must not be what launches it.
+        assert!(is_web_url("https://example.com"));
+        assert!(is_web_url("http://example.com"));
+        assert!(!is_web_url("file:///C:/Windows/System32/cmd.exe"));
+        assert!(!is_web_url("javascript:alert(1)"));
+        assert!(!is_web_url(r"C:\Windows\System32\cmd.exe"));
+        assert!(!is_web_url("https://"));
+        assert!(!is_web_url("https://exa mple.com"));
+
+        // And a non-web target never becomes a clickable row in the first place.
+        let blocks = parse_md("[Open](file:///C:/Windows/System32/cmd.exe)");
+        assert_eq!(blocks.iter().filter(|b| b.level == 5).count(), 0);
     }
 
     #[test]

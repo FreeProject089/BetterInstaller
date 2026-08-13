@@ -105,8 +105,13 @@ id          = "cli"
 name        = "CLI tools"
 description = "Command-line automation (bmm-cli.exe)."
 required    = false
-default     = false
+# On by default. It is 2 MB, it is what the docs and the MCP server both assume is
+# present, and a user who unticks it has to reinstall to get it back.
+default     = true
 size_mb     = 2
+# Without `paths` unticking a component removes nothing — the box would look like a
+# choice and be one only in appearance.
+paths       = ["bmm-cli.exe"]
 
 # ─── First-run handoff (the headline feature) ────────────────────────
 # Writes installer-handoff.json into BMM's app data; BMM reads it ONCE on first
