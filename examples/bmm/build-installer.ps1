@@ -3,12 +3,19 @@
 #  Assembles the payload -> packs a .bpkg -> SIGNS it -> stamps the SFX.
 #
 #  Run from the BetterInstaller root:  ./examples/bmm/build-installer.ps1
+#
+#  Custom sidebar logo, in order of precedence:
+#    ./examples/bmm/build-installer.ps1 -Logo C:\path	o\my-logo.png   (one-off)
+#    drop a PNG at examples/bmm/branding/logo.png                       (durable)
+#    otherwise BMM's own app icon is used.
+#  The chosen source is printed during the payload step.
 #  ASCII-only on purpose (Windows PowerShell 5.1 chokes on non-ASCII).
 # =====================================================================
 param(
     [string]$BmmRoot = "..",                       # BetterModsManager repo root
     [string]$Config  = "examples/bmm/installer.toml",
-    [string]$Out     = ""                          # default: <BmmRoot>/Release/BMM-Setup.exe
+    [string]$Out     = "",                         # default: <BmmRoot>/Release/BMM-Setup.exe
+    [string]$Logo    = ""                          # override the sidebar logo; see below
 )
 $ErrorActionPreference = "Stop"
 
@@ -61,10 +68,27 @@ foreach ($doc in @("TOS.md","PRIVACY.md")) {
 }
 
 # App logo for the installer sidebar ([branding].logo = "assets/logo.png").
-$logoSrc = Join-Path $BmmRoot "src-tauri/icons/128x128.png"
+#
+# Three sources, most specific first, so a custom logo needs no edit to this script:
+#   1. -Logo <path>                       one-off, for a single build
+#   2. examples/bmm/branding/logo.png     the durable choice; drop a file there and it wins
+#   3. BMM's own app icon                 the default when neither exists
+#
+# Which one was used is PRINTED. A logo that is silently ignored — wrong path, typo in the
+# argument — would otherwise look identical to a build that honoured it, and you would only
+# find out by running the installer and squinting at the sidebar.
+$logoCustom = Join-Path $PSScriptRoot "branding/logo.png"
+if ($Logo -and -not (Test-Path $Logo)) { throw "logo not found: $Logo" }
+$logoSrc = if ($Logo) { $Logo }
+           elseif (Test-Path $logoCustom) { $logoCustom }
+           else { Join-Path $BmmRoot "src-tauri/icons/128x128.png" }
 if (Test-Path $logoSrc) {
     New-Item -ItemType Directory -Force (Join-Path $payload "assets") | Out-Null
     Copy-Item $logoSrc (Join-Path $payload "assets/logo.png")
+    $logoWhich = if ($Logo) { "-Logo argument" } elseif (Test-Path $logoCustom) { "branding/logo.png" } else { "BMM app icon (default)" }
+    Write-Host ("      logo: {0} -> {1}" -f $logoWhich, $logoSrc)
+} else {
+    Write-Host "      logo: none found - the installer will show no sidebar logo"
 }
 # Optional pre-import EXTRAS (languages BEYOND en/fr, themes) -> <install>/presets/.
 # en/fr ship inside the app above and are always present; this is opt-in additions.
