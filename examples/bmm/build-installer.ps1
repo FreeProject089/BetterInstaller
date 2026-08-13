@@ -5,7 +5,7 @@
 #  Run from the BetterInstaller root:  ./examples/bmm/build-installer.ps1
 #
 #  Custom sidebar logo, in order of precedence:
-#    ./examples/bmm/build-installer.ps1 -Logo C:\path	o\my-logo.png   (one-off)
+#    ./examples/bmm/build-installer.ps1 -Logo <path-to-your-logo.png>   (one-off)
 #    drop a PNG at examples/bmm/branding/logo.png                       (durable)
 #    otherwise BMM's own app icon is used.
 #  The chosen source is printed during the payload step.
