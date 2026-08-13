@@ -314,6 +314,8 @@ fn run_gui(
         ui.set_t_install_loc(t(&lang, "install_loc").into());
         ui.set_t_installing(t(&lang, "installing").into());
         ui.set_t_accept(t(&lang, "accept").into());
+        ui.set_t_final_apply(t(&lang, "final_apply").into());
+        ui.set_t_final_skip(t(&lang, "final_skip").into());
     }
 
     // Shared mutable state captured by callbacks.

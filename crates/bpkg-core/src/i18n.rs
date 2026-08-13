@@ -56,6 +56,23 @@ pub fn t(lang: &str, key: &str) -> String {
         // Titles for the bundled legal documents. The BODY is already localized (the
         // installer prefers TOS_FR.md / PRIVACY_FR.md when the language is French), so an
         // English heading over French text was the last thing left in the wrong language.
+        // The theme picker offered once more on the final page. These were hardcoded
+        // English in main.slint and never set from Rust, so a French install showed
+        // them untranslated next to fully translated buttons.
+        "final_apply" => {
+            if fr {
+                "Appliquer"
+            } else {
+                "Apply"
+            }
+        }
+        "final_skip" => {
+            if fr {
+                "Garder l'actuel"
+            } else {
+                "Keep current"
+            }
+        }
         "doc_privacy" => {
             if fr {
                 "Politique de confidentialité"

@@ -84,12 +84,21 @@ component BrutalBtn inherits Rectangle {
     HorizontalLayout {
         alignment: center;
         spacing: 8px;
+        // The label had no horizontal padding, so anything longer than the 104px floor
+        // ran to the border and read as cramped — "Keep the current one" touched both
+        // edges. The layout's preferred width is text + padding, so the button now grows
+        // with its label and min-width stays what it always was: a floor for short ones.
+        padding-left: 18px;
+        padding-right: 18px;
         Text {
             text: root.text;
             color: !root.enabled ? #5b6577 : (root.primary ? white : Pal.text);
             font-size: 14px;
             font-weight: 800;
             vertical-alignment: center;
+            // One line, never clipped: a wrapped label inside a 42px button would be cut
+            // in half rather than wrap visibly.
+            wrap: no-wrap;
         }
     }
     ta := TouchArea {
@@ -826,8 +835,8 @@ export component MainWindow inherits Window {
     in property <string> final-title: "Pick a look";
     in property <string> final-hint;
     in-out property <string> final-value;
-    in property <string> t-final-apply: "Use this one";
-    in property <string> t-final-skip: "Keep the current one";
+    in property <string> t-final-apply: "Apply";
+    in property <string> t-final-skip: "Keep current";
     callback final-picked(string);
     callback final-apply();
     callback final-skip();

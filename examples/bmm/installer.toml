@@ -135,7 +135,7 @@ description  = "Starting look. Every one of these ships with BMM, and you can ch
 # Ids, not display names: they are written straight into settings.active_theme, and the
 # app resolves them against builtin-themes/. A display name would drift the moment a
 # preset is renamed.
-choices     = ["bmm-default", "bmm-sombre", "bmm-void", "bmm-white", "bmm-discord", "bmm-orange", "bmm-spotify", "bmm-brutal", "bmm-glass", "bmm-claude", "bmm-nord", "bmm-sakura"]
+choices     = ["bmm-default", "bmm-sombre", "bmm-void", "bmm-white", "bmm-discord", "bmm-orange", "bmm-spotify", "bmm-brutal", "bmm-claude", "bmm-nord", "bmm-sakura"]
 default     = "bmm-default"
 maps_to     = "settings.active_theme"
 # Offer it once more on the final page — a theme is a decision about a picture,
@@ -156,7 +156,6 @@ previews = [
   { value = "bmm-brutal",  label = "Brutalist",   colors = ["#e7e3d8", "#fcfbf6", "#e8590c", "#111111"] },
   # Glass builds its surfaces from translucent white over the base; the tile uses the
   # composited result, because a preview cannot show what is behind the window.
-  { value = "bmm-glass",   label = "Glass",       colors = ["#0a0c12", "#171a22", "#7c8cff", "#f6f7fb"] },
   { value = "bmm-claude",  label = "Clay",        colors = ["#f0eee6", "#fbfaf5", "#c8613f", "#2b2a27"] },
   { value = "bmm-nord",    label = "Nord",        colors = ["#2e3440", "#3b4252", "#81a1c1", "#ffffff"] },
   { value = "bmm-sakura",  label = "Sakura",      colors = ["#faf4f2", "#ffffff", "#db507c", "#3b2230"] },
@@ -203,6 +202,46 @@ description  = "Show what you're doing in BMM on your Discord profile. On by def
 default     = true                   # installer pre-enables it; BMM's own default stays off
                                      # for installs that never ran the installer
 maps_to     = "settings.discord_rpc"
+
+# ─── Tasky & in-app guidance ────────────────────────────────────────────────────
+# All four are ON in BMM, so leaving them alone changes nothing. They are here because
+# they are the first things a returning user turns off, and doing it before the first
+# launch beats hunting for four toggles afterwards.
+[[setup_option]]
+id          = "tasky_visible"
+type        = "bool"
+label_key   = "setup.taskyVisible"
+label       = "Show Tasky"
+description  = "The mascot in the corner of the app. Turning it off also removes it from the sidebar."
+default     = true                   # matches BMM's default
+maps_to     = "settings.tasky_visible"
+
+[[setup_option]]
+id          = "tasky_tooltip"
+type        = "bool"
+label_key   = "setup.taskyTooltip"
+label       = "Tasky help bubbles"
+description  = "The bubbles Tasky pops up to explain a screen. Independent of showing Tasky itself."
+default     = true                   # matches BMM's default
+maps_to     = "settings.tasky_tooltip"
+
+[[setup_option]]
+id          = "tasky_animated"
+type        = "bool"
+label_key   = "setup.taskyAnimated"
+label       = "Animate Tasky"
+description  = "Idle movement. Off leaves the mascot still — useful with reduced-motion settings."
+default     = true                   # matches BMM's default
+maps_to     = "settings.tasky_animated"
+
+[[setup_option]]
+id          = "tips_visible"
+type        = "bool"
+label_key   = "setup.tipsVisible"
+label       = "In-app tips"
+description  = "The small explanatory callouts throughout the interface. Warnings are never hidden by this."
+default     = true                   # matches BMM's default
+maps_to     = "settings.tips_visible"
 
 [[setup_option]]
 id          = "smart_io"
