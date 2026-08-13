@@ -79,6 +79,24 @@ if (Test-Path $themesSrc) {
     New-Item -ItemType Directory -Force $themesDst | Out-Null
     Copy-Item (Join-Path $themesSrc "*.json") $themesDst
     Write-Host ("      bundled {0} themes for import" -f (Get-ChildItem $themesDst -Filter *.json).Count)
+
+    # The swatch page's choice list is hand-written in installer.toml; the files it
+    # refers to are picked up by the wildcard above. Nothing tied the two together, so a
+    # choice id with no matching theme file passed every test (bpkg-core only checks the
+    # TOML against itself) and then failed silently at runtime: BMM writes the id, finds
+    # no such theme, and restoreThemeAtBoot falls back to the default. The user picks a
+    # theme and gets another one, with no error anywhere.
+    $themeOpt = (Get-Content $Config -Raw) -split '\[\[setup_option\]\]' |
+                Where-Object { $_ -match 'id\s*=\s*"theme"' }
+    if ($themeOpt -and $themeOpt -match 'choices\s*=\s*\[([^\]]*)\]') {
+        $ids = [regex]::Matches($Matches[1], '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value }
+        $have = Get-ChildItem $themesDst -Filter *.json | ForEach-Object { $_.Name }
+        $orphans = $ids | Where-Object { $id = $_; -not ($have | Where-Object { $_ -like "*$id*" }) }
+        if ($orphans) {
+            throw ("installer.toml offers theme(s) with no bundled file: {0}. Add the .json to frontend/assets/builtin-themes/ or drop the choice." -f ($orphans -join ', '))
+        }
+        Write-Host ("      verified {0} swatch choice(s) resolve to a bundled theme" -f $ids.Count)
+    }
 }
 
 $userBundle = "examples/bmm/bundle/presets"
