@@ -1737,8 +1737,35 @@ fn flatten_row(headers: &[String], cells: &[String]) -> Option<String> {
     }
 }
 
+/// Raw HTML tags a legal document may carry. Markdown allows inline HTML and these
+/// documents are rendered by three different things — BMM (marked, which passes HTML
+/// through), the BCWEB site, and this installer, which draws Text runs and has no notion
+/// of a tag at all. An `<a href=…>` at the end of PRIVACY.md therefore reached the reader
+/// as literal angle brackets.
+///
+/// The document was rewritten to use a markdown link, but stripping tags here is what
+/// stops the NEXT one: nobody editing a policy is thinking about a Slint renderer, and a
+/// tag that leaks through is visible to every user of the installer.
+///
+/// Deliberately crude — it removes tags and keeps their inner text, which is the right
+/// outcome for `<a>`, `<b>`, `<span>` and friends. It is not an HTML parser and does not
+/// need to be: the goal is that markup never renders as prose, not that HTML is supported.
+fn strip_html_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut depth = 0usize;
+    for ch in s.chars() {
+        match ch {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            c if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
 fn strip_inline_md(s: &str) -> String {
-    let mut r = s.replace("**", "").replace('`', "");
+    let mut r = strip_html_tags(s).replace("**", "").replace('`', "");
     // [text](url) -> "text (url)"
     while let (Some(lb), Some(rb)) = (r.find('['), r.find("](")) {
         if rb <= lb {
@@ -1901,6 +1928,33 @@ mod tests {
 | **Telemetry ON** | Yes | Anonymous usage | BMM dashboard |
 
 After the table.";
+
+
+    #[test]
+    fn raw_html_never_reaches_the_reader_as_text() {
+        // The exact three-line anchor that used to sit at the end of PRIVACY.md, plus the
+        // markdown link that replaced it — both must read as prose.
+        let blocks = parse_md(
+            "Questions? Open an issue:\n\
+             <a href=\"https://example.com/repo\" target=\"_blank\" rel=\"noopener noreferrer\">\n\
+             BetterModsManager\n\
+             </a>\n\
+             \n\
+             Or use [BetterModsManager](https://example.com/repo).",
+        );
+        let text: Vec<String> = blocks.iter().map(|b| b.text.to_string()).collect();
+        let joined = text.join("\n");
+
+        // No angle brackets, no attribute names, nowhere.
+        assert!(!joined.contains('<') && !joined.contains('>'), "{joined}");
+        assert!(!joined.contains("href"), "{joined}");
+        assert!(!joined.contains("noopener"), "{joined}");
+
+        // The link TEXT survives — stripping a tag must not delete what it wrapped.
+        assert!(text.iter().any(|l| l.contains("BetterModsManager")), "{text:?}");
+        // And a real markdown link still resolves to "text (url)".
+        assert!(joined.contains("https://example.com/repo"), "{joined}");
+    }
 
     #[test]
     fn a_markdown_table_becomes_readable_bullets() {
