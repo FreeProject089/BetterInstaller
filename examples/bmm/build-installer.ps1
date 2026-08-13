@@ -9,13 +9,20 @@
 #    drop a PNG at examples/bmm/branding/logo.png                       (durable)
 #    otherwise BMM's own app icon is used.
 #  The chosen source is printed during the payload step.
+#
+#  Windows EXE icon (the .ico on BMM-Setup.exe itself), same precedence:
+#    ./examples/bmm/build-installer.ps1 -Icon <path-to-your-icon.ico>   (one-off)
+#    drop an ICO at examples/bmm/branding/icon.ico                      (durable)
+#    otherwise BMM's own src-tauri/icons/icon.ico is used.
+#  It is compiled into the engine, so the engine build step reports it.
 #  ASCII-only on purpose (Windows PowerShell 5.1 chokes on non-ASCII).
 # =====================================================================
 param(
     [string]$BmmRoot = "..",                       # BetterModsManager repo root
     [string]$Config  = "examples/bmm/installer.toml",
     [string]$Out     = "",                         # default: <BmmRoot>/Release/BMM-Setup.exe
-    [string]$Logo    = ""                          # override the sidebar logo; see below
+    [string]$Logo    = "",                         # override the sidebar logo; see below
+    [string]$Icon    = ""                          # override the EXE icon (.ico); see below
 )
 $ErrorActionPreference = "Stop"
 
@@ -36,7 +43,25 @@ if (-not $Out) { $Out = Join-Path $relDir "BMM-Setup.exe" }
 # installer.toml had moved on, and the build died with "unknown variant swatch" --
 # a config error pointing at a perfectly valid config, because the binary reading it
 # predated the feature.
+# The EXE icon is compiled IN, so it must be resolved before the engine build. Same three
+# sources as the sidebar logo, and the same rule: an explicit -Icon that does not exist is
+# an error, never a silent fall back to the default. Which one was used is printed, because
+# an icon quietly ignored produces a build indistinguishable from one that honoured it.
+$iconCustom = Join-Path $PSScriptRoot "branding/icon.ico"
+if ($Icon -and -not (Test-Path $Icon)) { throw "icon not found: $Icon" }
+$iconSrc = if ($Icon) { $Icon }
+           elseif (Test-Path $iconCustom) { $iconCustom }
+           else { Join-Path $BmmRoot "src-tauri/icons/icon.ico" }
+
 Write-Host "[1/5] Building the engine (release)..."
+if (Test-Path $iconSrc) {
+    $iconWhich = if ($Icon) { "-Icon argument" } elseif (Test-Path $iconCustom) { "branding/icon.ico" } else { "BMM icon.ico (default)" }
+    Write-Host ("      exe icon: {0} -> {1}" -f $iconWhich, $iconSrc)
+    $env:BI_ICON = (Resolve-Path $iconSrc).Path
+} else {
+    Write-Host "      exe icon: none found - the installer keeps the default Windows icon"
+    Remove-Item Env:\BI_ICON -ErrorAction SilentlyContinue
+}
 cargo build --release -p bpkg-cli -p installer
 if ($LASTEXITCODE -ne 0) { throw "engine build failed" }
 

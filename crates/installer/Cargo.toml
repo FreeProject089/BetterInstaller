@@ -29,3 +29,4 @@ rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 [build-dependencies]
 slint-build.workspace = true
 embed-manifest.workspace = true
+winresource = "0.1.31"
