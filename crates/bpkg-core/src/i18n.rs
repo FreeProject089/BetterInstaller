@@ -53,6 +53,23 @@ pub fn t(lang: &str, key: &str) -> String {
                 "Finish"
             }
         }
+        // Titles for the bundled legal documents. The BODY is already localized (the
+        // installer prefers TOS_FR.md / PRIVACY_FR.md when the language is French), so an
+        // English heading over French text was the last thing left in the wrong language.
+        "doc_privacy" => {
+            if fr {
+                "Politique de confidentialité"
+            } else {
+                "Privacy Policy"
+            }
+        }
+        "doc_tos" => {
+            if fr {
+                "Conditions d'utilisation"
+            } else {
+                "Terms of Service"
+            }
+        }
         "config_title" => "Configuration", // same in en/fr
         "config_hint" => {
             if fr {

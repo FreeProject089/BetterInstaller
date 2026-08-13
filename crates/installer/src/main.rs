@@ -1608,7 +1608,7 @@ fn load_legal_docs(cfg: &InstallerConfig, pkg: Option<&Path>, lang: &str) -> Vec
             .or_else(|| map.get(doc).map(|b| (doc.clone(), b)));
         if let Some((name, bytes)) = picked {
             out.push(LegalDoc {
-                title: doc_title(&name),
+                title: doc_title(&name, lang),
                 blocks: parse_md(&String::from_utf8_lossy(bytes)),
             });
         }
@@ -1621,8 +1621,46 @@ fn load_legal_docs(cfg: &InstallerConfig, pkg: Option<&Path>, lang: &str) -> Vec
 /// `text (url)`.
 fn parse_md(text: &str) -> Vec<MdBlock> {
     let mut out = Vec::new();
-    for raw in text.lines() {
-        let line = raw.trim_end();
+    let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
+    // Header cells of the table currently being read, if any. A table ends at the first
+    // line that is not a row.
+    let mut headers: Vec<String> = Vec::new();
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        let line = lines[i];
+
+        // -- Tables --------------------------------------------------------------
+        // There is no table layout in the Slint view, and the renderer used to fall
+        // through to the paragraph arm: PRIVACY's "what leaves your PC" summary -- the
+        // one table a privacy policy most needs read -- reached the user as raw
+        // pipe-delimited lines. Rather than build a grid, each row is flattened into one
+        // bullet carrying its own column labels, so it stays readable at any width.
+        if is_table_row(line) {
+            if headers.is_empty() {
+                headers = split_row(line);
+                i += 1;
+                if i < lines.len() && is_table_divider(lines[i]) {
+                    i += 1;
+                }
+                continue;
+            }
+            if is_table_divider(line) {
+                i += 1;
+                continue;
+            }
+            let cells = split_row(line);
+            if let Some(t) = flatten_row(&headers, &cells) {
+                out.push(MdBlock {
+                    text: t.into(),
+                    level: 4,
+                });
+            }
+            i += 1;
+            continue;
+        }
+        headers.clear();
+
         let (level, content): (i32, &str) = if let Some(s) = line.strip_prefix("### ") {
             (3, s)
         } else if let Some(s) = line.strip_prefix("## ") {
@@ -1638,8 +1676,59 @@ fn parse_md(text: &str) -> Vec<MdBlock> {
             text: strip_inline_md(content).into(),
             level,
         });
+        i += 1;
     }
     out
+}
+
+fn is_table_row(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with('|') && t.len() > 1
+}
+
+/// A `|---|:--:|` separator carries no content and must not become a bullet.
+fn is_table_divider(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with('|')
+        && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '))
+        && t.contains('-')
+}
+
+fn split_row(line: &str) -> Vec<String> {
+    line.trim()
+        .trim_start_matches('|')
+        .trim_end_matches('|')
+        .split('|')
+        .map(|c| strip_inline_md(c.trim()))
+        .collect()
+}
+
+/// One table row -> "first cell - Header: value - Header: value".
+///
+/// Cells holding an em dash or nothing are dropped: in these documents that is how
+/// "nothing is sent" is written, and repeating "Data sent: -" on every such row buries
+/// the rows that DO say something.
+fn flatten_row(headers: &[String], cells: &[String]) -> Option<String> {
+    let subject = cells.first()?.trim();
+    if subject.is_empty() {
+        return None;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for (idx, cell) in cells.iter().enumerate().skip(1) {
+        let v = cell.trim();
+        if v.is_empty() || v == "\u{2014}" || v == "-" {
+            continue;
+        }
+        match headers.get(idx).map(|h| h.trim()).filter(|h| !h.is_empty()) {
+            Some(h) => parts.push(format!("{h}: {v}")),
+            None => parts.push(v.to_string()),
+        }
+    }
+    if parts.is_empty() {
+        Some(subject.to_string())
+    } else {
+        Some(format!("{subject} \u{2014} {}", parts.join(" \u{b7} ")))
+    }
 }
 
 fn strip_inline_md(s: &str) -> String {
@@ -1669,17 +1758,25 @@ fn strip_inline_md(s: &str) -> String {
 }
 
 /// Friendly title for a legal document filename.
-fn doc_title(file: &str) -> String {
+fn doc_title(file: &str, lang: &str) -> String {
     let low = file.to_lowercase();
     if low.contains("privacy") {
-        "Privacy Policy".to_string()
+        bpkg_core::i18n::t(lang, "doc_privacy")
     } else if low.contains("tos") || low.contains("terms") || low.contains("eula") {
-        "Terms of Service".to_string()
+        bpkg_core::i18n::t(lang, "doc_tos")
     } else {
-        file.rsplit('/')
+        // Fallback for any other bundled document: show the bare file name, minus the
+        // language suffix. Without the trim a French reader gets "CONTRIBUTING_FR" as a
+        // heading -- the localized spelling is an implementation detail of how the file
+        // was picked, not something to put on screen.
+        let stem = file
+            .rsplit('/')
             .next()
             .unwrap_or(file)
-            .trim_end_matches(".md")
+            .trim_end_matches(".md");
+        stem.strip_suffix("_FR")
+            .or_else(|| stem.strip_suffix("_EN"))
+            .unwrap_or(stem)
             .to_string()
     }
 }
@@ -1786,7 +1883,68 @@ fn parse_hex(s: &str) -> Option<Color> {
 
 #[cfg(test)]
 mod tests {
-    use super::signature_verdict;
+    use super::{doc_title, parse_md, signature_verdict};
+
+    // The exact shape of PRIVACY.md's "what leaves your PC" summary. Before table
+    // support this reached the user as raw pipe-delimited lines.
+    const TABLE: &str = "\
+## Summary
+| Action | Leaves your PC? | Data sent | Recipient |
+|---|---|---|---|
+| Browsing/managing mods | No | \u{2014} | \u{2014} |
+| **Telemetry ON** | Yes | Anonymous usage | BMM dashboard |
+
+After the table.";
+
+    #[test]
+    fn a_markdown_table_becomes_readable_bullets() {
+        let blocks = parse_md(TABLE);
+        let texts: Vec<String> = blocks.iter().map(|b| b.text.to_string()).collect();
+
+        // No pipes survive anywhere: that was the whole defect.
+        assert!(
+            !texts.iter().any(|t| t.contains('|')),
+            "a raw table line reached the view: {texts:?}"
+        );
+        // The header row is consumed, not printed as a bullet of its own.
+        assert!(!texts.iter().any(|t| t.starts_with("Action")));
+        // The separator never becomes a block.
+        assert!(!texts.iter().any(|t| t.contains("---")));
+
+        // A row whose only real cell is the subject keeps just the subject: the em dashes
+        // mean "nothing is sent", and echoing "Data sent: -" would bury the rows that
+        // actually say something.
+        assert!(
+            texts.iter().any(|t| t == "Browsing/managing mods \u{2014} Leaves your PC?: No"),
+            "{texts:?}"
+        );
+        // A row with real values keeps every one of them, each with its column label.
+        let telemetry = texts
+            .iter()
+            .find(|t| t.starts_with("Telemetry ON"))
+            .expect("the telemetry row survives");
+        assert!(telemetry.contains("Leaves your PC?: Yes"), "{telemetry}");
+        assert!(telemetry.contains("Data sent: Anonymous usage"), "{telemetry}");
+        assert!(telemetry.contains("Recipient: BMM dashboard"), "{telemetry}");
+
+        // Rows are bullets, and the surrounding document is untouched.
+        assert_eq!(
+            blocks.iter().find(|b| b.text.starts_with("Telemetry ON")).unwrap().level,
+            4
+        );
+        assert!(blocks.iter().any(|b| b.level == 2 && b.text == "Summary"));
+        assert!(texts.iter().any(|t| t == "After the table."));
+    }
+
+    #[test]
+    fn legal_document_titles_follow_the_language() {
+        assert_eq!(doc_title("TOS_FR.md", "fr"), "Conditions d'utilisation");
+        assert_eq!(doc_title("TOS.md", "en"), "Terms of Service");
+        assert_eq!(doc_title("PRIVACY_FR.md", "fr"), "Politique de confidentialit\u{e9}");
+        assert_eq!(doc_title("PRIVACY.md", "en"), "Privacy Policy");
+        // Any other bundled document falls back to its name without the language suffix.
+        assert_eq!(doc_title("CONTRIBUTING_FR.md", "fr"), "CONTRIBUTING");
+    }
 
     #[test]
     fn a_tampered_package_is_refused_even_when_signatures_are_optional() {
