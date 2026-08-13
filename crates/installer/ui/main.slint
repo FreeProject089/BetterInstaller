@@ -319,7 +319,7 @@ component WelcomePage inherits VerticalLayout {
     ScrollView {
         vertical-stretch: 1;
         VerticalLayout {
-            spacing: 8px;
+            spacing: 6px;
             padding-right: 8px;
             padding-bottom: 4px;
             for c in components : Rectangle {
@@ -327,8 +327,14 @@ component WelcomePage inherits VerticalLayout {
                 border-radius: 7px;
                 border-width: 2px;
                 border-color: Pal.border;
+                // vertical-stretch: 0, and this is the whole reason the rows were huge.
+                // A Rectangle stretches by default, so a VerticalLayout handed the three
+                // component cards ALL the leftover height and each one grew to a third of
+                // the page — two lines of text floating in 120px of panel. Now each row is
+                // as tall as its own content and the spacer below soaks up the rest.
+                vertical-stretch: 0;
                 HorizontalLayout {
-                    padding: 13px;
+                    padding: 10px;
                     spacing: 12px;
                     VerticalLayout {
                         alignment: center;
@@ -353,6 +359,8 @@ component WelcomePage inherits VerticalLayout {
                     }
                 }
             }
+            // Takes the leftover height so the rows above don't have to.
+            Rectangle { vertical-stretch: 1; }
         }
     }
 }
