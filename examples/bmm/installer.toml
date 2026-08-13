@@ -186,8 +186,8 @@ id          = "telemetry"
 type        = "bool"
 label_key   = "setup.telemetry"
 label       = "Anonymous telemetry"
-description  = "Opt-in. Sends anonymous usage data only — app version, OS, hardware specs (CPU/GPU/RAM), and which features you use. No personal data, no file contents, no account. You can turn it off later in Settings."
-default     = false                  # opt-in: never pre-checked
+description  = "On by default — uncheck to disable. Sends anonymous usage data only — app version, OS, hardware specs (CPU/GPU/RAM), and which features you use. No personal data, no file contents, no account. You can turn it off later in Settings."
+default     = true                   # pre-checked, but shown and uncheckable on this page
 maps_to     = "settings.telemetry"
 
 # ─── Optional preferences pre-set at install (each maps to a real BMM setting) ───
@@ -199,8 +199,9 @@ id          = "discord_rpc"
 type        = "bool"
 label_key   = "setup.discordRpc"
 label       = "Discord Rich Presence"
-description  = "Show what you're doing in BMM on your Discord profile. Off by default; no data leaves your machine beyond Discord's own status."
-default     = false                  # matches BMM's default (opt-in)
+description  = "Show what you're doing in BMM on your Discord profile. On by default — uncheck to disable; no data leaves your machine beyond Discord's own status."
+default     = true                   # installer pre-enables it; BMM's own default stays off
+                                     # for installs that never ran the installer
 maps_to     = "settings.discord_rpc"
 
 [[setup_option]]
