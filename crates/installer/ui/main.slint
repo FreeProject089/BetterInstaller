@@ -674,9 +674,25 @@ component LegalPage inherits VerticalLayout {
     in property <int> index;
     in property <int> count;
     in property <string> accept-text;
+    in property <string> scroll-hint: "Scroll to the end to accept.";
+    in property <bool> require-scroll: false;
     in-out property <bool> accepted;
     callback accept-toggled(bool);
     spacing: 10px;
+
+    // Moving between the Terms and the Privacy Policy re-used the SAME ScrollView, so the
+    // second document opened wherever the first one had been left — usually near its end,
+    // which reads as an empty page and hides everything above it.
+    changed index => { sv.viewport-y = 0px; }
+
+    // Has the reader reached the bottom? A document SHORTER than the viewport counts as
+    // read, or a short privacy policy could never be accepted at all. The 12px slack
+    // absorbs sub-pixel layout rounding — without it the last line can sit permanently one
+    // fraction of a pixel out of reach, which is indistinguishable from a broken checkbox.
+    property <bool> at-end: sv.viewport-height <= sv.visible-height
+        || (-sv.viewport-y + sv.visible-height) >= (sv.viewport-height - 12px);
+    // Once accepted, stay unlocked: scrolling back up to re-read must not un-tick it.
+    property <bool> may-accept: !root.require-scroll || root.at-end || root.accepted;
     HorizontalLayout {
         Text { text: doc-title; font-size: 22px; font-weight: 900; color: white; horizontal-stretch: 1; }
         Text { text: "Doc " + (index + 1) + " / " + count; font-size: 12px; font-weight: 700; color: Pal.dim; vertical-alignment: center; }
@@ -687,7 +703,7 @@ component LegalPage inherits VerticalLayout {
         border-radius: 6px;
         border-width: 2px;
         border-color: Pal.border;
-        ScrollView {
+        sv := ScrollView {
             VerticalLayout {
                 padding: 16px;
                 spacing: 5px;
@@ -701,12 +717,44 @@ component LegalPage inherits VerticalLayout {
             }
         }
     }
-    BrutalCheck {
-        text: root.accept-text;
-        checked: root.accepted;
-        controlled: true;
-        // `checked` still reflects the old value (no self-toggle), so send its inverse.
-        toggled => { root.accept-toggled(!self.checked); }
+    HorizontalLayout {
+        spacing: 10px;
+        // FIXED height, and that is what breaks the binding loop rather than any phrasing
+        // of the hint. Anything in this row whose size depends on `may-accept` — its
+        // presence, or even its text, since a Text's preferred height follows its content —
+        // feeds back into the ScrollView's height and therefore into whether the end has
+        // been reached. Pin the row and the measurement stops depending on its own result.
+        height: 26px;
+        BrutalCheck {
+            text: root.accept-text;
+            checked: root.accepted;
+            enabled: root.may-accept;
+            controlled: true;
+            // `checked` still reflects the old value (no self-toggle), so send its inverse.
+            toggled => { if (root.may-accept) { root.accept-toggled(!self.checked); } }
+        }
+        // Says WHY the box is greyed out. A disabled control with no explanation reads as
+        // a bug, and the reader's next move is to click it harder.
+        //
+        // ALWAYS present, showing an empty string when it has nothing to say. Making its
+        // existence conditional on `may-accept` created a binding loop the compiler
+        // refused: the hint changes the row's height, which changes the ScrollView's
+        // height, which changes whether the end is reached, which decides the hint. Text
+        // that appears and disappears must not be what the measurement depends on.
+        // CONSTANT text, varying only in opacity. Two earlier attempts looped: making the
+        // hint's EXISTENCE conditional, then its CONTENT — a Text's preferred height
+        // follows its string, so either way the hint fed back into the ScrollView's height
+        // and so into whether the end had been reached. Opacity is not a layout property,
+        // so nothing here can influence the measurement it reacts to.
+        Text {
+            text: root.scroll-hint;
+            opacity: root.may-accept ? 0 : 1;
+            font-size: 11px;
+            color: Pal.dim;
+            vertical-alignment: center;
+            wrap: no-wrap;
+        }
+        Rectangle { horizontal-stretch: 1; }
     }
 }
 
@@ -817,6 +865,8 @@ export component MainWindow inherits Window {
     in property <string> legal-title;
     in property <[MdBlock]> legal-blocks;
     in property <string> legal-accept-text: "I have read and accept this document.";
+    in property <string> legal-scroll-hint: "Scroll to the end to accept.";
+    in property <bool> legal-require-scroll: false;
     in property <int> legal-index: 0;
     in property <int> legal-count: 0;
     in-out property <bool> legal-accepted: false;
@@ -961,6 +1011,8 @@ export component MainWindow inherits Window {
                             index: root.legal-index;
                             count: root.legal-count;
                             accept-text: root.legal-accept-text;
+                            scroll-hint: root.legal-scroll-hint;
+                            require-scroll: root.legal-require-scroll;
                             accepted: root.legal-accepted;
                             accept-toggled(v) => { root.legal-accept-toggled(v); }
                         }

@@ -322,6 +322,15 @@ pub struct SetupOption {
     /// For `license`: documents to display (relative paths in the package).
     #[serde(default)]
     pub documents: Vec<String>,
+    /// For `license`: require the reader to reach the END of a document before its accept
+    /// box becomes usable. Off by default, because forcing it on every project would be a
+    /// behaviour change nobody asked for; BMM turns it on.
+    ///
+    /// It is a nudge, not a proof of reading — but a checkbox that cannot be ticked from
+    /// the first screenful is the difference between "I clicked past it" and "I at least
+    /// saw how long it was".
+    #[serde(default)]
+    pub require_scroll: bool,
     /// Whether the user must satisfy this option to proceed.
     #[serde(default)]
     pub required: bool,

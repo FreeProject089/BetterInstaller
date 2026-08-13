@@ -73,6 +73,13 @@ pub fn t(lang: &str, key: &str) -> String {
                 "Keep current"
             }
         }
+        "scroll_to_accept" => {
+            if fr {
+                "Fais défiler jusqu'à la fin pour accepter."
+            } else {
+                "Scroll to the end to accept."
+            }
+        }
         "doc_privacy" => {
             if fr {
                 "Politique de confidentialité"

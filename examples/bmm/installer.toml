@@ -169,6 +169,10 @@ label       = "Terms of Service & Privacy"
 description  = "I accept the Terms of Service and the Privacy Policy. Required to continue."
 documents   = ["TOS.md", "PRIVACY.md"]
 required    = true
+# BMM turns this on: the accept box stays disabled until the reader reaches the end of the
+# document. A nudge, not proof of reading — but it is the difference between clicking past
+# a wall of text and at least seeing how long it is.
+require_scroll = true
 maps_to     = ["settings.tos_accepted", "settings.privacy_accepted"]
 
 [[setup_option]]

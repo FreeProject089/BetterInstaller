@@ -336,11 +336,15 @@ fn run_gui(
     // Legal: a license option with `documents` becomes the Terms step (text read
     // from the package). It's hidden from the Setup page; its acceptance is stored
     // in `chosen` so the handoff still records privacy/tos acceptance.
-    let legal_opt_id: Option<String> = cfg
+    let legal_opt = cfg
         .setup_options
         .iter()
-        .find(|o| matches!(o.kind, SetupOptionKind::License) && !o.documents.is_empty())
-        .map(|o| o.id.clone());
+        .find(|o| matches!(o.kind, SetupOptionKind::License) && !o.documents.is_empty());
+    let legal_opt_id: Option<String> = legal_opt.map(|o| o.id.clone());
+    // Opt-in per project: forcing every installer to make people scroll would be a
+    // behaviour change nobody asked for.
+    ui.set_legal_require_scroll(legal_opt.map(|o| o.require_scroll).unwrap_or(false));
+    ui.set_legal_scroll_hint(bpkg_core::i18n::t(&lang, "scroll_to_accept").into());
     let legal_docs: Rc<Vec<LegalDoc>> = Rc::new(load_legal_docs(&cfg, package_path.as_deref(), &lang));
     let legal_count = legal_docs.len();
     let legal_index: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
