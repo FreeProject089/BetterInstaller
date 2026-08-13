@@ -450,7 +450,22 @@ component SwatchGrid inherits Rectangle {
     in property <[SwatchRow]> rows;
     in property <string> value;
     callback picked(string);
-    height: (floor((max(rows.length, 1) - 1) / 3) + 1) * 130px;
+    // The tiles are positioned absolutely, so this Rectangle has no PREFERRED height of
+    // its own — and a preferred height is exactly what a ScrollView sizes its viewport
+    // from. Setting `height` alone made the grid the right size and left the ScrollView
+    // believing there was nothing to scroll: with twelve themes the last rows rendered,
+    // were clipped by the dialog, and no wheel or drag would reach them.
+    //
+    // So the needed height is PUBLISHED, and every ScrollView holding one of these binds
+    // its viewport-height to it rather than guessing.
+    out property <length> content-height: (floor((max(rows.length, 1) - 1) / 3) + 1) * 130px;
+    // min-height, not height: a LAYOUT sizes its children from min/preferred and ignores
+    // an explicit height, so the copy on the Configuration page would be allotted no room
+    // and overlap whatever follows it. Slint refuses both at once, and min-height is the
+    // one that satisfies the layout AND still makes every row render inside a ScrollView.
+    min-height: content-height;
+    // Three tiles per row at 156px, minus the gap after the last one.
+    out property <length> content-width: 458px;
     for sw[i] in rows : SwatchTile {
         x: (i - floor(i / 3) * 3) * 156px;
         y: floor(i / 3) * 130px;
@@ -1030,7 +1045,9 @@ export component MainWindow inherits Window {
                 Rectangle { height: 4px; }
                 ScrollView {
                     vertical-stretch: 1;
-                    SwatchGrid {
+                    viewport-height: final-grid.content-height;
+                    viewport-width: final-grid.content-width;
+                    final-grid := SwatchGrid {
                         width: 458px;
                         rows: root.final-previews;
                         value: root.final-value;
