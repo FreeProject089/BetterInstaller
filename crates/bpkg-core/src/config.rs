@@ -669,4 +669,37 @@ mod tests {
         assert!(p.sha256.is_none() && p.install_to.is_none());
         assert!(p.validate().is_ok(), "a check-only entry must stay valid");
     }
+
+    /// The shipped BMM config must satisfy the rules the engine enforces. A prerequisite
+    /// that fails validate() would only be discovered when an installer tried to fetch it,
+    /// on a user's machine.
+    #[test]
+    fn the_bmm_example_config_has_valid_prerequisites() {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/bmm/installer.toml"),
+        )
+        .expect("examples/bmm/installer.toml");
+        let cfg: InstallerConfig = toml::from_str(&text).expect("installer.toml must parse");
+        for p in &cfg.prerequisites {
+            p.validate().unwrap_or_else(|e| panic!("{e}"));
+        }
+        // And the one that pairs with BMM's scheduler must keep pointing where it looks.
+        let py = cfg
+            .prerequisites
+            .iter()
+            .find(|p| p.id == "python")
+            .expect("the python prerequisite");
+        assert_eq!(
+            py.install_to.as_deref(),
+            Some("runtime/python"),
+            "must match managed_engine() in src-tauri/src/commands/scheduler.rs"
+        );
+        assert_eq!(py.kind, PrereqKind::Zip);
+        assert_eq!(
+            py.check_command.as_deref(),
+            Some("py"),
+            "`python` would match the Microsoft Store alias and report a missing interpreter as present"
+        );
+    }
 }

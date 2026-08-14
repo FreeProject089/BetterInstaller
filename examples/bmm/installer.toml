@@ -330,3 +330,45 @@ label     = "Start the MCP AI server now"
 exe       = "bmm-mcp-server.exe"
 default   = false
 component = "mcp-server"
+
+# ── Prerequisites ─────────────────────────────────────────────────────────────
+#
+# Python, for the scheduler's "Run a script" action. BMM bundles no interpreter, so a
+# Python task on a machine without one fails at whatever hour it was scheduled for.
+#
+# The EMBEDDABLE build, not the full installer: ~10 MB, no elevation, nothing written
+# outside the install directory, no PATH changes, and uninstalling is deleting a folder.
+# The full installer would need admin rights and would modify the user's machine for the
+# sake of one optional feature.
+#
+# install_to matches where BMM's scheduler looks (see resolve_engine / managed_engine in
+# src-tauri/src/commands/scheduler.rs). Change one and you must change the other — they
+# are a contract, and nothing checks it at build time.
+[[prerequisite]]
+id   = "python"
+name = "Python 3.12 (embeddable)"
+
+# `py`, deliberately NOT `python`.
+#
+# check_command is a file-existence test on PATH, and on a stock Windows `python.exe`
+# EXISTS as a Microsoft Store App Execution Alias — a stub that opens the Store and runs
+# nothing. Testing for `python` would therefore report "already installed" on exactly the
+# machines that have no interpreter. `py` is the official launcher and is not shadowed by
+# an alias, so its presence means a real Python. This is the same trap that made scheduler
+# tasks fail with "Could not start python".
+check_command = "py"
+
+kind         = "zip"
+download_url = "https://www.python.org/ftp/python/3.12.9/python-3.12.9-embed-amd64.zip"
+# Published by python.org in the release's own SPDX SBOM
+# (python-3.12.9-embed-amd64.zip.spdx.json). Taken from there rather than the release
+# page, which lists only MD5 — and MD5 is not a integrity guarantee worth pinning to.
+sha256       = "615861fb801e8b04c847598db4e1e46e4b046295017caa37cb5486dde72b5865"
+install_to   = "runtime/python"
+
+# Optional: BMM works fully without it, and only the scheduler's script action wants it.
+# NOTE: prereq::ensure_required only auto-installs entries with required = true, so as it
+# stands this is declared and detected but never fetched. Offering it as a checkbox is the
+# remaining piece — making it required instead would force a 10 MB download on everyone
+# for a feature most people never use.
+required = false
