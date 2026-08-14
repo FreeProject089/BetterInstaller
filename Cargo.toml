@@ -25,6 +25,10 @@ toml = "0.8"
 thiserror = "1"
 anyhow = "1"
 zstd = "0.13"
+# Only for PrereqKind::Zip (a downloaded runtime, e.g. the python.org embeddable build).
+# default-features off deliberately: the full crate pulls bzip2, zstd-via-zip, aes and
+# time, none of which a prerequisite archive needs, and this installer has a <5 MB target.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"

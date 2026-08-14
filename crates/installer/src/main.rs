@@ -345,7 +345,8 @@ fn run_gui(
     // behaviour change nobody asked for.
     ui.set_legal_require_scroll(legal_opt.map(|o| o.require_scroll).unwrap_or(false));
     ui.set_legal_scroll_hint(bpkg_core::i18n::t(&lang, "scroll_to_accept").into());
-    let legal_docs: Rc<Vec<LegalDoc>> = Rc::new(load_legal_docs(&cfg, package_path.as_deref(), &lang));
+    let legal_docs: Rc<Vec<LegalDoc>> =
+        Rc::new(load_legal_docs(&cfg, package_path.as_deref(), &lang));
     let legal_count = legal_docs.len();
     let legal_index: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
     // One acceptance flag PER document (separate accept for TOS and Privacy).
@@ -1142,7 +1143,9 @@ fn run_real_install(
     // download_url), error on any still missing. Done before touching the install.
     {
         let weak = weak.clone();
-        bpkg_core::prereq::ensure_required(&integ.prereqs, |name| {
+        // `dest` so a zip prerequisite (a downloaded runtime) unpacks under the install
+        // directory the user chose, not somewhere fixed.
+        bpkg_core::prereq::ensure_required(&integ.prereqs, dest, |name| {
             let name = name.to_string();
             let _ = weak.upgrade_in_event_loop(move |ui| {
                 ui.set_progress_label(format!("Installing prerequisite: {name}…").into());
@@ -1712,9 +1715,7 @@ fn is_table_row(line: &str) -> bool {
 /// A `|---|:--:|` separator carries no content and must not become a bullet.
 fn is_table_divider(line: &str) -> bool {
     let t = line.trim();
-    t.starts_with('|')
-        && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '))
-        && t.contains('-')
+    t.starts_with('|') && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')) && t.contains('-')
 }
 
 fn split_row(line: &str) -> Vec<String> {
@@ -1827,7 +1828,9 @@ fn inline_md(s: &str) -> (String, Vec<String>) {
         .trim()
         .to_string();
     // Bare URLs, after the markdown pass so a link's own URL is not collected twice.
-    for tok in text.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '<' || c == '>') {
+    for tok in
+        text.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '<' || c == '>')
+    {
         // Trailing sentence punctuation is not part of the address.
         let tok = tok.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | '"'));
         if is_web_url(tok) && !links.iter().any(|l| l == tok) {
@@ -1845,7 +1848,9 @@ fn inline_md(s: &str) -> (String, Vec<String>) {
 /// installer must not be the thing that launches it.
 fn is_web_url(u: &str) -> bool {
     let u = u.trim();
-    (u.starts_with("https://") || u.starts_with("http://")) && u.len() > 8 && !u.contains(char::is_whitespace)
+    (u.starts_with("https://") || u.starts_with("http://"))
+        && u.len() > 8
+        && !u.contains(char::is_whitespace)
 }
 
 /// Hand a web address to the OS browser.
@@ -2016,7 +2021,6 @@ mod tests {
 
 After the table.";
 
-
     #[test]
     fn raw_html_never_reaches_the_reader_as_text() {
         // The exact three-line anchor that used to sit at the end of PRIVACY.md, plus the
@@ -2038,14 +2042,18 @@ After the table.";
         assert!(!joined.contains("noopener"), "{joined}");
 
         // The link TEXT survives — stripping a tag must not delete what it wrapped.
-        assert!(text.iter().any(|l| l.contains("BetterModsManager")), "{text:?}");
+        assert!(
+            text.iter().any(|l| l.contains("BetterModsManager")),
+            "{text:?}"
+        );
         // And a real markdown link still puts its address on screen.
         assert!(joined.contains("https://example.com/repo"), "{joined}");
     }
 
     #[test]
     fn a_link_becomes_a_clickable_row_and_leaves_the_sentence_alone() {
-        let blocks = parse_md("Questions? Open an issue on [BetterModsManager](https://example.com/repo).");
+        let blocks =
+            parse_md("Questions? Open an issue on [BetterModsManager](https://example.com/repo).");
 
         // The prose keeps the LABEL and drops the address: the old renderer inlined
         // "text (url)", so a policy's one useful line arrived with a URL wedged into the
@@ -2067,7 +2075,11 @@ After the table.";
     fn a_bare_url_is_clickable_too_and_is_never_collected_twice() {
         // Policies write links both ways; the reader does not care which.
         let blocks = parse_md("Write to https://example.com/contact for anything else.");
-        let links: Vec<String> = blocks.iter().filter(|b| b.level == 5).map(|b| b.link.to_string()).collect();
+        let links: Vec<String> = blocks
+            .iter()
+            .filter(|b| b.level == 5)
+            .map(|b| b.link.to_string())
+            .collect();
         assert_eq!(links, vec!["https://example.com/contact".to_string()]);
 
         // A markdown link's own URL must not ALSO be picked up by the bare-URL scan —
@@ -2112,7 +2124,9 @@ After the table.";
         // mean "nothing is sent", and echoing "Data sent: -" would bury the rows that
         // actually say something.
         assert!(
-            texts.iter().any(|t| t == "Browsing/managing mods \u{2014} Leaves your PC?: No"),
+            texts
+                .iter()
+                .any(|t| t == "Browsing/managing mods \u{2014} Leaves your PC?: No"),
             "{texts:?}"
         );
         // A row with real values keeps every one of them, each with its column label.
@@ -2121,12 +2135,22 @@ After the table.";
             .find(|t| t.starts_with("Telemetry ON"))
             .expect("the telemetry row survives");
         assert!(telemetry.contains("Leaves your PC?: Yes"), "{telemetry}");
-        assert!(telemetry.contains("Data sent: Anonymous usage"), "{telemetry}");
-        assert!(telemetry.contains("Recipient: BMM dashboard"), "{telemetry}");
+        assert!(
+            telemetry.contains("Data sent: Anonymous usage"),
+            "{telemetry}"
+        );
+        assert!(
+            telemetry.contains("Recipient: BMM dashboard"),
+            "{telemetry}"
+        );
 
         // Rows are bullets, and the surrounding document is untouched.
         assert_eq!(
-            blocks.iter().find(|b| b.text.starts_with("Telemetry ON")).unwrap().level,
+            blocks
+                .iter()
+                .find(|b| b.text.starts_with("Telemetry ON"))
+                .unwrap()
+                .level,
             4
         );
         assert!(blocks.iter().any(|b| b.level == 2 && b.text == "Summary"));
@@ -2137,7 +2161,10 @@ After the table.";
     fn legal_document_titles_follow_the_language() {
         assert_eq!(doc_title("TOS_FR.md", "fr"), "Conditions d'utilisation");
         assert_eq!(doc_title("TOS.md", "en"), "Terms of Service");
-        assert_eq!(doc_title("PRIVACY_FR.md", "fr"), "Politique de confidentialit\u{e9}");
+        assert_eq!(
+            doc_title("PRIVACY_FR.md", "fr"),
+            "Politique de confidentialit\u{e9}"
+        );
         assert_eq!(doc_title("PRIVACY.md", "en"), "Privacy Policy");
         // Any other bundled document falls back to its name without the language suffix.
         assert_eq!(doc_title("CONTRIBUTING_FR.md", "fr"), "CONTRIBUTING");
