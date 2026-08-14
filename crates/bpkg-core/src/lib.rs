@@ -25,6 +25,7 @@ pub mod platform;
 pub mod prereq;
 pub mod sign;
 pub mod update;
+pub mod version;
 
 pub use error::{Error, Result};
 

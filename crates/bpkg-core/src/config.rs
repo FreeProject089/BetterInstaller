@@ -124,6 +124,23 @@ pub struct Prerequisite {
     /// A command that resolves on PATH when the prereq is installed.
     #[serde(default)]
     pub check_command: Option<String>,
+    /// Minimum acceptable version, inclusive — e.g. "3.10". Only meaningful with
+    /// `check_command`: a registry key or a file says something exists, not which build.
+    ///
+    /// "Installed" and "new enough" are different questions, and conflating them is why a
+    /// machine with Python 3.8 counted as satisfying a prerequisite that needs 3.10 — the
+    /// install then failed later, somewhere with no mention of Python.
+    #[serde(default)]
+    pub min_version: Option<String>,
+    /// Maximum acceptable version, inclusive. For the case a newer release actually broke
+    /// something — rarer than a minimum, and worth being able to say when it happens.
+    #[serde(default)]
+    pub max_version: Option<String>,
+    /// How to ask for the version. Defaults to `--version`, which is what most tools
+    /// answer; a few want something else (cmd wants `/c ver`, PowerShell 5.1 has no
+    /// --version at all and errors on it).
+    #[serde(default)]
+    pub version_args: Option<Vec<String>>,
     /// Where to download the installer if missing (auto-install support).
     #[serde(default)]
     pub download_url: Option<String>,
@@ -580,6 +597,9 @@ mod tests {
             check_registry: None,
             check_file: None,
             check_command: Some("py".into()),
+            min_version: None,
+            max_version: None,
+            version_args: None,
             download_url: url.map(String::from),
             sha256: Some("a".repeat(64)),
             kind: PrereqKind::Exe,

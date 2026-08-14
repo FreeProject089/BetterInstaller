@@ -358,6 +358,11 @@ name = "Python 3.12 (embeddable)"
 # tasks fail with "Could not start python".
 check_command = "py"
 
+# Which Python. The embeddable build below is 3.12, and a task written against it can
+# use syntax 3.8 does not have — so an older interpreter already on PATH must not count as
+# satisfying this. Without a minimum, `py` existing was the whole test.
+min_version   = "3.9"
+
 kind         = "zip"
 download_url = "https://www.python.org/ftp/python/3.12.9/python-3.12.9-embed-amd64.zip"
 # Published by python.org in the release's own SPDX SBOM
@@ -372,3 +377,21 @@ install_to   = "runtime/python"
 # remaining piece — making it required instead would force a 10 MB download on everyone
 # for a feature most people never use.
 required = false
+
+# Node.js, for plugin authors and anything a scheduled task shells out to.
+#
+# CHECKED but not downloaded: no download_url, so this reports whether the machine has a
+# new enough Node and stops there. Fetching a Node build is a 30 MB decision with an
+# install layout of its own, and declaring it here without one would be a promise the
+# installer cannot keep — better to say "you need this" than to fail halfway through
+# getting it.
+#
+# min_version is what makes this worth declaring at all. `node` on PATH says nothing about
+# which build: a machine with Node 14 would have satisfied a bare presence check and then
+# failed on syntax nobody would connect back to this.
+[[prerequisite]]
+id            = "node"
+name          = "Node.js 20 or later"
+check_command = "node"
+min_version   = "20.0.0"
+required      = false

@@ -23,7 +23,25 @@ pub fn check(p: &Prerequisite) -> bool {
         return std::path::Path::new(file).exists();
     }
     if let Some(cmd) = &p.check_command {
-        return command_on_path(cmd);
+        if !command_on_path(cmd) {
+            return false;
+        }
+        // On PATH is not the same as new enough. Without this a machine with Python 3.8
+        // satisfied a prerequisite needing 3.10, and the install failed later somewhere
+        // that never mentioned Python.
+        if p.min_version.is_some() || p.max_version.is_some() {
+            let Some(text) = probe_version(cmd, p.version_args.as_deref()) else {
+                // It is on PATH but would not say what it is. Not treated as satisfied: a
+                // version requirement that cannot be confirmed is not a requirement met.
+                return false;
+            };
+            return crate::version::satisfies(
+                &text,
+                p.min_version.as_deref(),
+                p.max_version.as_deref(),
+            );
+        }
+        return true;
     }
     true // nothing to check → consider satisfied
 }
@@ -148,7 +166,7 @@ pub fn ensure_required(
     mut on_step: impl FnMut(&str),
 ) -> crate::error::Result<()> {
     for p in prereqs {
-        let wanted = p.required || opted_in.iter().any(|id| *id == p.id);
+        let wanted = p.required || opted_in.contains(&p.id);
         if !wanted || check(p) {
             continue;
         }
@@ -181,6 +199,28 @@ pub fn ensure_required(
         }
     }
     Ok(())
+}
+
+/// Ask a command what version it is. `None` when it cannot be run or says nothing.
+///
+/// Reads stdout AND stderr: some tools print their version to stderr (older Pythons did),
+/// and a prober that only read stdout would report those as unknown.
+fn probe_version(cmd: &str, args: Option<&[String]>) -> Option<String> {
+    let default_args = ["--version".to_string()];
+    let args: &[String] = args.unwrap_or(&default_args);
+    let out = std::process::Command::new(cmd).args(args).output().ok()?;
+    let mut text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if text.is_empty() {
+        text = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    }
+    // Deliberately NOT gated on exit status. `node --version` exits 0, but plenty of tools
+    // print their version and exit non-zero when given no real command, and refusing those
+    // would report a working install as missing.
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 /// Is `cmd` resolvable on PATH? (`<cmd>` or `<cmd>.exe` on Windows.)
@@ -405,6 +445,9 @@ mod opt_in_tests {
             // A command that certainly does not exist, so `check` reports it missing and
             // the selection logic is what decides, not the machine running the test.
             check_command: Some("definitely-not-a-real-binary-xyz".into()),
+            min_version: None,
+            max_version: None,
+            version_args: None,
             download_url: url.map(String::from),
             sha256: Some("a".repeat(64)),
             kind: PrereqKind::Exe,
