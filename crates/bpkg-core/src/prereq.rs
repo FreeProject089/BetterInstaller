@@ -56,13 +56,39 @@ pub fn auto_install(p: &Prerequisite) -> crate::error::Result<()> {
         .as_deref()
         .ok_or_else(|| Error::Other(format!("{}: no download_url", p.name)))?;
 
+    // Validated BEFORE the request goes out. A prerequisite that cannot be verified must
+    // not be downloaded at all, rather than downloaded and then rejected — and validate()
+    // is what makes sha256 mandatory once download_url is set.
+    p.validate().map_err(Error::Other)?;
+
     let bytes = crate::net::download(url)?;
-    let fname = url
-        .rsplit('/')
-        .next()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("prereq-installer.exe");
-    let path = std::env::temp_dir().join(fname);
+
+    // The hash is the whole point of this function being trustworthy. Until now it wrote
+    // whatever the server returned to temp and executed it: HTTPS proves who answered,
+    // not what they sent, so a compromised or repurposed upstream URL meant arbitrary
+    // code execution with the installer's rights. Compared case-insensitively because a
+    // hash pasted from a vendor page is as often uppercase as not.
+    let expected = p
+        .sha256
+        .as_deref()
+        .ok_or_else(|| Error::Other(format!("{}: no sha256", p.name)))?;
+    let actual = sha256_hex(&bytes);
+    if !actual.eq_ignore_ascii_case(expected) {
+        return Err(Error::Other(format!(
+            "{}: downloaded file does not match its sha256 (expected {}, got {}) — refusing to run it",
+            p.name, expected, actual
+        )));
+    }
+
+    // The filename comes from the URL, so it is attacker-influenced if the URL ever is.
+    // Only its extension is used, and the name is fixed — a path segment in the last
+    // component would otherwise write outside the temp directory.
+    let ext = if url.to_ascii_lowercase().ends_with(".msi") {
+        "msi"
+    } else {
+        "exe"
+    };
+    let path = std::env::temp_dir().join(format!("bpkg-prereq-{}.{}", sanitise_id(&p.id), ext));
     std::fs::write(&path, &bytes).map_err(|e| Error::io(&path, e))?;
 
     let mut cmd = std::process::Command::new(&path);
@@ -148,4 +174,26 @@ fn registry_key_exists(key: &str) -> bool {
 #[cfg(not(windows))]
 fn registry_key_exists(_key: &str) -> bool {
     false // no registry off Windows
+}
+
+/// SHA-256 of some bytes, lowercase hex.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// An id reduced to characters that cannot be a path. Used for the temp filename, so a
+/// prerequisite id can never contribute a separator or a `..` to where the download lands.
+fn sanitise_id(id: &str) -> String {
+    let s: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if s.is_empty() {
+        "prereq".into()
+    } else {
+        s
+    }
 }

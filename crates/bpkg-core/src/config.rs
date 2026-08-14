@@ -127,11 +127,112 @@ pub struct Prerequisite {
     /// Where to download the installer if missing (auto-install support).
     #[serde(default)]
     pub download_url: Option<String>,
+    /// SHA-256 of the downloaded bytes, lowercase hex.
+    ///
+    /// Required whenever `download_url` is set — see `validate`. It is an Option only
+    /// because a prerequisite that is merely CHECKED (a registry key for an already
+    /// installed redistributable) downloads nothing and has nothing to hash.
+    ///
+    /// This was missing, and auto_install downloads to temp and EXECUTES the result.
+    /// HTTPS protects the transport, but it says nothing about what the far end serves:
+    /// an upstream that is compromised, hijacked, or simply repurposes a filename gets
+    /// arbitrary code execution with the installer's rights. A hash is what makes the
+    /// download the file that was reviewed rather than whatever answers today.
+    #[serde(default)]
+    pub sha256: Option<String>,
+    /// What the download IS, and so what to do with it.
+    #[serde(default)]
+    pub kind: PrereqKind,
+    /// For `PrereqKind::Zip`: where to unpack, relative to the install directory. Must
+    /// stay inside it — see `check_relative`.
+    #[serde(default)]
+    pub install_to: Option<String>,
     /// Silent-install arguments for the downloaded installer.
     #[serde(default)]
     pub silent_args: Option<String>,
     #[serde(default = "default_true")]
     pub required: bool,
+}
+
+/// How a downloaded prerequisite becomes an installed one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PrereqKind {
+    /// An installer executable, run with `silent_args`. The default, because it is what
+    /// every prerequisite did before `Zip` existed — changing the default would silently
+    /// reinterpret existing installer.toml files.
+    #[default]
+    Exe,
+    /// A zip unpacked into `install_to`. The form to prefer where there is a choice: no
+    /// elevation, nothing touched outside the install directory, and uninstalling is
+    /// deleting a folder. This is what makes a self-contained runtime — an embeddable
+    /// Python, a portable toolchain — expressible at all.
+    Zip,
+}
+
+impl Prerequisite {
+    /// Reject a prerequisite that would download without an integrity check, or unpack
+    /// outside the install directory.
+    ///
+    /// Runs when installer.toml is parsed, before any network work: the value of these
+    /// checks is that a bad config fails while it is still text, not once a download is
+    /// already on disk.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        let Some(url) = self.download_url.as_deref() else {
+            // Check-only. Nothing is fetched, so there is nothing to verify.
+            return Ok(());
+        };
+        if !url.starts_with("https://") {
+            return Err(format!("{}: download_url must be https", self.id));
+        }
+        match self.sha256.as_deref() {
+            None => return Err(format!("{}: download_url requires a sha256", self.id)),
+            Some(h) if h.len() != 64 || !h.chars().all(|c| c.is_ascii_hexdigit()) => {
+                return Err(format!("{}: sha256 must be 64 hex characters", self.id));
+            }
+            Some(_) => {}
+        }
+        if self.kind == PrereqKind::Zip {
+            let dest = self
+                .install_to
+                .as_deref()
+                .ok_or_else(|| format!("{}: a zip prerequisite needs install_to", self.id))?;
+            check_relative(&self.id, "install_to", dest)?;
+        }
+        Ok(())
+    }
+}
+
+/// A path that must stay under the install directory.
+///
+/// Rejects absolute paths, drive letters, UNC prefixes and any `..` component. Checked on
+/// the raw string rather than after canonicalising, because canonicalising resolves the
+/// escape before anyone can object to it — and a path that does not exist yet cannot be
+/// canonicalised at all.
+///
+/// The installer writes with the user's rights, so an unchecked relative path here is an
+/// arbitrary file write (CWE-22), and every form of it looks harmless in a config file
+/// nobody reads closely.
+pub fn check_relative(id: &str, field: &str, value: &str) -> std::result::Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{id}: {field} is empty"));
+    }
+    let v = value.replace('\\', "/");
+    if v.starts_with('/') {
+        return Err(format!("{id}: {field} must be relative, got {value:?}"));
+    }
+    // "C:/x" and "C:x" are both absolute enough to escape.
+    if v.len() >= 2 && v.as_bytes()[1] == b':' {
+        return Err(format!(
+            "{id}: {field} must not name a drive, got {value:?}"
+        ));
+    }
+    if v.split('/').any(|seg| seg == "..") {
+        return Err(format!(
+            "{id}: {field} must not contain '..', got {value:?}"
+        ));
+    }
+    Ok(())
 }
 
 /// Trust anchor for verifying the `.bpkg` signature before installing.
@@ -470,5 +571,102 @@ mod tests {
         // highlighted.
         let default = theme.default.as_str().expect("a string default");
         assert!(theme.previews.iter().any(|p| p.value == default));
+    }
+
+    fn prereq(url: Option<&str>) -> Prerequisite {
+        Prerequisite {
+            id: "python".into(),
+            name: "Python 3.12 (embeddable)".into(),
+            check_registry: None,
+            check_file: None,
+            check_command: Some("py".into()),
+            download_url: url.map(String::from),
+            sha256: Some("a".repeat(64)),
+            kind: PrereqKind::Exe,
+            install_to: None,
+            silent_args: None,
+            required: false,
+        }
+    }
+
+    #[test]
+    fn a_check_only_prerequisite_needs_no_hash() {
+        // Nothing is fetched, so there is nothing to verify. Requiring a hash here would
+        // force a meaningless one onto every "is the redistributable installed?" entry.
+        let mut p = prereq(None);
+        p.sha256 = None;
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn downloading_without_a_hash_is_refused() {
+        // The gap this closes: auto_install writes the response to temp and RUNS it.
+        // HTTPS proves who answered, not what they sent.
+        let mut p = prereq(Some("https://example.com/x.exe"));
+        p.sha256 = None;
+        assert!(
+            p.validate().is_err(),
+            "a download with no hash was accepted"
+        );
+
+        for bad in ["", "abc", &"z".repeat(64), &"a".repeat(63)] {
+            let mut p = prereq(Some("https://example.com/x.exe"));
+            p.sha256 = Some(bad.into());
+            assert!(p.validate().is_err(), "sha256 {bad:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn plain_http_is_refused_for_a_download() {
+        let p = prereq(Some("http://example.com/x.exe"));
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn a_zip_prerequisite_cannot_unpack_outside_the_install_directory() {
+        // The installer writes with the user's rights, so an unchecked install_to is an
+        // arbitrary file write (CWE-22) — and each of these looks harmless in a TOML file.
+        for bad in [
+            "../evil",
+            "runtime/../../evil",
+            r"runtime\..\..\evil",
+            "/etc/cron.d/evil",
+            "C:/Windows/System32/evil",
+            "C:evil",
+            "",
+            "   ",
+        ] {
+            let mut p = prereq(Some("https://example.com/x.zip"));
+            p.kind = PrereqKind::Zip;
+            p.install_to = Some(bad.into());
+            assert!(p.validate().is_err(), "install_to {bad:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn a_zip_prerequisite_needs_somewhere_to_go() {
+        let mut p = prereq(Some("https://example.com/x.zip"));
+        p.kind = PrereqKind::Zip;
+        p.install_to = None;
+        assert!(p.validate().is_err());
+
+        p.install_to = Some("runtime/python".into());
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn an_installer_toml_written_before_these_fields_still_parses() {
+        // All three are #[serde(default)], and kind defaults to Exe — what every
+        // prerequisite did before Zip existed. A different default would silently
+        // reinterpret configs already in use.
+        let toml = r#"
+            id = "vcredist"
+            name = "VC++ Redistributable"
+            required = true
+        "#;
+        let p: Prerequisite = toml::from_str(toml).expect("old config must still parse");
+        assert_eq!(p.kind, PrereqKind::Exe);
+        assert!(p.sha256.is_none() && p.install_to.is_none());
+        assert!(p.validate().is_ok(), "a check-only entry must stay valid");
     }
 }
