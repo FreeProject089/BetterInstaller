@@ -706,6 +706,37 @@ fn run_gui(
                 checked: c.required || c.default,
             })
             .collect();
+        // Optional prerequisites appear as ordinary component rows.
+        //
+        // Reusing this list rather than adding a second one: it already has the model, the
+        // toggle handler and the layout, and to the person installing there is no
+        // difference worth a separate screen between "an optional part of the app" and "an
+        // optional thing the app needs". The `prereq:` prefix keeps the ids from ever
+        // colliding with a real component's, and is what run_real_install matches on.
+        //
+        // Only the MISSING ones — offering to install a Python that is already there is
+        // noise, and ticking it would download 10 MB to no effect.
+        let mut comp_rows = comp_rows;
+        for p in bpkg_core::prereq::optional_missing(&cfg.prerequisites) {
+            comp_rows.push(CompRow {
+                id: format!("prereq:{}", p.id).into(),
+                name: p.name.clone().into(),
+                description: format!(
+                    "Not found on this PC. {}",
+                    if p.check_command.is_some() {
+                        "Downloaded and installed alongside the app."
+                    } else {
+                        "Downloaded during installation."
+                    }
+                )
+                .into(),
+                size: SharedString::new(),
+                required: false,
+                // Unticked. A download nobody asked for is not a default, and the app
+                // works without it.
+                checked: false,
+            });
+        }
         ui.set_components(ModelRc::from(Rc::new(VecModel::from(comp_rows))));
         let chosen = chosen_components.clone();
         ui.on_component_toggled(move |id, checked| {
@@ -1143,9 +1174,17 @@ fn run_real_install(
     // download_url), error on any still missing. Done before touching the install.
     {
         let weak = weak.clone();
+        // The selection list carries both kinds; `prereq:` marks the ones that are not
+        // package components. Split here rather than earlier so there is one selection
+        // model in the UI — but the package extraction below must never be handed a
+        // `prereq:` id, because it would silently match no files and install nothing.
+        let opted_in: Vec<String> = comps
+            .iter()
+            .filter_map(|c| c.strip_prefix("prereq:").map(str::to_string))
+            .collect();
         // `dest` so a zip prerequisite (a downloaded runtime) unpacks under the install
         // directory the user chose, not somewhere fixed.
-        bpkg_core::prereq::ensure_required(&integ.prereqs, dest, |name| {
+        bpkg_core::prereq::ensure_required(&integ.prereqs, dest, &opted_in, |name| {
             let name = name.to_string();
             let _ = weak.upgrade_in_event_loop(move |ui| {
                 ui.set_progress_label(format!("Installing prerequisite: {name}…").into());
@@ -1183,7 +1222,20 @@ fn run_real_install(
         signature_verdict(valid, p.is_signed(), integ.require_signature)?;
     }
 
-    let comp: Option<&[String]> = if comps.is_empty() { None } else { Some(comps) };
+    // Package components only. A `prereq:` id here would match no files, and the empty
+    // case below means "install everything" — so a run where the user ticked only a
+    // prerequisite would have looked like a full install rather than a component-filtered
+    // one. Filtering keeps the two selections from meaning anything to each other.
+    let pkg_comps: Vec<String> = comps
+        .iter()
+        .filter(|c| !c.starts_with("prereq:"))
+        .cloned()
+        .collect();
+    let comp: Option<&[String]> = if pkg_comps.is_empty() {
+        None
+    } else {
+        Some(&pkg_comps)
+    };
     let mut last_pct = -1i32;
     let written = p
         .install_with_progress(dest, comp, |done, total, file| {

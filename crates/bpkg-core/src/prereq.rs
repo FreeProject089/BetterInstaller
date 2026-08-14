@@ -122,32 +122,62 @@ pub fn auto_install(p: &Prerequisite, install_dir: &std::path::Path) -> crate::e
     Ok(())
 }
 
-/// Ensure every *required* prerequisite is present: auto-install the missing ones
-/// that declare a `download_url`, re-check, and error on any still missing.
+/// Prerequisites the user may choose to install, as opposed to those that are simply
+/// required. Only the MISSING ones — offering to install something already present is
+/// noise, and ticking it would download 10 MB to no effect.
+pub fn optional_missing(prereqs: &[Prerequisite]) -> Vec<&Prerequisite> {
+    prereqs
+        .iter()
+        .filter(|p| !p.required && p.download_url.is_some() && !check(p))
+        .collect()
+}
+
+/// Ensure prerequisites are satisfied: auto-install the missing ones that declare a
+/// `download_url`, re-check, and error on any REQUIRED one still missing.
+///
+/// `opted_in` carries the ids of optional prerequisites the user ticked. They are
+/// installed like required ones, with one deliberate difference: a failure is not fatal.
+/// Something the user asked for as an extra should not abort an install of the app they
+/// actually came for — they are told, and the install continues.
+///
 /// `on_step(name)` is called before each auto-install (for UI feedback).
 pub fn ensure_required(
     prereqs: &[Prerequisite],
     install_dir: &std::path::Path,
+    opted_in: &[String],
     mut on_step: impl FnMut(&str),
 ) -> crate::error::Result<()> {
-    for p in prereqs.iter().filter(|p| p.required) {
-        if check(p) {
+    for p in prereqs {
+        let wanted = p.required || opted_in.iter().any(|id| *id == p.id);
+        if !wanted || check(p) {
             continue;
         }
-        if p.download_url.is_some() {
-            on_step(&p.name);
-            auto_install(p, install_dir)?;
-            if !check(p) {
+        if p.download_url.is_none() {
+            if p.required {
                 return Err(crate::error::Error::Other(format!(
-                    "{}: still missing after install",
+                    "missing prerequisite: {}",
                     p.name
                 )));
             }
-        } else {
-            return Err(crate::error::Error::Other(format!(
-                "missing prerequisite: {}",
-                p.name
-            )));
+            continue;
+        }
+        on_step(&p.name);
+        let outcome = auto_install(p, install_dir).and_then(|()| {
+            if check(p) {
+                Ok(())
+            } else {
+                Err(crate::error::Error::Other(format!(
+                    "{}: still missing after install",
+                    p.name
+                )))
+            }
+        });
+        if let Err(e) = outcome {
+            // Required: the app cannot run without it, so stop. Optional: it is an extra,
+            // and losing the whole install over an extra is the wrong trade.
+            if p.required {
+                return Err(e);
+            }
         }
     }
     Ok(())
@@ -358,5 +388,90 @@ mod zip_tests {
         let dir = tmpdir("bad");
         assert!(extract_zip(b"this is not a zip", &dir.join("x")).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod opt_in_tests {
+    use super::*;
+    use crate::config::{PrereqKind, Prerequisite};
+
+    fn p(id: &str, required: bool, url: Option<&str>) -> Prerequisite {
+        Prerequisite {
+            id: id.into(),
+            name: id.into(),
+            check_registry: None,
+            check_file: None,
+            // A command that certainly does not exist, so `check` reports it missing and
+            // the selection logic is what decides, not the machine running the test.
+            check_command: Some("definitely-not-a-real-binary-xyz".into()),
+            download_url: url.map(String::from),
+            sha256: Some("a".repeat(64)),
+            kind: PrereqKind::Exe,
+            install_to: None,
+            silent_args: None,
+            required,
+        }
+    }
+
+    #[test]
+    fn only_missing_optionals_with_a_download_are_offered() {
+        let list = vec![
+            p("python", false, Some("https://e.com/x.exe")),
+            p("vcredist", true, Some("https://e.com/v.exe")), // required: not an offer
+            p("manual", false, None),                         // nothing to download
+        ];
+        let offered: Vec<&str> = optional_missing(&list)
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        assert_eq!(offered, vec!["python"]);
+    }
+
+    #[test]
+    fn an_optional_nobody_ticked_is_not_installed() {
+        // The whole point of the opt-in. If this regressed, every install would start
+        // fetching megabytes nobody asked for — and the test would still pass if it only
+        // checked that ensure_required returned Ok.
+        let list = vec![p("python", false, Some("https://127.0.0.1:1/x.exe"))];
+        let dir = std::env::temp_dir();
+        // Assert on on_step, NOT on the return value. An earlier version of this test
+        // checked only that it returned Ok — and that passes even when the opt-in is
+        // ignored entirely, because the download then fails and an optional failure is
+        // deliberately swallowed. on_step firing is the observable proof that an install
+        // was ATTEMPTED, which is the thing that must not happen.
+        let mut attempted = Vec::new();
+        assert!(ensure_required(&list, &dir, &[], |n| attempted.push(n.to_string())).is_ok());
+        assert!(
+            attempted.is_empty(),
+            "an unticked optional was installed anyway: {attempted:?}"
+        );
+    }
+
+    #[test]
+    fn a_failed_optional_does_not_abort_the_install() {
+        // Port 1 on loopback: refused instantly rather than left to time out. An
+        // unroutable address works too but costs ten seconds per test, every CI run.
+        let list = vec![p("python", false, Some("https://127.0.0.1:1/x.exe"))];
+        let mut announced = Vec::new();
+        let r = ensure_required(&list, &std::env::temp_dir(), &["python".to_string()], |n| {
+            announced.push(n.to_string())
+        });
+        assert!(
+            r.is_ok(),
+            "an optional extra failing must not lose the whole install"
+        );
+        assert_eq!(
+            announced,
+            vec!["python"],
+            "the user should still be told it was tried"
+        );
+    }
+
+    #[test]
+    fn a_failed_required_still_aborts() {
+        // The counterpart. Optional being forgiving must not have made required forgiving.
+        let list = vec![p("vcredist", true, Some("https://127.0.0.1:1/v.exe"))];
+        assert!(ensure_required(&list, &std::env::temp_dir(), &[], |_| {}).is_err());
     }
 }
