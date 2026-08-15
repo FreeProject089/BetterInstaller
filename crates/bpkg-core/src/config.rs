@@ -266,7 +266,30 @@ pub struct Security {
 impl InstallerConfig {
     /// Parse an `installer.toml` from a string.
     pub fn from_toml(s: &str) -> Result<Self> {
-        Ok(toml::from_str(s)?)
+        let cfg: Self = toml::from_str(s)?;
+        cfg.validate_all()?;
+        Ok(cfg)
+    }
+
+    /// Every per-section rule, run at LOAD time.
+    ///
+    /// `Prerequisite::validate` has existed and been tested since it was written, and nothing
+    /// ever called it outside those tests — so the rules it enforces were true of the test
+    /// fixtures and of nothing else. A recipe with `download_url = "http://…"` and no sha256
+    /// parsed cleanly, and auto_install downloads to temp and EXECUTES the result: an
+    /// upstream that is hijacked, compromised, or simply reusing a filename gets arbitrary
+    /// code execution with the installer's rights.
+    ///
+    /// Called from from_toml so it cannot be skipped by loading a config another way — a
+    /// check somebody has to remember to call is the check that was already here.
+    pub fn validate_all(&self) -> Result<()> {
+        for p in &self.prerequisites {
+            // Other, not Config: Config wraps a toml parse failure, and this is a file
+            // that parsed perfectly and says something unsafe. Reporting it as a parse
+            // error would send somebody looking for a syntax mistake.
+            p.validate().map_err(crate::error::Error::Other)?;
+        }
+        Ok(())
     }
 
     /// Load and parse an `installer.toml` from disk.
@@ -869,5 +892,62 @@ mod tests {
             "schema keys the BMM recipe never sets ({}): {unused:?}",
             unused.len()
         );
+    }
+
+    // ── The prerequisite rules actually run ──────────────────────────────────────
+    //
+    // Prerequisite::validate has existed, and been tested, since it was written — and nothing
+    // called it outside those tests. So its rules were true of the fixtures below and of
+    // nothing else: a real installer.toml with an http:// download and no hash loaded
+    // cleanly. auto_install downloads to temp and EXECUTES the result, so that is arbitrary
+    // code execution with the installer's rights, gated on a check that never ran.
+    //
+    // These test from_toml, not validate, because "the rule is correct" and "the rule is
+    // applied" are different claims and only the second one protects anybody.
+
+    fn recipe_with(prereq: &str) -> String {
+        format!(
+            "[app]\nid = \"x\"\nname = \"X\"\nversion = \"1.0.0\"\npublisher = \"P\"\n\n{prereq}"
+        )
+    }
+
+    #[test]
+    fn a_download_without_a_hash_is_refused_at_LOAD() {
+        let toml = recipe_with(
+            "[[prerequisite]]\nid = \"p\"\nname = \"P\"\ndownload_url = \"https://example.com/p.zip\"\n",
+        );
+        let err = InstallerConfig::from_toml(&toml).unwrap_err().to_string();
+        assert!(
+            err.contains("sha256"),
+            "expected a sha256 complaint, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_plain_http_download_is_refused_at_load() {
+        let toml = recipe_with(
+            "[[prerequisite]]\nid = \"p\"\nname = \"P\"\ndownload_url = \"http://example.com/p.zip\"\nsha256 = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n",
+        );
+        let err = InstallerConfig::from_toml(&toml).unwrap_err().to_string();
+        assert!(
+            err.contains("https"),
+            "expected an https complaint, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_prerequisite_that_downloads_nothing_still_loads() {
+        // Merely CHECKED — a registry key for something already installed. It has nothing to
+        // hash, and demanding one would make the common case impossible.
+        let toml =
+            recipe_with("[[prerequisite]]\nid = \"p\"\nname = \"P\"\ncheck_command = \"py\"\n");
+        assert!(InstallerConfig::from_toml(&toml).is_ok());
+    }
+
+    #[test]
+    fn the_real_bmm_manifest_still_loads() {
+        // The rule now runs on every load, so a manifest that was fine yesterday must still
+        // be fine today — otherwise this change breaks the one installer that exists.
+        assert!(InstallerConfig::load(BMM_MANIFEST).is_ok());
     }
 }
