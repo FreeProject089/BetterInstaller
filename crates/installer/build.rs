@@ -39,7 +39,10 @@ fn main() {
                     println!("cargo:warning=BI_ICON set but the icon could not be embedded: {e}");
                 }
             } else {
-                println!("cargo:warning=BI_ICON points at no file: {}", path.display());
+                println!(
+                    "cargo:warning=BI_ICON points at no file: {}",
+                    path.display()
+                );
             }
         }
     }
