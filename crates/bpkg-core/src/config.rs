@@ -722,4 +722,152 @@ mod tests {
             "`python` would match the Microsoft Store alias and report a missing interpreter as present"
         );
     }
+
+    // ── The recipe against the schema ────────────────────────────────────────────
+    //
+    // None of these structs uses `deny_unknown_fields`, so serde SILENTLY DROPS any key it
+    // does not recognise. Write `[[componentss]]` in installer.toml and the installer builds
+    // perfectly, with no components. Nothing errors, nothing warns, and the mistake surfaces
+    // only as a missing feature in a shipped installer — the same failure family as the
+    // `swatch` check above, where an unparseable table became an empty list.
+    //
+    // The set of keys the schema understands is derived by ROUND-TRIPPING the parsed config,
+    // not by listing them here. A list would be wrong the first time somebody adds a field,
+    // and a stale checker that reports nothing reads exactly like a clean one.
+    //
+    // Through JSON rather than TOML: `toml::Value::try_from` refuses an unset `Option` with
+    // UnsupportedType("unit"), so the round-trip died on the first `None`. JSON represents it
+    // as `null`, which is exactly what "a key the schema knows and the recipe never sets"
+    // should look like.
+
+    /// Every key path in a JSON document, with array elements collapsed: an array of tables
+    /// contributes `components[].id` once, however many entries it has.
+    fn key_paths(
+        v: &serde_json::Value,
+        prefix: &str,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        match v {
+            serde_json::Value::Object(map) => {
+                for (k, val) in map {
+                    let path = if prefix.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{prefix}.{k}")
+                    };
+                    out.insert(path.clone());
+                    key_paths(val, &path, out);
+                }
+            }
+            serde_json::Value::Array(a) => {
+                for item in a {
+                    key_paths(item, &format!("{prefix}[]"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn paths_of(v: &serde_json::Value) -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        key_paths(v, "", &mut out);
+        out
+    }
+
+    const BMM_MANIFEST: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/bmm/installer.toml"
+    );
+
+    /// (keys the recipe sets, keys the schema understands)
+    fn recipe_vs_schema(
+        text: &str,
+    ) -> (
+        std::collections::BTreeSet<String>,
+        std::collections::BTreeSet<String>,
+    ) {
+        let raw: toml::Value = toml::from_str(text).expect("the manifest must be valid TOML");
+        let cfg: InstallerConfig = toml::from_str(text).expect("the manifest must parse");
+        let raw_json = serde_json::to_value(raw).expect("TOML maps onto JSON");
+        let cfg_json = serde_json::to_value(&cfg).expect("the config must round-trip");
+        (paths_of(&raw_json), paths_of(&cfg_json))
+    }
+
+    #[test]
+    fn the_bmm_manifest_sets_no_key_the_schema_ignores() {
+        let text = std::fs::read_to_string(BMM_MANIFEST).unwrap();
+        let (recipe, schema) = recipe_vs_schema(&text);
+
+        // Known dead configuration, found by this check on its first run. Listed rather than
+        // quietly deleted from the recipe, because each one is a decision somebody has to
+        // make:
+        //   install.default_dir    — the installer's default target directory is SPECIFIED
+        //                            in the manifest and ignored; InstallSection has no such
+        //                            field, so the value never reaches anything.
+        //   install.allow_portable — same section, same fate.
+        //   update.package_urls    — appears nowhere in the engine at all.
+        //
+        // A ratchet, not a suppression: a NEW ignored key still fails, which is the point.
+        // Shrink this list when the fields land or the lines go.
+        const KNOWN_DEAD: [&str; 3] = [
+            "install.allow_portable",
+            "install.default_dir",
+            "update.package_urls",
+        ];
+
+        let ignored: Vec<String> = recipe.difference(&schema).cloned().collect();
+        let unexpected: Vec<_> = ignored
+            .iter()
+            .filter(|k| !KNOWN_DEAD.contains(&k.as_str()))
+            .collect();
+        assert!(
+            unexpected.is_empty(),
+            "installer.toml sets {} key(s) the schema does not know; serde drops them \
+             silently: {unexpected:?}",
+            unexpected.len()
+        );
+
+        // The debt must stay honest too: a name that stops being ignored (because the field
+        // landed) belongs off this list, not sitting here forever pretending to be a finding.
+        for k in KNOWN_DEAD {
+            assert!(
+                ignored.iter().any(|i| i == k),
+                "{k} is no longer ignored — remove it from KNOWN_DEAD"
+            );
+        }
+    }
+
+    #[test]
+    fn a_typo_in_the_recipe_is_invisible_without_this_check() {
+        // The check above is only worth having if it FAILS on the mistake it exists for.
+        // Proven on the real manifest, with one section name broken.
+        let text = std::fs::read_to_string(BMM_MANIFEST).unwrap();
+        let broken = text.replacen("[[components]]", "[[componentss]]", 1);
+        assert_ne!(
+            broken, text,
+            "the manifest must contain a [[components]] table"
+        );
+
+        // Still valid TOML, and serde still accepts it happily — that is the whole problem.
+        let (recipe, schema) = recipe_vs_schema(&broken);
+        let ignored: Vec<_> = recipe.difference(&schema).cloned().collect();
+        assert!(
+            ignored.iter().any(|k| k.starts_with("componentss")),
+            "a typo'd section must be reported as ignored, got {ignored:?}"
+        );
+    }
+
+    #[test]
+    fn the_schema_offers_more_than_the_only_recipe_uses() {
+        // Informational, and deliberately not an assertion about WHICH keys: it prints the
+        // options that exist and that nothing exercises, which is where a feature quietly
+        // rots. Asserting a list here would only add a second place to update.
+        let text = std::fs::read_to_string(BMM_MANIFEST).unwrap();
+        let (recipe, schema) = recipe_vs_schema(&text);
+        let unused: Vec<_> = schema.difference(&recipe).cloned().collect();
+        println!(
+            "schema keys the BMM recipe never sets ({}): {unused:?}",
+            unused.len()
+        );
+    }
 }
