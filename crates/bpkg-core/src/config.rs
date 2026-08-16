@@ -534,6 +534,197 @@ fn default_true() -> bool {
     true
 }
 
+// ── The schema, as data ──────────────────────────────────────────────────────
+//
+// Every key `installer.toml` may set, derived from the types rather than listed. A list
+// would be wrong the first time somebody adds a field, and wrong SILENTLY — which is the
+// exact failure this whole area exists to catch, since no struct here uses
+// `deny_unknown_fields` and serde therefore discards anything it does not recognise.
+//
+// Emitted by `bpkg schema` so a tool that is not this binary — a web recipe checker, an
+// editor — can tell a typo from a real key without keeping its own copy of the schema. A
+// second copy in another language is the same bug with a longer fuse.
+
+/// Every key path in a JSON document, with array elements collapsed: an array of tables
+/// contributes `components[].id` once, however many entries it has.
+fn key_paths(v: &serde_json::Value, prefix: &str, out: &mut std::collections::BTreeSet<String>) {
+    match v {
+        serde_json::Value::Object(map) => {
+            for (k, val) in map {
+                let path = if prefix.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{prefix}.{k}")
+                };
+                out.insert(path.clone());
+                key_paths(val, &path, out);
+            }
+        }
+        serde_json::Value::Array(a) => {
+            for item in a {
+                key_paths(item, &format!("{prefix}[]"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(crate) fn paths_of(v: &serde_json::Value) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    key_paths(v, "", &mut out);
+    out
+}
+
+/// Keys the schema knows and NOTHING reads. They parse and do nothing, which is worse than
+/// a typo because they look correct.
+///
+/// Listed rather than quietly deleted from the recipes that set them, because each is a
+/// decision somebody has to make — add the field and wire it, or drop the line. Adding a
+/// field that parses and still does nothing would be worse than the current state.
+pub const KNOWN_DEAD: [&str; 3] = [
+    "install.allow_portable",
+    "install.default_dir",
+    "update.package_urls",
+];
+
+/// A config with EVERY optional section present and every list non-empty.
+///
+/// This exists because the obvious derivation is wrong in a way that would be invisible: the
+/// key set comes from serializing an INSTANCE, and `None` inside an `Option<Struct>` becomes
+/// `null`, contributing the section's own name and none of its fields. Deriving the schema
+/// from a real recipe would therefore omit `handoff.*`, `security.*` and `update.*` whenever
+/// that recipe left them out — and a checker holding that schema would report a perfectly
+/// valid `[handoff]` key as unknown. A schema that is confidently incomplete is worse than
+/// none, and it is the same shape of mistake as the one it is built to catch.
+///
+/// Written as explicit struct literals with NO `..Default::default()`, deliberately: adding a
+/// field to any of these structs stops this file compiling until somebody fills it in. That
+/// is the ratchet. The alternative — a spread — would let a new field slip in, silently
+/// missing from the emitted schema, which is precisely the failure above.
+fn maximal() -> InstallerConfig {
+    InstallerConfig {
+        app: AppSection {
+            id: String::new(),
+            name: String::new(),
+            version: String::new(),
+            publisher: String::new(),
+            homepage: None,
+            platforms: vec![],
+        },
+        branding: Branding {
+            accent: None,
+            logo: None,
+            background: None,
+        },
+        install: InstallSection {
+            main_exe: None,
+            protocol: None,
+            create_shortcuts: true,
+            desktop_shortcut: false,
+        },
+        components: vec![ComponentSection {
+            id: String::new(),
+            name: String::new(),
+            description: String::new(),
+            required: false,
+            default: true,
+            size_mb: 0,
+            paths: vec![],
+        }],
+        handoff: Some(Handoff {
+            enabled: true,
+            file: String::new(),
+            location: HandoffLocation::AppData,
+        }),
+        setup_options: vec![SetupOption {
+            id: String::new(),
+            kind: SetupOptionKind::Bool,
+            label_key: String::new(),
+            label: None,
+            description: None,
+            choices: vec![],
+            previews: vec![SetupChoicePreview {
+                value: String::new(),
+                label: None,
+                colors: vec![],
+            }],
+            show_at_end: false,
+            // A SCALAR on purpose. `default` is a free-form serde_json::Value, so an object
+            // here would invent key paths under it that no schema declares.
+            default: serde_json::Value::Bool(false),
+            documents: vec![],
+            require_scroll: false,
+            required: false,
+            maps_to: MapsTo::None,
+        }],
+        security: Some(Security {
+            public_key: None,
+            require_signature: false,
+        }),
+        prerequisites: vec![Prerequisite {
+            id: String::new(),
+            name: String::new(),
+            check_registry: None,
+            check_file: None,
+            check_command: None,
+            min_version: None,
+            max_version: None,
+            version_args: None,
+            download_url: None,
+            sha256: None,
+            kind: PrereqKind::default(),
+            install_to: None,
+            silent_args: None,
+            required: true,
+        }],
+        launch: vec![LaunchItem {
+            id: String::new(),
+            label: String::new(),
+            exe: String::new(),
+            default: false,
+            component: None,
+        }],
+        update: Some(UpdateConfig {
+            manifest_url: String::new(),
+            manifest_urls: vec![],
+            auto_check: true,
+            allow_delta: true,
+        }),
+        theme: ThemeConfig {
+            bg: None,
+            panel: None,
+            panel2: None,
+            border: None,
+            accent: None,
+            accent_dark: None,
+            accent_hover: None,
+            text: None,
+            dim: None,
+            danger: None,
+            shadow: None,
+        },
+    }
+}
+
+/// Every key path `installer.toml` may set.
+pub fn schema_key_paths() -> std::collections::BTreeSet<String> {
+    let v = serde_json::to_value(maximal()).expect("the config must round-trip");
+    paths_of(&v)
+}
+
+/// The schema as the artifact other tools read. Stable field names; `keys` is sorted, so a
+/// regenerated file differs only when the schema does.
+pub fn schema_json() -> Result<String> {
+    let doc = serde_json::json!({
+        "version": 1,
+        "generator": "bpkg schema",
+        "bpkgVersion": env!("CARGO_PKG_VERSION"),
+        "keys": schema_key_paths().into_iter().collect::<Vec<_>>(),
+        "knownDead": KNOWN_DEAD,
+    });
+    Ok(serde_json::to_string_pretty(&doc)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,39 +954,8 @@ mod tests {
     // as `null`, which is exactly what "a key the schema knows and the recipe never sets"
     // should look like.
 
-    /// Every key path in a JSON document, with array elements collapsed: an array of tables
-    /// contributes `components[].id` once, however many entries it has.
-    fn key_paths(
-        v: &serde_json::Value,
-        prefix: &str,
-        out: &mut std::collections::BTreeSet<String>,
-    ) {
-        match v {
-            serde_json::Value::Object(map) => {
-                for (k, val) in map {
-                    let path = if prefix.is_empty() {
-                        k.clone()
-                    } else {
-                        format!("{prefix}.{k}")
-                    };
-                    out.insert(path.clone());
-                    key_paths(val, &path, out);
-                }
-            }
-            serde_json::Value::Array(a) => {
-                for item in a {
-                    key_paths(item, &format!("{prefix}[]"), out);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn paths_of(v: &serde_json::Value) -> std::collections::BTreeSet<String> {
-        let mut out = std::collections::BTreeSet::new();
-        key_paths(v, "", &mut out);
-        out
-    }
+    // key_paths / paths_of are no longer duplicated here: they live beside the schema they
+    // derive, so `bpkg schema` and this test cannot disagree about what a key path is.
 
     const BMM_MANIFEST: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -816,6 +976,46 @@ mod tests {
         (paths_of(&raw_json), paths_of(&cfg_json))
     }
 
+    /// The committed artifact must be what the CLI emits.
+    ///
+    /// A test rather than a CI step, deliberately: it runs on both platforms of the matrix,
+    /// needs no built binary, and lives beside the derivation it guards. A stale schema is
+    /// the one failure this whole feature cannot tolerate — a checker holding an out-of-date
+    /// key set reports valid keys as unknown, which is worse than not checking at all,
+    /// because it is confidently wrong.
+    #[test]
+    fn the_committed_schema_is_current() {
+        const COMMITTED: &str = include_str!("../../../schema/installer-schema.json");
+        let fresh = schema_json().expect("the schema must serialize");
+        assert_eq!(
+            COMMITTED.trim_end(),
+            fresh.trim_end(),
+            "schema/installer-schema.json is stale — run `bpkg schema --out schema/installer-schema.json`"
+        );
+    }
+
+    /// Every key the real recipe sets is one the emitted schema knows — except the three
+    /// already recorded as dead.
+    ///
+    /// This is the acceptance test for the artifact: if the schema were derived from an
+    /// instance with its optional sections unset, `handoff.*` and `security.*` would be
+    /// missing from it and a checker would call the BMM manifest's own keys unknown.
+    #[test]
+    fn the_emitted_schema_covers_the_real_recipe() {
+        let text = std::fs::read_to_string(BMM_MANIFEST).unwrap();
+        let (recipe, _) = recipe_vs_schema(&text);
+        let emitted = schema_key_paths();
+        let missing: Vec<_> = recipe
+            .iter()
+            .filter(|k| !emitted.contains(*k) && !KNOWN_DEAD.contains(&k.as_str()))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "the emitted schema does not know {} key(s) the real recipe sets: {missing:?}",
+            missing.len()
+        );
+    }
+
     #[test]
     fn the_bmm_manifest_sets_no_key_the_schema_ignores() {
         let text = std::fs::read_to_string(BMM_MANIFEST).unwrap();
@@ -832,11 +1032,8 @@ mod tests {
         //
         // A ratchet, not a suppression: a NEW ignored key still fails, which is the point.
         // Shrink this list when the fields land or the lines go.
-        const KNOWN_DEAD: [&str; 3] = [
-            "install.allow_portable",
-            "install.default_dir",
-            "update.package_urls",
-        ];
+        // The list lives in the module now, so the emitted schema and this ratchet name the
+        // same three keys. Two copies would drift and the checker would stop agreeing with CI.
 
         let ignored: Vec<String> = recipe.difference(&schema).cloned().collect();
         let unexpected: Vec<_> = ignored

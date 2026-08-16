@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use bpkg_core::config::InstallerConfig;
+use bpkg_core::config::{self, InstallerConfig};
 use bpkg_core::manifest::{AppMeta, Component};
 use bpkg_core::package::{self, Package};
 
@@ -113,6 +113,16 @@ enum Command {
         out: PathBuf,
     },
     /// Check a remote update manifest and, if newer, download + apply it.
+    /// Print the installer.toml schema as JSON — every key the engine understands.
+    ///
+    /// Derived from the types, never listed, so it cannot go stale while looking current.
+    /// A checker that is not this binary reads it instead of keeping its own copy of the
+    /// schema; a second copy in another language is the same bug with a longer fuse.
+    Schema {
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     FetchUpdate {
         /// URL of the update manifest JSON.
         #[arg(long)]
@@ -124,6 +134,27 @@ enum Command {
         #[arg(long)]
         current: String,
     },
+}
+
+fn cmd_schema(out: Option<&Path>) -> Result<()> {
+    let json = config::schema_json().context("serializing the schema")?;
+    match out {
+        // A trailing newline, because the committed artifact is diffed against this output
+        // in CI and a file without one is a file every editor silently changes.
+        Some(p) => {
+            std::fs::write(
+                p,
+                format!(
+                    "{json}
+"
+                ),
+            )
+            .with_context(|| format!("writing {}", p.display()))?;
+            println!("wrote {}", p.display());
+        }
+        None => println!("{json}"),
+    }
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -153,6 +184,7 @@ fn main() -> Result<()> {
         Command::Update { package, dir } => cmd_update(&package, &dir),
         Command::Delta { old, new, out } => cmd_delta(&old, &new, &out),
         Command::ApplyDelta { old, patch, out } => cmd_apply_delta(&old, &patch, &out),
+        Command::Schema { out } => cmd_schema(out.as_deref()),
         Command::FetchUpdate { url, dir, current } => cmd_fetch_update(&url, &dir, &current),
     }
 }
