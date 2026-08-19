@@ -118,6 +118,7 @@ nav:
       - Overview: README.md
       - Platforms: PLATFORMS.md
   - Packaging:
+      - Building it yourself: COMMANDS.md
       - The .bpkg format: BPKG-FORMAT.md
       - Signing: SIGNING.md
       - Command line: CLI.md
