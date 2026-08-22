@@ -315,6 +315,26 @@ description  = "Installs additional community translations beyond the built-in E
 default     = true
 maps_to     = "settings.import_extra_languages"
 
+# ─── Security: the browser policy BMM starts with ──────────────────
+# A preset ID, never a policy string. An installer dropdown that could type a raw CSP
+# would be a way to hand the app a policy nobody reviewed; a preset id is a choice among
+# values BMM already ships and validates. "custom" writes nothing and leaves the field in
+# Settings → Security for someone who wants to author one by hand.
+#
+# Whatever is chosen applies from the SECOND launch: a CSP meta tag is only honoured while
+# the document is parsed, so the value written on first run is read by the loader the next
+# time BMM opens. Saying so here matters — an option that appears to do nothing for one
+# session looks broken.
+[[setup_option]]
+id          = "csp_preset"
+type        = "select"
+label_key   = "setup.cspPreset"
+label       = "Browser security policy"
+description  = "Extra restrictions on what BMM may load and run, added on top of the policy it ships with — these can only make it stricter, never looser. Default keeps the shipped policy, which already refuses inline scripts. « Pin the network » stops the app contacting hosts it does not need; « Strict » also blocks third-party scripts, which turns off embedded YouTube videos and the BetaHub feedback widget. Changeable at any time in Settings → Security."
+choices     = ["none", "network", "strict", "custom"]
+default     = "none"
+maps_to     = "settings.csp_preset"
+
 # ─── Post-install launch (offered on the Done page) ──────────────────
 # The main app is pre-checked; the optional sidecar is opt-in and only shown
 # when its component was actually installed.
