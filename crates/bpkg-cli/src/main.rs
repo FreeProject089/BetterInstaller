@@ -133,6 +133,14 @@ enum Command {
         /// The currently-installed version.
         #[arg(long)]
         current: String,
+        /// Public key to verify the downloaded package's signature before applying it.
+        ///
+        /// Without it the download is applied on its own say-so: each file is checked
+        /// against the package's own manifest, which proves the package is INTERNALLY
+        /// CONSISTENT and nothing about who made it. `verify` has taken a key from the
+        /// start; this is the same option on the path that fetches over a network.
+        #[arg(long)]
+        key: Option<PathBuf>,
     },
 }
 
@@ -185,7 +193,12 @@ fn main() -> Result<()> {
         Command::Delta { old, new, out } => cmd_delta(&old, &new, &out),
         Command::ApplyDelta { old, patch, out } => cmd_apply_delta(&old, &patch, &out),
         Command::Schema { out } => cmd_schema(out.as_deref()),
-        Command::FetchUpdate { url, dir, current } => cmd_fetch_update(&url, &dir, &current),
+        Command::FetchUpdate {
+            url,
+            dir,
+            current,
+            key,
+        } => cmd_fetch_update(&url, &dir, &current, key.as_deref()),
     }
 }
 
@@ -213,14 +226,28 @@ fn cmd_apply_delta(old: &Path, patch: &Path, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_fetch_update(url: &str, dir: &Path, current: &str) -> Result<()> {
+fn cmd_fetch_update(url: &str, dir: &Path, current: &str, key: Option<&Path>) -> Result<()> {
+    // Loaded BEFORE the download, so a bad key path fails immediately rather than after
+    // pulling a package down and staging it.
+    let vk = match key {
+        Some(k) => Some(bpkg_core::sign::load_public(k).context("loading public key")?),
+        None => None,
+    };
     match bpkg_core::update::check_remote(url, current).context("checking update")? {
         None => println!("Up to date (current {current})."),
         Some(m) => {
             println!("Update available: {current} → {}. Downloading…", m.version);
-            // CLI is a local developer tool; the installer is the surface that pins a
-            // publisher key and enforces signature verification on updates.
-            let n = bpkg_core::update::download_and_apply(&m, current, None, dir, None)
+            // The installer GUI pins a publisher key of its own; this is the CLI's way
+            // to ask for the same guarantee. Said out loud when it is absent, because a
+            // silent unverified update over a network is the case worth noticing.
+            if vk.is_none() {
+                eprintln!(
+                    "Warning: applying an unverified update. Each file is checked against the \
+                     package's own manifest, which proves it is internally consistent and \
+                     nothing about who made it. Pass --key <public.key> to verify the publisher."
+                );
+            }
+            let n = bpkg_core::update::download_and_apply(&m, current, None, dir, vk.as_ref())
                 .context("update failed (rolled back)")?;
             println!("Updated to {} ({n} files).", m.version);
         }
