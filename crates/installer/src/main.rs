@@ -1884,7 +1884,7 @@ fn inline_md(s: &str) -> (String, Vec<String>) {
         text.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '<' || c == '>')
     {
         // Trailing sentence punctuation is not part of the address.
-        let tok = tok.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | '"'));
+        let tok = tok.trim_end_matches(['.', ',', ';', ':', '!', '?', '"']);
         if is_web_url(tok) && !links.iter().any(|l| l == tok) {
             links.push(tok.to_string());
         }

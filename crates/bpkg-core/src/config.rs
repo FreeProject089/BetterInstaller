@@ -1109,7 +1109,7 @@ mod tests {
     }
 
     #[test]
-    fn a_download_without_a_hash_is_refused_at_LOAD() {
+    fn a_download_without_a_hash_is_refused_when_the_recipe_loads() {
         let toml = recipe_with(
             "[[prerequisite]]\nid = \"p\"\nname = \"P\"\ndownload_url = \"https://example.com/p.zip\"\n",
         );
