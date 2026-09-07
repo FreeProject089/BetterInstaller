@@ -140,30 +140,32 @@ description  = "Starting look. Every one of these ships with BMM, and you can ch
 # Ids, not display names: they are written straight into settings.active_theme, and the
 # app resolves them against builtin-themes/. A display name would drift the moment a
 # preset is renamed.
-choices     = ["bmm-default", "bmm-sombre", "bmm-void", "bmm-white", "bmm-discord", "bmm-orange", "bmm-spotify", "bmm-brutal", "bmm-claude", "bmm-nord", "bmm-sakura"]
+choices     = ["bmm-default", "bmm-sombre", "bmm-void", "bmm-white", "bmm-discord", "bmm-orange", "bmm-spotify", "bmm-brutal", "bmm-claude", "bmm-nord", "bmm-sakura", "bmm-vscode", "bmm-macos"]
 default     = "bmm-default"
 maps_to     = "settings.active_theme"
 # Offer it once more on the final page — a theme is a decision about a picture,
 # and that is the first moment the user has nothing else to think about.
 show_at_end = true
 
-# Four colors per theme, in order: background · surface · accent · text. Taken from
-# each preset's own tokens (--bmm-bg-base, --bmm-bg-elevated, --bmm-accent,
-# --bmm-text-primary), so a tile that looks wrong means the preset changed.
+# Four colours per theme, in order: background · surface · accent · text, read from each
+# preset's own tokens (--bmm-bg-base, --bmm-bg-elevated, --bmm-accent, --bmm-text-primary).
+# Generated from the theme files rather than retyped: two of these had drifted (a text
+# colour written as #ffffff where the theme says #f2f3f5, and another #eceff4), which a
+# tile shows as a slightly wrong preview and nothing else ever catches.
 previews = [
-  { value = "bmm-default", label = "BMM Default", colors = ["#0a0e17", "#111827", "#3b82f6", "#f1f5f9"] },
-  { value = "bmm-sombre",  label = "Sombre",      colors = ["#1a1a1e", "#232328", "#5865f2", "#dbdee1"] },
-  { value = "bmm-void",    label = "Void / Noir", colors = ["#000000", "#0b0b0d", "#d4d4d8", "#f5f5f7"] },
-  { value = "bmm-white",   label = "Full White",  colors = ["#f5f6f8", "#ffffff", "#1d4ed8", "#18181b"] },
-  { value = "bmm-discord", label = "Discord",     colors = ["#313338", "#2b2d31", "#5865f2", "#ffffff"] },
-  { value = "bmm-orange",  label = "Orange / Noir", colors = ["#0a0a0a", "#161614", "#ff6a00", "#f6f1ea"] },
-  { value = "bmm-spotify", label = "Spotify Green", colors = ["#121212", "#181818", "#1ed760", "#ffffff"] },
-  { value = "bmm-brutal",  label = "Brutalist",   colors = ["#e7e3d8", "#fcfbf6", "#e8590c", "#111111"] },
-  # Glass builds its surfaces from translucent white over the base; the tile uses the
-  # composited result, because a preview cannot show what is behind the window.
-  { value = "bmm-claude",  label = "Clay",        colors = ["#f0eee6", "#fbfaf5", "#c8613f", "#2b2a27"] },
-  { value = "bmm-nord",    label = "Nord",        colors = ["#2e3440", "#3b4252", "#81a1c1", "#ffffff"] },
-  { value = "bmm-sakura",  label = "Sakura",      colors = ["#faf4f2", "#ffffff", "#db507c", "#3b2230"] },
+  { value = "bmm-default", label = "Default",     colors = ["#0a0e17", "#111827", "#3b82f6", "#f1f5f9"] },
+  { value = "bmm-sombre", label = "Graphite",    colors = ["#1a1a1e", "#232328", "#5865f2", "#dbdee1"] },
+  { value = "bmm-void",   label = "Pure Black",  colors = ["#000000", "#0b0b0d", "#d4d4d8", "#f5f5f7"] },
+  { value = "bmm-white",  label = "Daylight",    colors = ["#f5f6f8", "#ffffff", "#1d4ed8", "#18181b"] },
+  { value = "bmm-discord", label = "Indigo",      colors = ["#313338", "#2b2d31", "#5865f2", "#f2f3f5"] },
+  { value = "bmm-orange", label = "Ember",       colors = ["#0a0a0a", "#161614", "#ff6a00", "#f6f1ea"] },
+  { value = "bmm-spotify", label = "Neon",        colors = ["#121212", "#181818", "#1ed760", "#ffffff"] },
+  { value = "bmm-brutal", label = "Newsprint",   colors = ["#e7e3d8", "#fcfbf6", "#e8590c", "#111111"] },
+  { value = "bmm-claude", label = "Clay",        colors = ["#f0eee6", "#fbfaf5", "#c8613f", "#2b2a27"] },
+  { value = "bmm-nord",   label = "Arctic",      colors = ["#2e3440", "#3b4252", "#81a1c1", "#eceff4"] },
+  { value = "bmm-sakura", label = "Blossom",     colors = ["#faf4f2", "#ffffff", "#db507c", "#3b2230"] },
+  { value = "bmm-vscode", label = "Editor",      colors = ["#1f1f1f", "#252526", "#0078d4", "#cccccc"] },
+  { value = "bmm-macos",  label = "Cobalt",      colors = ["#1e1e1e", "#2a2a2c", "#0a84ff", "#f5f5f7"] },
 ]
 
 [[setup_option]]
