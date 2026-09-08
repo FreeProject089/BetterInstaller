@@ -62,6 +62,13 @@ enum Command {
         /// Comma-separated component ids to extract (default: all).
         #[arg(long, value_delimiter = ',')]
         components: Option<Vec<String>>,
+        /// Public key to verify the package's Ed25519 signature BEFORE writing anything.
+        ///
+        /// Without it the package is applied on its own say-so: every file is checked
+        /// against the package's own manifest, which proves it is internally consistent
+        /// and nothing whatever about who made it.
+        #[arg(long)]
+        key: Option<PathBuf>,
     },
     /// Install a package (verify + extract) with a progress bar — the same path
     /// the GUI Install step uses.
@@ -71,6 +78,13 @@ enum Command {
         dest: PathBuf,
         #[arg(long, value_delimiter = ',')]
         components: Option<Vec<String>>,
+        /// Public key to verify the package's Ed25519 signature BEFORE writing anything.
+        ///
+        /// Without it the package is applied on its own say-so: every file is checked
+        /// against the package's own manifest, which proves it is internally consistent
+        /// and nothing whatever about who made it.
+        #[arg(long)]
+        key: Option<PathBuf>,
     },
     /// Stamp a project's config + package into a copy of the installer exe,
     /// producing a single self-extracting installer.
@@ -93,6 +107,13 @@ enum Command {
         package: PathBuf,
         #[arg(long)]
         dir: PathBuf,
+        /// Public key to verify the package's Ed25519 signature BEFORE writing anything.
+        ///
+        /// Without it the package is applied on its own say-so: every file is checked
+        /// against the package's own manifest, which proves it is internally consistent
+        /// and nothing whatever about who made it.
+        #[arg(long)]
+        key: Option<PathBuf>,
     },
     /// Create a binary delta patch (old.bpkg → new.bpkg).
     Delta {
@@ -177,19 +198,21 @@ fn main() -> Result<()> {
             package,
             dest,
             components,
-        } => cmd_extract(&package, &dest, components.as_deref()),
+            key,
+        } => cmd_extract(&package, &dest, components.as_deref(), key.as_deref()),
         Command::Install {
             package,
             dest,
             components,
-        } => cmd_install(&package, &dest, components.as_deref()),
+            key,
+        } => cmd_install(&package, &dest, components.as_deref(), key.as_deref()),
         Command::Build {
             installer,
             config,
             package,
             out,
         } => cmd_build(&installer, &config, &package, &out),
-        Command::Update { package, dir } => cmd_update(&package, &dir),
+        Command::Update { package, dir, key } => cmd_update(&package, &dir, key.as_deref()),
         Command::Delta { old, new, out } => cmd_delta(&old, &new, &out),
         Command::ApplyDelta { old, patch, out } => cmd_apply_delta(&old, &patch, &out),
         Command::Schema { out } => cmd_schema(out.as_deref()),
@@ -255,8 +278,21 @@ fn cmd_fetch_update(url: &str, dir: &Path, current: &str, key: Option<&Path>) ->
     Ok(())
 }
 
-fn cmd_update(package: &Path, dir: &Path) -> Result<()> {
-    let n = bpkg_core::update::apply_package_update(package, dir, None, None)
+fn cmd_update(package: &Path, dir: &Path, key: Option<&Path>) -> Result<()> {
+    // Loaded BEFORE anything is touched, so a wrong key path fails here rather than
+    // after the install directory has been snapshotted.
+    let vk = match key {
+        Some(k) => Some(bpkg_core::sign::load_public(k).context("loading public key")?),
+        None => {
+            eprintln!(
+                "Warning: applying an unverified update. Each file is checked against the \
+                 package's own manifest, which proves it is internally consistent and \
+                 nothing about who made it. Pass --key <public.key> to verify the publisher."
+            );
+            None
+        }
+    };
+    let n = bpkg_core::update::apply_package_update(package, dir, None, vk.as_ref())
         .context("update failed (rolled back)")?;
     println!("Updated {} ({n} files).", dir.display());
     Ok(())
@@ -385,8 +421,47 @@ fn cmd_sign(package: &Path, key: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_extract(path: &Path, dest: &Path, components: Option<&[String]>) -> Result<()> {
+/// Refuse a package that does not carry a valid signature for the key we were given,
+/// and say so out loud when we were given none.
+///
+/// The warning is not decoration. Every file IS checked against the package's own
+/// manifest before it is written, which is a real guarantee and an easy one to mistake
+/// for the other one: it proves the package is internally consistent and says nothing
+/// about who made it. Somebody handed a `.bpkg` and told to run `bpkg install` should
+/// be told which of the two they are getting.
+fn gate_signature(pkg: &mut Package, key: Option<&Path>, what: &str) -> Result<()> {
+    match key {
+        Some(k) => {
+            let vk = bpkg_core::sign::load_public(k).context("loading public key")?;
+            if !pkg.verify_signature(&vk).context("verifying signature")? {
+                anyhow::bail!(
+                    "{what} refused: the package is {} for this key",
+                    if pkg.is_signed() {
+                        "signed by somebody else"
+                    } else {
+                        "not signed"
+                    }
+                );
+            }
+            println!("OK — Ed25519 signature valid.");
+        }
+        None => eprintln!(
+            "Warning: {what} without checking who made this package. Each file is verified \
+             against the package's own manifest, which proves it is internally consistent and \
+             nothing about its author. Pass --key <public.key> to verify the publisher."
+        ),
+    }
+    Ok(())
+}
+
+fn cmd_extract(
+    path: &Path,
+    dest: &Path,
+    components: Option<&[String]>,
+    key: Option<&Path>,
+) -> Result<()> {
     let mut pkg = Package::open(path).context("opening package")?;
+    gate_signature(&mut pkg, key, "extracting")?;
     let written = pkg.extract(dest, components).context("extracting")?;
     println!("Extracted {written} files → {}", dest.display());
     Ok(())
@@ -411,8 +486,14 @@ fn cmd_build(installer: &Path, config: &Path, package: &Path, out: &Path) -> Res
     Ok(())
 }
 
-fn cmd_install(path: &Path, dest: &Path, components: Option<&[String]>) -> Result<()> {
+fn cmd_install(
+    path: &Path,
+    dest: &Path,
+    components: Option<&[String]>,
+    key: Option<&Path>,
+) -> Result<()> {
     let mut pkg = Package::open(path).context("opening package")?;
+    gate_signature(&mut pkg, key, "installing")?;
     let name = pkg.manifest.app.name.clone();
     let written = pkg
         .install_with_progress(dest, components, |done, total, file| {
@@ -426,4 +507,106 @@ fn cmd_install(path: &Path, dest: &Path, components: Option<&[String]>) -> Resul
         dest.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gate_signature;
+    use bpkg_core::manifest::AppMeta;
+    use bpkg_core::package::{self, Package};
+
+    fn app() -> AppMeta {
+        AppMeta {
+            id: "t".into(),
+            name: "T".into(),
+            version: "1".into(),
+            publisher: "p".into(),
+            homepage: None,
+            platforms: vec!["windows".into()],
+        }
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("bpkg-cli-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// A scratch directory and an unsigned package in it. The signing key is NOT returned:
+    /// `SigningKey` belongs to ed25519-dalek and this crate does not depend on it, so the
+    /// type cannot be named in a signature. Each test generates its own and lets inference
+    /// hold it.
+    fn packed(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let base = scratch(tag);
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("app.exe"), b"payload").unwrap();
+        let bpkg = base.join("p.bpkg");
+        package::create_from_dir(&src, app(), vec![], |_| None, &bpkg).unwrap();
+        (base, bpkg)
+    }
+
+    /// The point of the whole option: a package signed by SOMEBODY ELSE is refused, and
+    /// refused before `extract`/`install` is reached rather than after some files land.
+    #[test]
+    fn refuses_a_package_signed_by_another_key() {
+        let (base, bpkg) = packed("wrongkey");
+        let publisher = bpkg_core::sign::generate();
+        let attacker = bpkg_core::sign::generate();
+        package::sign_package(&bpkg, &attacker).unwrap();
+
+        let keyfile = base.join("public.key");
+        bpkg_core::sign::save_public(&publisher.verifying_key(), &keyfile).unwrap();
+
+        let mut pkg = Package::open(&bpkg).unwrap();
+        let err = gate_signature(&mut pkg, Some(&keyfile), "installing")
+            .expect_err("a package signed by an untrusted key must be refused");
+        assert!(
+            err.to_string().contains("signed by somebody else"),
+            "unexpected: {err}"
+        );
+    }
+
+    /// An UNSIGNED package must be refused too, and must say which of the two it is. The
+    /// two failures want different responses — one is a package from the wrong author,
+    /// the other is a publisher who never signed — and one message for both is how
+    /// "it is unsigned" gets read as "your key is wrong".
+    #[test]
+    fn refuses_an_unsigned_package_and_says_so() {
+        let (base, bpkg) = packed("unsigned");
+        let publisher = bpkg_core::sign::generate();
+        let keyfile = base.join("public.key");
+        bpkg_core::sign::save_public(&publisher.verifying_key(), &keyfile).unwrap();
+
+        let mut pkg = Package::open(&bpkg).unwrap();
+        let err = gate_signature(&mut pkg, Some(&keyfile), "extracting")
+            .expect_err("an unsigned package must be refused when a key is pinned");
+        assert!(err.to_string().contains("not signed"), "unexpected: {err}");
+    }
+
+    /// The right key passes. Without this the two tests above would also pass on a gate
+    /// that refused everything, which is a gate nobody can use.
+    #[test]
+    fn accepts_the_key_that_signed_it() {
+        let (base, bpkg) = packed("right");
+        let publisher = bpkg_core::sign::generate();
+        package::sign_package(&bpkg, &publisher).unwrap();
+        let keyfile = base.join("public.key");
+        bpkg_core::sign::save_public(&publisher.verifying_key(), &keyfile).unwrap();
+
+        let mut pkg = Package::open(&bpkg).unwrap();
+        gate_signature(&mut pkg, Some(&keyfile), "installing")
+            .expect("the publisher's own key must pass");
+    }
+
+    /// No key is a WARNING, not a refusal. That is the documented behaviour and the one
+    /// worth pinning: the same call that used to be silent must still succeed, or every
+    /// existing `bpkg install` invocation breaks.
+    #[test]
+    fn no_key_still_installs() {
+        let (_base, bpkg) = packed("nokey");
+        let mut pkg = Package::open(&bpkg).unwrap();
+        gate_signature(&mut pkg, None, "installing").expect("no key must not be a refusal");
+    }
 }
