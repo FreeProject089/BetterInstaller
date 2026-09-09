@@ -24,7 +24,7 @@ and an optional signature. All multi-byte integers are **little-endian**.
 | Offset | Size | Field | Value |
 |---|---|---|---|
 | 0 | 6 | magic | `42 50 4B 47 1A 00` (`BPKG\x1a\x00`) |
-| 6 | 2 | format_version | `1` |
+| 6 | 2 | format_version | `2` |
 | 8 | 2 | flags | bit 0 `FLAG_SIGNED` (0x0001) |
 | 10 | 2 | reserved | 0 |
 | 12 | 4 | manifest_len | byte length of the JSON manifest |
@@ -77,9 +77,17 @@ Path-traversal is rejected on extraction (`..`, leading `/` or `\`).
 ## Signature (optional)
 
 If `FLAG_SIGNED` is set, the **last 64 bytes** are an Ed25519 signature over
-`header[6..] ⧺ manifest ⧺ payload` — i.e. everything from `format_version` to the
-end of the payload (the magic is excluded). Verified against the public key in
-`[security].public_key`. See [SIGNING.md](SIGNING.md).
+`bytes 0 .. 24+N+M` — the whole file up to the signature, header included, with the
+signed bit already set. Verified against the public key in `[security].public_key`.
+See [SIGNING.md](SIGNING.md).
+
+The header is in there for a reason. `manifest_len` and `payload_len` live in it, and
+a verifier reads them OUT of it to decide how much to hash — so leaving them unsigned
+meant the numbers choosing the verified range were themselves unverified, and a shift
+keeping their sum constant moved the manifest/payload boundary with the signature
+still valid. Format **v1 signed only the manifest and payload**; these docs described
+it as covering `header[6..]`, which it never did. A v1 package is refused at open,
+not verified under the old rule.
 
 ## Self-extracting installer (SFX)
 

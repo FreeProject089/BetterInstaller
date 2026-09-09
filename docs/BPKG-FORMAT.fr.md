@@ -24,7 +24,7 @@ et une signature optionnelle. Tous les entiers multi-octets sont en **little-end
 | Offset | Taille | Champ | Valeur |
 |---|---|---|---|
 | 0 | 6 | magic | `42 50 4B 47 1A 00` (`BPKG\x1a\x00`) |
-| 6 | 2 | format_version | `1` |
+| 6 | 2 | format_version | `2` |
 | 8 | 2 | flags | bit 0 `FLAG_SIGNED` (0x0001) |
 | 10 | 2 | réservé | 0 |
 | 12 | 4 | manifest_len | longueur en octets du manifest JSON |
@@ -77,9 +77,17 @@ Le path-traversal est rejeté à l'extraction (`..`, `/` ou `\` en tête).
 ## Signature (optionnelle)
 
 Si `FLAG_SIGNED` est posé, les **64 derniers octets** sont une signature Ed25519 sur
-`header[6..] ⧺ manifest ⧺ payload` — c'est-à-dire tout depuis `format_version` jusqu'à la
-fin du payload (le magic est exclu). Vérifiée contre la clé publique de
-`[security].public_key`. Voir [SIGNING.md](SIGNING.md).
+les `octets 0 .. 24+N+M` — tout le fichier jusqu'à la signature, header compris, avec
+le bit signé déjà posé. Vérifiée contre la clé publique de `[security].public_key`.
+Voir [SIGNING.md](SIGNING.md).
+
+Le header en fait partie pour une raison. `manifest_len` et `payload_len` y vivent, et
+un vérificateur les y lit pour décider combien d'octets hacher — les laisser non signés
+revenait à ce que les nombres choisissant la plage vérifiée ne soient pas vérifiés, et
+un décalage conservant leur somme déplaçait la frontière manifest/payload sans casser
+la signature. Le format **v1 ne signait que le manifest et le payload** ; cette doc le
+décrivait comme couvrant `header[6..]`, ce qui n'a jamais été le cas. Un paquet v1 est
+refusé à l'ouverture, pas vérifié selon l'ancienne règle.
 
 ## Installeur auto-extractible (SFX)
 

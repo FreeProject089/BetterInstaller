@@ -30,9 +30,14 @@ bpkg verify app.bpkg --key keys/public.key      # OK — Ed25519 signature valid
 
 ## What is signed
 
-The 64-byte signature (appended last, with `FLAG_SIGNED` set in the header) covers
-`header[6..] ⧺ manifest ⧺ payload` — everything except the 6-byte magic. Any
-tampering with the manifest or payload invalidates it. See
+The 64-byte signature (appended last, with `FLAG_SIGNED` set in the header before
+signing) covers **bytes 0 .. 24+N+M** — the whole file up to the signature itself.
+Tampering with the manifest, the payload OR the header invalidates it.
+
+The header matters because it holds `manifest_len` and `payload_len`, which a verifier
+reads to decide how much to hash. Format v1 signed only the manifest and payload — and
+these docs described it as covering `header[6..]`, which it did not — so the two
+numbers choosing the verified range sat outside it. See
 [BPKG-FORMAT.md](BPKG-FORMAT.md).
 
 ## Welcome-page badge

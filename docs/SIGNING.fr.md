@@ -31,9 +31,15 @@ bpkg verify app.bpkg --key keys/public.key      # OK — signature Ed25519 valid
 
 ## Ce qui est signé
 
-La signature de 64 octets (ajoutée en dernier, avec `FLAG_SIGNED` dans le header)
-couvre `header[6..] ⧺ manifest ⧺ payload` — tout sauf les 6 octets de magic. Toute
-altération du manifest ou du payload l'invalide. Voir [BPKG-FORMAT.md](BPKG-FORMAT.md).
+La signature de 64 octets (ajoutée en dernier, avec `FLAG_SIGNED` posé dans le header
+AVANT signature) couvre les **octets 0 .. 24+N+M** — tout le fichier jusqu'à la
+signature elle-même. Altérer le manifest, le payload OU le header l'invalide.
+
+Le header compte parce qu'il porte `manifest_len` et `payload_len`, que le vérificateur
+lit pour décider combien hacher. Le format v1 ne signait que le manifest et le payload
+— et cette doc le décrivait comme couvrant `header[6..]`, ce qui était faux — donc les
+deux nombres choisissant la plage vérifiée étaient hors de celle-ci. Voir
+[BPKG-FORMAT.md](BPKG-FORMAT.md).
 
 ## Badge de la page Bienvenue
 
