@@ -35,6 +35,28 @@ fn the_version_cell_matches_the_constant() {
     }
 }
 
+/// The same constant, written a second time further down.
+///
+/// The first version of this test checked the header ROW and the signed range, and walked
+/// past a "Constants" table 90 lines below that still said `FORMAT_VERSION | 1` — so the doc
+/// contradicted itself and the gate reported it green. A doc disagreeing with the code is
+/// what this file is for; a doc disagreeing with ITSELF is the same failure with an extra
+/// step, and it found it the first time somebody looked rather than the first time the test
+/// ran.
+#[test]
+fn the_constants_table_agrees_with_the_header_row() {
+    let want = format!(
+        "| `FORMAT_VERSION` | {} |",
+        bpkg_core::package::format::FORMAT_VERSION
+    );
+    for f in ["BPKG-FORMAT.md", "BPKG-FORMAT.fr.md"] {
+        assert!(
+            doc(f).contains(&want),
+            "{f}'s constants table disagrees with the code — expected {want:?}",
+        );
+    }
+}
+
 #[test]
 fn the_docs_state_the_range_the_code_actually_signs() {
     // The code signs bytes 0 .. HEADER_LEN+N+M — the header included, magic and all. Any doc

@@ -110,7 +110,7 @@ retombe sur les args CLI (`<installer.toml> [package.bpkg]`) pour les runs de de
 | Nom | Valeur |
 |---|---|
 | `MAGIC` | `BPKG\x1a\x00` |
-| `FORMAT_VERSION` | 1 |
+| `FORMAT_VERSION` | 2 |
 | `HEADER_LEN` | 24 |
 | `FLAG_SIGNED` | 0x0001 |
 | `SIGNATURE_LEN` | 64 |

@@ -110,7 +110,7 @@ trailer) falls back to CLI args (`<installer.toml> [package.bpkg]`) for dev runs
 | Name | Value |
 |---|---|
 | `MAGIC` | `BPKG\x1a\x00` |
-| `FORMAT_VERSION` | 1 |
+| `FORMAT_VERSION` | 2 |
 | `HEADER_LEN` | 24 |
 | `FLAG_SIGNED` | 0x0001 |
 | `SIGNATURE_LEN` | 64 |
