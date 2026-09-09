@@ -23,16 +23,20 @@ pub fn sign_package(path: &Path, sk: &SigningKey) -> Result<()> {
     if header.flags & FLAG_SIGNED != 0 {
         return Err(Error::Other("package is already signed".into()));
     }
-    let mp_start = HEADER_LEN;
     let mp_end = HEADER_LEN + header.manifest_len as usize + header.payload_len as usize;
     if mp_end > data.len() {
         return Err(Error::Corrupt("payload truncated".into()));
     }
 
-    let sig = crate::sign::sign_message(sk, &data[mp_start..mp_end]);
-    // Flip the signed bit in the header (flags live at bytes 8..10).
+    // The signed bit goes in FIRST, because the header is part of what gets signed and the
+    // bytes hashed here have to be the bytes that end up in the file. Setting it afterwards
+    // would produce a signature over a header the file never contains.
     let new_flags = header.flags | FLAG_SIGNED;
     data[8..10].copy_from_slice(&new_flags.to_le_bytes());
+    // From 0, not from HEADER_LEN: manifest_len and payload_len live in the header and are
+    // what a verifier reads to decide how much to hash. Leaving them out let the boundary
+    // between manifest and payload move while the signature still checked out.
+    let sig = crate::sign::sign_message(sk, &data[..mp_end]);
     // Drop anything past the payload (there shouldn't be any), then append the sig.
     data.truncate(mp_end);
     data.extend_from_slice(&sig);

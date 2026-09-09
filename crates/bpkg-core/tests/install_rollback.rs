@@ -243,3 +243,58 @@ fn a_successful_update_cleans_up_its_snapshot() {
         "the .bak snapshot outlived a successful update"
     );
 }
+
+/// A signature has to cover the FRAMING, not only the framed bytes.
+///
+/// Format v1 signed the manifest and payload and left the 24-byte header out — and
+/// verification reads `manifest_len` and `payload_len` OUT OF THAT HEADER to decide how much
+/// to hash. The two numbers choosing the verified range were themselves unverified.
+///
+/// The obvious way to show that is to move the manifest/payload boundary while keeping the
+/// sum — every byte v1 hashed stays identical. It is also a BAD test: a shifted boundary
+/// breaks the manifest JSON, so the package fails to open and the assertion never runs. That
+/// version passed against the old code too, which is the only thing a test doing nothing ever
+/// tells you.
+///
+/// So this flips the two RESERVED header bytes instead. Nothing reads them, so the package
+/// opens and parses exactly as before, every byte v1 hashed is untouched, and the only
+/// difference is inside the header. Under v1 it verified. It must not now.
+#[test]
+fn editing_the_header_breaks_the_signature() {
+    let base = scratch("hdrsig");
+    let src = base.join("src");
+    write(
+        &src.join("app.exe"),
+        b"VERSION ONE, with some bytes after it",
+    );
+
+    let pkg = base.join("v1.bpkg");
+    pack(&src, &pkg);
+    let publisher = bpkg_core::sign::generate();
+    package::sign_package(&pkg, &publisher).unwrap();
+
+    let vk = publisher.verifying_key();
+    assert!(
+        Package::open(&pkg).unwrap().verify_signature(&vk).unwrap(),
+        "it must verify before being tampered with, or this test proves nothing",
+    );
+
+    // Bytes 10..12 are the reserved u16. Not read by anything, inside the header, and
+    // therefore outside everything format v1 signed.
+    let mut raw = std::fs::read(&pkg).unwrap();
+    assert_eq!(
+        &raw[10..12],
+        &[0, 0],
+        "reserved bytes are expected to be zero"
+    );
+    raw[10..12].copy_from_slice(&0xBEEFu16.to_le_bytes());
+    let tampered = base.join("tampered.bpkg");
+    std::fs::write(&tampered, &raw).unwrap();
+
+    // It still opens — that is the point of picking a field nothing reads.
+    let mut p = Package::open(&tampered).expect("a reserved-byte edit must not stop it opening");
+    assert!(
+        !p.verify_signature(&vk).unwrap_or(false),
+        "a header edit must break the signature — v1 signed only the manifest and payload,          so this one did not",
+    );
+}

@@ -140,11 +140,13 @@ impl Package {
         if !self.is_signed() {
             return Ok(false);
         }
-        let mp_len = self.header.manifest_len as u64 + self.header.payload_len;
-        self.file
-            .seek(SeekFrom::Start(HEADER_LEN as u64))
-            .map_err(Error::IoBare)?;
-        let mut buf = vec![0u8; mp_len as usize];
+        // Header INCLUDED — see sign_package. The two lengths used to decide the range are
+        // themselves in the header, so verifying a range chosen by unverified bytes proved
+        // less than it looked like it proved.
+        let signed_len =
+            HEADER_LEN as u64 + self.header.manifest_len as u64 + self.header.payload_len;
+        self.file.seek(SeekFrom::Start(0)).map_err(Error::IoBare)?;
+        let mut buf = vec![0u8; signed_len as usize];
         self.file.read_exact(&mut buf).map_err(Error::IoBare)?;
         let mut sig = [0u8; SIGNATURE_LEN];
         self.file.read_exact(&mut sig).map_err(Error::IoBare)?;

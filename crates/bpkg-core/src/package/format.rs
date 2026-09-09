@@ -5,19 +5,38 @@
 //!  ------  ----  -----------------------------------------------------------
 //!     0     6    magic = b"BPKG\x1a\x00"
 //!     6     2    format_version (u16 LE)
-//!     8     2    flags (u16 LE)  — bit0: signed (reserved for Phase 7)
+//!     8     2    flags (u16 LE)  — bit0: signed
 //!    10     2    reserved (u16, 0)
 //!    12     4    manifest_len (u32 LE)        — JSON, uncompressed
 //!    16     8    payload_len (u64 LE)         — zstd-compressed inner archive
 //!    24     N    manifest bytes
 //!  24+N     M    payload bytes
+//!  24+N+M  64    Ed25519 signature, when flags bit0 is set
+//! ```
+//!
+//! The signature covers bytes `0 .. 24+N+M` — the header INCLUDED, with its signed bit
+//! already set. Signing only the manifest and payload (format v1) left the two lengths the
+//! verifier reads outside what it verifies, so the boundary between manifest and payload
+//! could be moved without breaking the signature.
+//!
+//! ```text
 //! ```
 //!
 //! The inner archive (pre-compression) is a flat sequence of entries:
 //! `path_len(u32) | path(utf8) | data_len(u64) | data`.
 
 pub const MAGIC: &[u8; 6] = b"BPKG\x1a\x00";
-pub const FORMAT_VERSION: u16 = 1;
+/// 2 — a signature covers the HEADER as well as the manifest and payload.
+///
+/// In v1 it covered only the manifest+payload bytes, and verification read manifest_len and
+/// payload_len out of the UNSIGNED header to decide how much to hash. A length shift keeping
+/// the sum constant therefore moved the manifest/payload boundary with the signature still
+/// valid: the signature said nothing about the framing it was measured with.
+///
+/// The bump needs no compatibility branch. `Header::from_bytes` refuses any version but this
+/// one, so a v1 package is rejected at open with UnsupportedVersion rather than being
+/// verified under the old rule by something that forgot there was an old rule.
+pub const FORMAT_VERSION: u16 = 2;
 pub const HEADER_LEN: usize = 24;
 
 /// `flags` bit 0: an Ed25519 signature (64 bytes) follows the payload.
