@@ -8,7 +8,7 @@
 #   docker run --rm -e CARGO_TARGET_DIR=/tmp/t -v "${PWD}:/app" betterinstaller-dev
 #   # or an arbitrary command:
 #   docker run --rm -e CARGO_TARGET_DIR=/tmp/t -v "${PWD}:/app" betterinstaller-dev \
-#       bash -lc "cargo build --workspace --release"
+#       bash -c "cargo build --workspace --release"
 #
 # CARGO_TARGET_DIR=/tmp/t keeps Linux build artifacts OUT of your Windows ./target.
 
@@ -24,4 +24,8 @@ RUN rustup component add clippy rustfmt
 WORKDIR /app
 
 # Default: the exact CI gate, in order.
-CMD ["bash", "-lc", "cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo build --workspace --release"]
+# NOT a LOGIN shell. `bash -l` runs /etc/profile, which SETS PATH outright instead of
+# appending to it — so the `/usr/local/cargo/bin` the rust image puts there is dropped, and
+# every command below fails with `cargo: command not found`. The image builds, the container
+# starts, and the gate this file exists to run never runs once.
+CMD ["bash", "-c", "cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo build --workspace --release"]

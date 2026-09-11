@@ -1,7 +1,7 @@
 # BetterInstaller — dev / CI in a container.
 #
 #   docker compose run --rm ci          # the full gate (fmt + clippy + test + build)
-#   docker compose run --rm ci bash -lc "cargo clippy --workspace --all-targets -- -D warnings"
+#   docker compose run --rm ci bash -c "cargo clippy --workspace --all-targets -- -D warnings"
 #   docker compose run --rm shell       # interactive shell with the toolchain + deps
 #
 # Named volumes cache the Cargo registry + the Linux target dir, so repeat runs are fast
@@ -24,7 +24,9 @@ services:
   shell:
     extends: ci
     entrypoint: ["bash"]
-    command: ["-l"]
+    # Not `-l`: a login shell re-runs /etc/profile, which replaces PATH and drops
+    # /usr/local/cargo/bin with it — see the note in the Dockerfile.
+    command: []
     stdin_open: true
     tty: true
 

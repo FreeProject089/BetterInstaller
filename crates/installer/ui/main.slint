@@ -479,18 +479,25 @@ component SwatchGrid inherits Rectangle {
     //
     // So the needed height is PUBLISHED, and every ScrollView holding one of these binds
     // its viewport-height to it rather than guessing.
-    // FOUR per row, not three. The content column is ~720px wide now, so a third of the
-    // grid's width was empty and twelve themes still needed four rows and a scrollbar.
-    // Four columns is 624px — it fits, and the same twelve themes come down to three rows.
-    property <int> cols: 4;
+    // FOUR per row where there is room for four. The Configuration page's content column is
+    // ~720px wide, so a third of the grid was empty at three and twelve themes still needed
+    // four rows; four columns is 614px, which fits there and brings them down to three rows.
+    //
+    // An INPUT, because there is a second place this grid is shown and it is narrower. The
+    // final dialog is 516px of content, where a fourth column lands at x = 468px — outside
+    // the viewport. Nothing said so: the layout is arithmetic, the width never drove it, and
+    // the dialog's hand-tuned `width: 458px` (which is exactly three columns) was simply
+    // ignored. With thirteen themes that is three tiles nobody could see or reach.
+    in property <int> cols: 4;
+    // Derived, not asserted beside `cols`. It used to be the constant 614px sitting next to a
+    // hardcoded 4 — true together, and silently wrong the moment either moved.
+    out property <length> content-width: cols * 156px - 10px;
     out property <length> content-height: (floor((max(rows.length, 1) - 1) / cols) + 1) * 130px;
     // min-height, not height: a LAYOUT sizes its children from min/preferred and ignores
     // an explicit height, so the copy on the Configuration page would be allotted no room
     // and overlap whatever follows it. Slint refuses both at once, and min-height is the
     // one that satisfies the layout AND still makes every row render inside a ScrollView.
     min-height: content-height;
-    // Four tiles per row at 156px, minus the gap after the last one.
-    out property <length> content-width: 614px;
     for sw[i] in rows : SwatchTile {
         x: (i - floor(i / cols) * cols) * 156px;
         y: floor(i / cols) * 130px;
@@ -998,17 +1005,35 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         spacing: 10px;
                         alignment: start;
-                        if root.app-logo.width > 0 : Image {
-                            source: root.app-logo;
-                            width: 28px; height: 28px;
-                            image-fit: contain;
-                            vertical-alignment: center;
+                        // On a WHITE ROUNDED PLATE, the way an app icon sits everywhere else.
+                        // BMM's mark is a dark glyph on transparency and this sidebar is
+                        // #11151d, so without one it reads as a smudge — as something that
+                        // failed to load rather than as branding, in the first place anybody
+                        // looks. 34px around a 26px image leaves 4px on every side, so a mark
+                        // that runs to the edge of its own bitmap never touches the radius.
+                        //
+                        // Both branches, on purpose: a plate that appeared only when a logo
+                        // was configured would make BetterInstaller's own fallback look like
+                        // the broken case.
+                        if root.app-logo.width > 0 : Rectangle {
+                            width: 34px; height: 34px;
+                            background: white;
+                            border-radius: 8px;
+                            Image {
+                                source: root.app-logo;
+                                width: 26px; height: 26px;
+                                image-fit: contain;
+                            }
                         }
-                        if root.app-logo.width <= 0 : Image {
-                            source: @image-url("../../../BetterInstaller.png");
-                            width: 28px; height: 28px;
-                            image-fit: contain;
-                            vertical-alignment: center;
+                        if root.app-logo.width <= 0 : Rectangle {
+                            width: 34px; height: 34px;
+                            background: white;
+                            border-radius: 8px;
+                            Image {
+                                source: @image-url("../../../BetterInstaller.png");
+                                width: 26px; height: 26px;
+                                image-fit: contain;
+                            }
                         }
                         Text {
                             text: root.app-name;
@@ -1139,8 +1164,13 @@ export component MainWindow inherits Window {
         TouchArea { width: parent.width; height: parent.height; }
 
         Rectangle {
-            width: min(parent.width - 56px, 560px);
-            height: min(parent.height - 56px, 470px);
+            // 502px is three columns plus the 22px padding on each side, so the grid is
+            // never the thing that decides the dialog's width.
+            width: min(parent.width - 56px, 502px);
+            // Taller than it was. Three columns turn thirteen themes into five rows (650px),
+            // and 470px minus a title, a hint and a 46px button row left barely two and a
+            // half of them visible on a window that is 760px tall.
+            height: min(parent.height - 56px, 640px);
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             background: Pal.panel;
@@ -1168,8 +1198,13 @@ export component MainWindow inherits Window {
                     vertical-stretch: 1;
                     viewport-height: final-grid.content-height;
                     viewport-width: final-grid.content-width;
+                    // Three columns, and the width comes FROM the grid. The 458px that used
+                    // to be written here was three columns' worth of pixels handed to a
+                    // four-column component, which is how the fourth column ended up outside
+                    // the viewport with nothing to say so.
                     final-grid := SwatchGrid {
-                        width: 458px;
+                        cols: 3;
+                        width: self.content-width;
                         rows: root.final-previews;
                         value: root.final-value;
                         picked(v) => { root.final-picked(v); }
