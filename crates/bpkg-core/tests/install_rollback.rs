@@ -30,6 +30,36 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     d
 }
 
+/// Make `path` unwritable, and report whether it actually IS.
+///
+/// The two rollback tests need a destination file that fails to open for writing, and they
+/// used to assume `set_readonly(true)` delivered one. It does on Windows, where the read-only
+/// attribute is checked for everybody. On Unix it clears the write bits — and root has
+/// CAP_DAC_OVERRIDE, so the write succeeds regardless. The premise evaporates, the update
+/// completes, and the test fails with a sentence about the rollback being broken.
+///
+/// So the lock is PROVED, by the only question that matters: can this process still write
+/// there. A probe write rather than a `geteuid() == 0` check, because that is the property
+/// the tests depend on — and it covers a container with capabilities dropped, a filesystem
+/// mounted so modes are ignored, and Windows identically.
+#[must_use]
+fn lock_file(path: &std::path::Path) -> bool {
+    let mut perms = std::fs::metadata(path).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(path, perms).unwrap();
+    // Appending, not truncating: a probe that emptied the file when it DID succeed would
+    // destroy the very contents the assertions below compare against.
+    std::fs::OpenOptions::new().append(true).open(path).is_err()
+}
+
+/// Undo `lock_file`, so the scratch directory can be removed by the next run.
+fn unlock_file(path: &std::path::Path) {
+    let mut perms = std::fs::metadata(path).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(path, perms).unwrap();
+}
+
 fn write(path: &std::path::Path, body: &[u8]) {
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p).unwrap();
@@ -130,20 +160,25 @@ fn an_update_that_dies_partway_restores_every_file_it_had_already_replaced() {
     let dir = base.join("install");
     install(&p1, &dir);
 
-    // Lock one destination file so writing over it fails mid-extraction.
+    // Lock one destination file so writing over it fails mid-extraction — and check that
+    // the lock took. As root it does not, and without this the test blames the rollback for
+    // something that happened to the tester.
     let locked = dir.join("locked.txt");
-    let mut perms = std::fs::metadata(&locked).unwrap().permissions();
-    perms.set_readonly(true);
-    std::fs::set_permissions(&locked, perms).unwrap();
+    if !lock_file(&locked) {
+        unlock_file(&locked);
+        eprintln!(
+            "SKIP an_update_that_dies_partway_restores_every_file_it_had_already_replaced: \
+             this process can write to a read-only file (running as root?), so the \
+             mid-extraction failure this test needs cannot be provoked here"
+        );
+        return;
+    }
 
     let result = apply_package_update(&p2, &dir, None, None);
 
     // Unlock first, unconditionally — otherwise a failure here leaves an undeletable
     // file in the temp dir for every future run.
-    let mut perms = std::fs::metadata(&locked).unwrap().permissions();
-    #[allow(clippy::permissions_set_readonly_false)]
-    perms.set_readonly(false);
-    std::fs::set_permissions(&locked, perms).unwrap();
+    unlock_file(&locked);
 
     assert!(
         result.is_err(),
@@ -200,16 +235,19 @@ fn rollback_restores_files_the_new_package_never_contained() {
     assert!(dir.join("legacy/config.ini").exists());
 
     let locked = dir.join("locked.txt");
-    let mut perms = std::fs::metadata(&locked).unwrap().permissions();
-    perms.set_readonly(true);
-    std::fs::set_permissions(&locked, perms).unwrap();
+    if !lock_file(&locked) {
+        unlock_file(&locked);
+        eprintln!(
+            "SKIP rollback_restores_files_the_new_package_never_contained: this process can \
+             write to a read-only file (running as root?), so the mid-extraction failure this \
+             test needs cannot be provoked here"
+        );
+        return;
+    }
 
     let result = apply_package_update(&p2, &dir, None, None);
 
-    let mut perms = std::fs::metadata(&locked).unwrap().permissions();
-    #[allow(clippy::permissions_set_readonly_false)]
-    perms.set_readonly(false);
-    std::fs::set_permissions(&locked, perms).unwrap();
+    unlock_file(&locked);
 
     assert!(result.is_err(), "the update should have failed partway");
     assert_eq!(
