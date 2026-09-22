@@ -8,6 +8,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Least privilege for GITHUB_TOKEN. Without a block the token gets the repository's default,
+# which on an older repository is write-all, and this repository is PUBLIC — so a fork's
+# pull request runs these same third-party actions. Nothing here writes anything.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: build & test (${{ matrix.os }})
