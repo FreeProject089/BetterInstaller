@@ -2937,11 +2937,46 @@ After the table.";
             assert!(!r.default_label.is_empty(), "{} shows no default", r.id);
         }
 
-        // Telemetry is in French, marked as sending data, and its default is On.
+        // Telemetry is in French, marked as sending data, and its default is Off.
         let tel = rows.iter().find(|r| r.id == "telemetry").unwrap();
         assert!(tel.sends_data);
-        assert!(tel.default_label.contains("Activ"), "{}", tel.default_label);
+        assert!(
+            tel.default_label.contains("Désactiv"),
+            "{}",
+            tel.default_label
+        );
         assert!(!tel.label.contains("telemetry"), "{}", tel.label);
+
+        // The privacy contract, read off the config rather than promised in prose: nothing
+        // that can send data off this PC on its own is pre-ticked. A box the user never
+        // looked at is a box that sent nothing — that is what makes "opt-in" true rather
+        // than a word in a description.
+        //
+        // `session_recorder` is the one exception, and it is one because it cannot send
+        // anything by itself: it shapes WHAT telemetry contains, and telemetry is off and
+        // unticked above it. Its own description says so. Every other `sends_data` option
+        // must start off; add one with `default = true` and this fails.
+        for r in rows
+            .iter()
+            .filter(|r| r.sends_data && r.id != "session_recorder")
+        {
+            assert!(
+                r.default_label.contains("Désactiv"),
+                "{} sends data and is pre-ticked: {}",
+                r.id,
+                r.default_label
+            );
+        }
+        // And the three the owner decided on are each their own question, asked out loud
+        // and marked as sending data — the weekly hardware report used to ride along with
+        // the telemetry box without ever being asked about.
+        for must in ["telemetry", "telemetry_bench", "discord_rpc"] {
+            let r = rows
+                .iter()
+                .find(|r| r.id == must)
+                .unwrap_or_else(|| panic!("{must} is not on the configuration page"));
+            assert!(r.sends_data, "{must} is not marked as sending data");
+        }
 
         // A select shows labels and keeps values: the dropdown reports an index into
         // `choices`, so a label can never become the handoff value.

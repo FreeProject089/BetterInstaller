@@ -246,8 +246,12 @@ label       = "Usage & diagnostic telemetry"
 # Said as it is, checked against the sender (src-tauri/src/commands/analytics.rs,
 # frontend/src/core/analytics.ts). "Anonymous" was not true: every batch carries the
 # Creator ID, a stable identifier derived from this PC, and the public IP address.
-description  = "On by default: untick to turn it off. When on, BMM sends to BetterCommunity's telemetry server: your Creator ID (a stable identifier derived from this PC), your hardware and system profile including your public and local IP address, the pages and features you use, performance figures, warning and error logs (which can contain folder paths), a masked recording of the BMM window, and a weekly benchmark with a detailed hardware report (serial numbers, MAC addresses). Never the contents of your mods or files, never the text you type into fields. Full list in the Privacy Policy. Settings → Privacy turns it off at any time."
-default     = true                   # pre-checked, but shown and uncheckable on this page
+description  = "Off by default: tick it to offer to share. Ticking it here does NOT start collection — BMM asks again on its own consent screen, which lists everything, and collection starts only if you accept there. When on, BMM sends to BetterCommunity's telemetry server: your Creator ID (a stable identifier derived from this PC), your hardware and system profile including your public and local IP address, the pages and features you use, performance figures, warning and error logs (which can contain folder paths), and a masked recording of the BMM window. The weekly hardware report is a separate option below. Never the contents of your mods or files, never the text you type into fields. Full list in the Privacy Policy. Settings → Privacy turns it off at any time."
+# OPT-IN. Unticked is the whole consent story here: nothing is collected, and BMM's own
+# consent dialog never has to nag. Ticked is only a PRE-SELECTION — BMM reads it as
+# "start my consent dialog with Yes filled in", never as consent itself
+# (src-tauri/src/commands/installer_handoff.rs).
+default     = false
 maps_to     = "settings.telemetry"
 group       = "privacy"
 sends_data  = true
@@ -273,6 +277,23 @@ maps_to     = "settings.session_recorder"
 group       = "privacy"
 sends_data  = true
 
+# The weekly hardware report. It used to ride along with the telemetry box without ever
+# being asked about — BMM's own default was "on", so a ticked telemetry box also sent
+# motherboard and disk serial numbers, the machine UUID and MAC addresses every 7 days.
+# It is its own question now, off on both sides (BMM's default is the localStorage key
+# bmm_telemetry_bench, absent = off), and it does nothing at all unless telemetry consent
+# is actually given in BMM.
+[[setup_option]]
+id          = "telemetry_bench"
+type        = "bool"
+label_key   = "setup.telemetryBench"
+label       = "Weekly hardware report & benchmark"
+description  = "Off by default. Only does anything if you accept telemetry in BMM. Every 7 days BMM runs a short benchmark and adds a detailed hardware report: motherboard model and serial number, BIOS version, machine UUID, CPU details, disk models and serial numbers, physical MAC addresses, OS build, Secure Boot/TPM state. These are precise identifiers for this machine. Settings → Privacy turns it off at any time."
+default     = false
+maps_to     = "settings.telemetry_bench"
+group       = "privacy"
+sends_data  = true
+
 # ─── Optional preferences pre-set at install (each maps to a real BMM setting) ───
 # Defaults MATCH BMM's own defaults, so leaving them alone changes nothing; the user
 # can flip any of them here to have BMM start already configured, or change them later
@@ -284,9 +305,8 @@ label_key   = "setup.discordRpc"
 label       = "Discord Rich Presence"
 # "No data leaves your machine beyond Discord's own status" undersold it: the status IS
 # data, public to anyone who can see the profile (src-tauri/src/commands/discord.rs).
-description  = "On by default here (BMM's own default is off): untick to turn it off. Shows on your Discord profile, to anyone who can see it: the name of your active BMM profile, how many mods are active, your Creator ID and a link that contains it. Sent through the Discord app running on this PC."
-default     = true                   # installer pre-enables it; BMM's own default stays off
-                                     # for installs that never ran the installer
+description  = "Off by default, like BMM itself: tick it to turn it on. Shows on your Discord profile, to anyone who can see it: the name of your active BMM profile, how many mods are active, your Creator ID and a link that contains it. Sent through the Discord app running on this PC."
+default     = false                  # matches BMM's own default (state.rs: discord_rpc_enabled = false)
 maps_to     = "settings.discord_rpc"
 group       = "privacy"
 sends_data  = true

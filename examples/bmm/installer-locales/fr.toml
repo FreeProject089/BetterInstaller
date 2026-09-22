@@ -68,7 +68,11 @@ description = "Ne pas afficher la visite guidée à la première ouverture de BM
 
 [options.telemetry]
 label = "Télémétrie d'utilisation et de diagnostic"
-description = "Activée par défaut : décochez pour la désactiver. Si elle est activée, BMM envoie au serveur de télémétrie de BetterCommunity : votre Creator ID (un identifiant stable dérivé de ce PC), votre profil matériel et système, y compris votre adresse IP publique et locale, les pages et fonctions que vous utilisez, des mesures de performance, les journaux d'avertissements et d'erreurs (qui peuvent contenir des chemins de dossiers), un enregistrement masqué de la fenêtre de BMM, et un benchmark hebdomadaire accompagné d'un rapport matériel détaillé (numéros de série, adresses MAC). Jamais le contenu de vos mods ou de vos fichiers, jamais le texte que vous saisissez dans les champs. Liste complète dans la Politique de confidentialité. Paramètres → Confidentialité la désactive à tout moment."
+description = "Désactivée par défaut : cochez pour proposer de la partager. Cocher ici ne démarre AUCUNE collecte — BMM repose la question sur son propre écran de consentement, qui liste tout, et la collecte ne commence que si vous acceptez là. Si elle est activée, BMM envoie au serveur de télémétrie de BetterCommunity : votre Creator ID (un identifiant stable dérivé de ce PC), votre profil matériel et système, y compris votre adresse IP publique et locale, les pages et fonctions que vous utilisez, des mesures de performance, les journaux d'avertissements et d'erreurs (qui peuvent contenir des chemins de dossiers), et un enregistrement masqué de la fenêtre de BMM. Le rapport matériel hebdomadaire est une option distincte, ci-dessous. Jamais le contenu de vos mods ou de vos fichiers, jamais le texte que vous saisissez dans les champs. Liste complète dans la Politique de confidentialité. Paramètres → Confidentialité la désactive à tout moment."
+
+[options.telemetry_bench]
+label = "Rapport matériel hebdomadaire et benchmark"
+description = "Désactivé par défaut. N'a d'effet que si vous acceptez la télémétrie dans BMM. Tous les 7 jours, BMM exécute un court benchmark et y ajoute un rapport matériel détaillé : modèle et numéro de série de la carte mère, version du BIOS, UUID de la machine, détails du processeur, modèles et numéros de série des disques, adresses MAC physiques, version du système, état du Secure Boot et du TPM. Ce sont des identifiants précis de cette machine. Paramètres → Confidentialité le désactive à tout moment."
 
 [options.session_recorder]
 label = "Replay de session dans la télémétrie"
@@ -76,7 +80,7 @@ description = "Ne compte que si la télémétrie est activée. Activé par défa
 
 [options.discord_rpc]
 label = "Discord Rich Presence"
-description = "Activé par défaut ici (BMM l'a désactivé par défaut) : décochez pour le désactiver. Affiche sur votre profil Discord, à toute personne qui peut le voir : le nom de votre profil BMM actif, le nombre de mods activés, votre Creator ID et un lien qui le contient. Transmis par l'application Discord installée sur ce PC."
+description = "Désactivé par défaut, comme dans BMM : cochez pour l'activer. Affiche sur votre profil Discord, à toute personne qui peut le voir : le nom de votre profil BMM actif, le nombre de mods activés, votre Creator ID et un lien qui le contient. Transmis par l'application Discord installée sur ce PC."
 
 [options.tasky_visible]
 label = "Afficher Tasky"
