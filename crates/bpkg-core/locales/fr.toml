@@ -1,0 +1,132 @@
+# Chaînes du moteur BetterInstaller : français.
+# Même jeu de clés que en.toml (vérifié par les tests i18n). Une clé absente ici retombe
+# sur l'anglais à l'exécution.
+
+[meta]
+name = "Français"
+direction = "ltr"
+
+[ui]
+next = "Suivant"
+back = "Retour"
+install = "Installer"
+finish = "Terminer"
+browse = "Parcourir…"
+cancel = "Annuler"
+language = "Langue"
+choose_folder = "Choisir le dossier d'installation"
+
+[steps]
+welcome = "Bienvenue"
+terms = "Conditions"
+setup = "Configuration"
+install = "Installation"
+done = "Terminé"
+repair = "Réparation"
+update = "Mise à jour"
+uninstall = "Désinstallation"
+
+[welcome]
+title = "Installer {app}"
+version = "Version {version}"
+location = "Dossier d'installation"
+components = "Composants"
+required = "requis"
+
+[signature]
+preview = "Non signé (aperçu développeur)"
+unreadable = "Paquet illisible"
+unsigned = "Paquet non signé  ·  éditeur : {publisher}"
+verified = "Signé et vérifié  ·  {publisher}"
+signed = "Signé  ·  {publisher}"
+invalid = "Signature INVALIDE. Ne faites pas confiance à ce paquet."
+
+[prereq]
+missing_download = "Introuvable sur ce PC. Téléchargé pendant l'installation."
+missing_install = "Introuvable sur ce PC. Téléchargé et installé avec l'application."
+
+[legal]
+accept = "J'ai lu et j'accepte : {doc}."
+scroll_hint = "Faites défiler jusqu'à la fin pour accepter."
+counter = "Document {n} / {total}"
+fallback_notice = "Ce document n'existe pas en {language}. La version anglaise est affichée."
+
+[docs]
+tos = "Conditions d'utilisation"
+privacy = "Politique de confidentialité"
+license = "Licence"
+eula = "Contrat de licence"
+
+[setup]
+title = "Configuration"
+hint = "Ces choix s'appliquent au premier démarrage de l'application. Chacun reste modifiable ensuite dans ses paramètres."
+accept = "J'accepte"
+on = "Activé"
+off = "Désactivé"
+default = "Par défaut : {value}"
+changed = "Modifié"
+reset = "Rétablir les valeurs par défaut"
+sends_data = "Envoie des données"
+general = "Général"
+
+[progress]
+preparing = "Préparation…"
+installing = "Installation…"
+installing_file = "Installation…  {pct} %  ·  {file}"
+installing_pct = "Installation…  {pct} %"
+prerequisite = "Installation du prérequis : {name}…"
+closing = "Fermeture de l'application en cours d'exécution…"
+finishing = "Finalisation…"
+repairing = "Réparation…"
+updating = "Mise à jour…"
+uninstalling = "Désinstallation…"
+downloading = "Téléchargement de la v{new_version}…"
+
+[done]
+launch_now = "Lancer maintenant"
+is_installed = "{app} est installé"
+installed_title = "{app} a été installé"
+installed_message = "{n} fichiers installés dans {dir}"
+install_failed_title = "L'installation a échoué"
+install_failed_message = "Échec de l'installation : {error}"
+handoff_written = "Réglages du premier lancement écrits dans {path}"
+handoff_failed = "Impossible d'écrire les réglages du premier lancement : {error}"
+final_save_failed = "Impossible d'enregistrer ce choix. Celui fait pendant la configuration est conservé."
+repaired_title = "{app} a été réparé"
+repaired_message = "Réparé : {n} fichiers dans {dir}"
+repair_failed_title = "La réparation a échoué"
+repair_nothing = "Rien à réparer : aucun paquet n'est intégré."
+updated_title = "{app} a été mis à jour"
+updated_to_title = "{app} a été mis à jour en v{new_version}"
+updated_message = "Mis à jour : {n} fichiers dans {dir}"
+updated_to_message = "Mis à jour en v{new_version} : {n} fichiers dans {dir}"
+update_failed_title = "La mise à jour a échoué"
+update_nothing = "Aucun paquet de mise à jour disponible."
+uninstalled_title = "{app} a été désinstallé"
+uninstalled_message = "{app} et ses fichiers ont été supprimés."
+uninstall_failed_title = "La désinstallation a échoué"
+
+[final]
+title = "Choisissez une apparence"
+apply = "Appliquer"
+skip = "Garder l'actuel"
+
+[maintenance]
+installed = "Installé"
+installed_version = "Installé  ·  v{installed_version}"
+update_available = "Mise à jour disponible : v{installed_version}  →  v{new_version}"
+question = "Que voulez-vous faire ?"
+update = "Mettre à jour"
+repair = "Réparer"
+uninstall = "Désinstaller"
+confirm_uninstall = "Désinstaller {app} ? Tous les fichiers installés seront supprimés."
+confirm_update = "Mettre à jour {app} en v{new_version} ?"
+confirm_repair = "Réparer {app} ? Les fichiers seront revérifiés et restaurés."
+yes_uninstall = "Oui, désinstaller"
+yes_update = "Oui, mettre à jour"
+yes_repair = "Oui, réparer"
+
+[errors]
+not_writable = "Impossible d'écrire dans {dir} : {error}\nChoisissez un dossier accessible en écriture (celui par défaut est dans votre profil utilisateur). Installer dans Program Files nécessite un installateur administrateur (élevé)."
+signature_invalid = "La signature du paquet est INVALIDE. Installation refusée."
+signature_missing = "Le paquet n'est pas signé, alors qu'une signature est exigée."

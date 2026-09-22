@@ -38,6 +38,15 @@ background = "assets/installer-bg.png"
 # danger       = "#e3342f"
 # shadow       = "#04060b"
 
+# ─── Languages ───────────────────────────────────────────────────────
+# The installer opens in the OS language and offers a picker. English text lives in this
+# file (label / description); every other language, and the choice labels this file has
+# no field for, come from installer-locales/<code>.toml, which build-installer.ps1 copies
+# into the SIGNED package. Adding a language = adding a file there.
+[i18n]
+default     = "auto"
+locales_dir = "installer-locales"
+
 [install]
 default_dir      = "{ProgramFiles}/Better Mods Manager"
 main_exe         = "better-mods-manager.exe"   # shortcuts + bmm:// protocol
@@ -121,6 +130,36 @@ enabled  = true
 file     = "installer-handoff.json"
 location = "app_data"
 
+# ─── Configuration page headings, in display order ───────────────────
+[[setup_group]]
+id          = "look"
+label       = "Language & appearance"
+description = "How BMM looks the first time it opens."
+
+[[setup_group]]
+id          = "privacy"
+label       = "Privacy & data"
+description = "What BMM may send off this PC. Options that send data carry an orange mark."
+
+[[setup_group]]
+id          = "guidance"
+label       = "Help & guidance"
+description = "The tutorial, the Tasky mascot and in-app tips."
+
+[[setup_group]]
+id          = "behaviour"
+label       = "Behaviour"
+
+[[setup_group]]
+id          = "content"
+label       = "Starter content"
+description = "Extra content copied in on first launch."
+
+[[setup_group]]
+id          = "security"
+label       = "Security"
+description = "Limits BMM places on itself. Both can be changed later in Settings → Security."
+
 [[setup_option]]
 id          = "language"
 type        = "select"
@@ -128,8 +167,9 @@ label_key   = "setup.language"
 label       = "Language"
 description  = "Interface language for Better Mods Manager."
 choices     = ["auto", "en", "fr"]
-default     = "auto"                 # "auto" is resolved to the OS language
+default     = "auto"                 # "auto" follows the installer's language (itself the OS one unless changed)
 maps_to     = "settings.language"
+group       = "look"
 
 [[setup_option]]
 id          = "theme"
@@ -143,6 +183,7 @@ description  = "Starting look. Every one of these ships with BMM, and you can ch
 choices     = ["bmm-default", "bmm-sombre", "bmm-void", "bmm-white", "bmm-discord", "bmm-orange", "bmm-spotify", "bmm-brutal", "bmm-claude", "bmm-nord", "bmm-sakura", "bmm-vscode", "bmm-macos"]
 default     = "bmm-default"
 maps_to     = "settings.active_theme"
+group       = "look"
 # Offer it once more on the final page — a theme is a decision about a picture,
 # and that is the first moment the user has nothing else to think about.
 show_at_end = true
@@ -175,6 +216,11 @@ label_key   = "setup.acceptLegal"
 label       = "Terms of Service & Privacy"
 description  = "I accept the Terms of Service and the Privacy Policy. Required to continue."
 documents   = ["TOS.md", "PRIVACY.md"]
+# Per-language versions, same order as `documents`. A language with no entry here gets
+# English, and the Terms page says so.
+localized_documents = [
+  { lang = "fr", documents = ["TOS_FR.md", "PRIVACY_FR.md"] },
+]
 required    = true
 # BMM turns this on: the accept box stays disabled until the reader reaches the end of the
 # document. A nudge, not proof of reading — but it is the difference between clicking past
@@ -190,15 +236,42 @@ label       = "Skip the interactive tutorial"
 description  = "Don't show the guided tour the first time BMM opens."
 default     = false
 maps_to     = "settings.skip_tutorial"
+group       = "guidance"
 
 [[setup_option]]
 id          = "telemetry"
 type        = "bool"
 label_key   = "setup.telemetry"
-label       = "Anonymous telemetry"
-description  = "On by default — uncheck to disable. Sends anonymous usage data only — app version, OS, hardware specs (CPU/GPU/RAM), and which features you use. No personal data, no file contents, no account. You can turn it off later in Settings."
+label       = "Usage & diagnostic telemetry"
+# Said as it is, checked against the sender (src-tauri/src/commands/analytics.rs,
+# frontend/src/core/analytics.ts). "Anonymous" was not true: every batch carries the
+# Creator ID, a stable identifier derived from this PC, and the public IP address.
+description  = "On by default: untick to turn it off. When on, BMM sends to BetterCommunity's telemetry server: your Creator ID (a stable identifier derived from this PC), your hardware and system profile including your public and local IP address, the pages and features you use, performance figures, warning and error logs (which can contain folder paths), a masked recording of the BMM window, and a weekly benchmark with a detailed hardware report (serial numbers, MAC addresses). Never the contents of your mods or files, never the text you type into fields. Full list in the Privacy Policy. Settings → Privacy turns it off at any time."
 default     = true                   # pre-checked, but shown and uncheckable on this page
 maps_to     = "settings.telemetry"
+group       = "privacy"
+sends_data  = true
+
+# What this key REALLY controls, read from BMM: the handoff consumer turns
+# session_recorder=false into localStorage bmm_replay_enabled='0' (frontend/src/ui/app.ts),
+# and bmm_replay_enabled is the switch for the session replay UPLOADED WITH TELEMETRY
+# (frontend/src/core/analytics.ts, startSessionReplay). The local crash recorder is a
+# different setting (bmm_watcher_*) that this option never touched.
+#
+# It used to be labelled "Session recorder (local) … never sent unless you submit a
+# report", which described the other feature: unticking it did not stop a local
+# recording, and leaving it ticked let a recording be uploaded. The id and maps_to stay
+# (BMM reads that key); the words now say what it does.
+[[setup_option]]
+id          = "session_recorder"
+type        = "bool"
+label_key   = "setup.sessionRecorder"
+label       = "Session replay in telemetry"
+description  = "Only matters while telemetry is on. On by default: untick to turn it off. Adds to telemetry a recording of the BMM window (layout, clicks, scrolling, navigation), with the text of input fields masked. Recordings of other windows or of your screen are never made. Untick to keep telemetry without the replay."
+default     = true
+maps_to     = "settings.session_recorder"
+group       = "privacy"
+sends_data  = true
 
 # ─── Optional preferences pre-set at install (each maps to a real BMM setting) ───
 # Defaults MATCH BMM's own defaults, so leaving them alone changes nothing; the user
@@ -209,10 +282,14 @@ id          = "discord_rpc"
 type        = "bool"
 label_key   = "setup.discordRpc"
 label       = "Discord Rich Presence"
-description  = "Show what you're doing in BMM on your Discord profile. On by default — uncheck to disable; no data leaves your machine beyond Discord's own status."
+# "No data leaves your machine beyond Discord's own status" undersold it: the status IS
+# data, public to anyone who can see the profile (src-tauri/src/commands/discord.rs).
+description  = "On by default here (BMM's own default is off): untick to turn it off. Shows on your Discord profile, to anyone who can see it: the name of your active BMM profile, how many mods are active, your Creator ID and a link that contains it. Sent through the Discord app running on this PC."
 default     = true                   # installer pre-enables it; BMM's own default stays off
                                      # for installs that never ran the installer
 maps_to     = "settings.discord_rpc"
+group       = "privacy"
+sends_data  = true
 
 # ─── Tasky & in-app guidance ────────────────────────────────────────────────────
 # All four are ON in BMM, so leaving them alone changes nothing. They are here because
@@ -226,6 +303,7 @@ label       = "Show Tasky"
 description  = "The mascot in the corner of the app. Turning it off also removes it from the sidebar."
 default     = true                   # matches BMM's default
 maps_to     = "settings.tasky_visible"
+group       = "guidance"
 
 [[setup_option]]
 id          = "tasky_tooltip"
@@ -235,6 +313,7 @@ label       = "Tasky help bubbles"
 description  = "The bubbles Tasky pops up to explain a screen. Independent of showing Tasky itself."
 default     = true                   # matches BMM's default
 maps_to     = "settings.tasky_tooltip"
+group       = "guidance"
 
 [[setup_option]]
 id          = "tasky_animated"
@@ -244,6 +323,7 @@ label       = "Animate Tasky"
 description  = "Idle movement. Off leaves the mascot still — useful with reduced-motion settings."
 default     = true                   # matches BMM's default
 maps_to     = "settings.tasky_animated"
+group       = "guidance"
 
 [[setup_option]]
 id          = "tips_visible"
@@ -253,6 +333,7 @@ label       = "In-app tips"
 description  = "The small explanatory callouts throughout the interface. Warnings are never hidden by this."
 default     = true                   # matches BMM's default
 maps_to     = "settings.tips_visible"
+group       = "guidance"
 
 [[setup_option]]
 id          = "smart_io"
@@ -262,6 +343,7 @@ label       = "Smart I/O (recommended)"
 description  = "Speeds up mod install/enable/disable by batching disk operations and picking the fastest strategy for your drive. On by default."
 default     = true                   # matches BMM's default
 maps_to     = "settings.smart_io"
+group       = "behaviour"
 
 [[setup_option]]
 id          = "sound_effects"
@@ -271,18 +353,7 @@ label       = "Interface sound effects"
 description  = "Subtle click/confirm sounds in the UI. On by default."
 default     = true                   # matches BMM's default
 maps_to     = "settings.sound_effects"
-
-# Local session recorder — records a masked, on-device replay of your session so a
-# crash report can attach the moments before a crash. Stays on your machine unless
-# you send a report. On by default; matches BMM's own default (bmm_replay_enabled).
-[[setup_option]]
-id          = "session_recorder"
-type        = "bool"
-label_key   = "setup.sessionRecorder"
-label       = "Session recorder (local)"
-description  = "Keeps a masked, on-device recording of your session so a crash report can include what happened right before. Local-only; never sent unless you submit a report. On by default."
-default     = true
-maps_to     = "settings.session_recorder"
+group       = "behaviour"
 
 # System Access Control — how much of the filesystem BMM's own operations may reach.
 # "full" = normal (manage mods anywhere you point it); "limited" = confined to the
@@ -296,6 +367,7 @@ description  = "How much filesystem access BMM's operations get. 'Full access' i
 choices     = ["full", "limited"]
 default     = "full"
 maps_to     = "settings.fs_security_mode"
+group       = "security"
 
 # Pre-import: bundled content the installer seeds on first launch. Checked by
 # default; unchecking it means BMM starts with only its built-in content.
@@ -307,6 +379,7 @@ label       = "Import the starter theme pack"
 description  = "Adds a curated set of ready-made themes the first time BMM opens. Uncheck to keep only the built-in themes."
 default     = true
 maps_to     = "settings.import_starter_themes"
+group       = "content"
 
 [[setup_option]]
 id          = "import_languages"
@@ -316,6 +389,7 @@ label       = "Import extra language packs"
 description  = "Installs additional community translations beyond the built-in English & French (those two are always installed)."
 default     = true
 maps_to     = "settings.import_extra_languages"
+group       = "content"
 
 # ─── Security: the browser policy BMM starts with ──────────────────
 # A preset ID, never a policy string. An installer dropdown that could type a raw CSP
@@ -336,6 +410,7 @@ description  = "Extra restrictions on what BMM may load and run, added on top of
 choices     = ["none", "network", "strict", "custom"]
 default     = "none"
 maps_to     = "settings.csp_preset"
+group       = "security"
 
 # ─── Post-install launch (offered on the Done page) ──────────────────
 # The main app is pre-checked; the optional sidecar is opt-in and only shown

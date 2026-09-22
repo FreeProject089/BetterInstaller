@@ -110,7 +110,12 @@ The `installer` binary is a **Slint** native GUI (no WebView runtime), built via
 detect/verify signature → show license/components → verify + extract on a worker
 thread with throttled progress → shortcuts/registry → done; plus Maintenance (Repair =
 re-verify + restore same version; Update = check manifest, delta or full). `i18n.rs`
-provides localized strings (EN/FR), matching the bilingual docs.
+holds runtime catalogues: engine strings in `crates/bpkg-core/locales/<code>.toml`
+(embedded by `build.rs`), product strings in `<code>.toml` files inside the signed package,
+merged per language with a fallback chain (requested tag → base → English). The Slint side
+reads them through one `I18n.tr(key, rev)` callback; bumping `rev` re-words the window,
+which is how the language picker switches mid-flow. Slint's `@tr()`/gettext was not used:
+it compiles translations into the binary and never sees the product's own strings.
 
 ## 9. Build & use (CLI)
 

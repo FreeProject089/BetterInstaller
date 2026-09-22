@@ -202,13 +202,23 @@ maps_to   = "settings.language"  # une clé, ou ["k1","k2"]
 ```
 
 - **`bool`** → une case → bool JSON.
-- **`select`** → un menu déroulant → string JSON. **`"auto"` est spécial :** l'installeur
-  le résout vers la langue OS détectée avant d'écrire le handoff, donc laisser le défaut
-  donne quand même une valeur concrète à l'app (ça corrige « selects pas appliqués »).
+- **`select`** → un menu déroulant → string JSON. Le menu affiche des libellés traduits
+  et écrit la valeur tirée de `choices`. **`"auto"` est spécial :** l'installeur le résout
+  vers la langue dans laquelle il est affiché (celle de l'OS sauf si l'utilisateur en a
+  choisi une autre), en prenant la première de sa chaîne de repli présente dans `choices` ;
+  laisser le défaut donne donc quand même une valeur concrète à l'app (ça corrige
+  « selects pas appliqués »).
 - **`license`** → avec `documents = ["TOS.md","PRIVACY.md"]` ça devient une étape
   **Conditions** dédiée : chaque document est rendu (markdown) sur sa **propre page avec sa
   propre case Accepter**, et tous doivent être acceptés pour continuer. Mappe son
-  acceptation vers chaque clé `maps_to` (ex. `tos_accepted` + `privacy_accepted`).
+  acceptation vers chaque clé `maps_to` (ex. `tos_accepted` + `privacy_accepted`). Les
+  versions traduites vont dans `localized_documents` (voir [Langues](#langues-i18n-et-setup_group)).
+
+Sur chaque option aussi : `group = "<id>"` la range sous un titre `[[setup_group]]`, et
+`sends_data = true` ajoute une marque « Envoie des données » à côté du libellé. Chaque
+ligne affiche sa valeur par défaut (« Par défaut : Activé ») et une marque « Modifié » dès
+que l'utilisateur s'en écarte ; un bouton « Rétablir les valeurs par défaut » remet la
+page à zéro.
 
 `required = true` bloque **Suivant/Installer** tant que non satisfait. Les clés `maps_to`
 sont écrites à plat dans `settings` après retrait du préfixe `settings.`.
@@ -222,6 +232,70 @@ label = "Importer le pack de thèmes de départ"
 default = true                          # coché, mais l'utilisateur peut décocher → pas d'import
 maps_to = "settings.import_starter_themes"
 ```
+
+### Langues : `[i18n]` et `[[setup_group]]`
+
+L'installeur s'ouvre dans la langue de l'OS (langue d'interface de Windows ;
+`LC_ALL`/`LC_MESSAGES`/`LANG` ailleurs), ou celle donnée par `--lang=<tag>`, et propose un
+sélecteur de langue dans la barre latérale jusqu'au début de l'installation. Changer de
+langue retraduit tous les écrans d'un coup, documents légaux compris ; un document dont le
+texte a changé doit être accepté à nouveau.
+
+```toml
+[i18n]
+default     = "auto"               # ou un tag comme "fr" / "pt-BR" pour l'imposer
+locales_dir = "installer-locales"  # dossier DANS le paquet : un <code>.toml par langue
+
+[[setup_group]]                    # titres de la page Configuration, dans l'ordre
+id          = "privacy"
+label       = "Privacy & data"
+description = "What the app may send off this PC."
+
+[[setup_option]]
+id = "legal"
+type = "license"
+documents = ["TOS.md", "PRIVACY.md"]          # anglais, et le repli
+localized_documents = [
+  { lang = "fr", documents = ["TOS_FR.md", "PRIVACY_FR.md"] },   # même ordre
+]
+```
+
+**Ajouter une langue, c'est ajouter des fichiers, jamais du code :**
+
+- Les textes de l'installeur lui‑même (boutons, étapes, messages) sont dans les catalogues
+  du moteur, `crates/bpkg-core/locales/<code>.toml`, intégrés à la compilation : un nouveau
+  fichier est une nouvelle langue après un rebuild.
+- Les textes de ton produit vont dans `<locales_dir>/<code>.toml` dans le paquet, chargés au
+  démarrage sans rebuild du moteur. Un catalogue produit peut aussi remplacer des textes du
+  moteur ou apporter une langue que le moteur n'a pas. Clés :
+  `options.<id>.label` · `options.<id>.description` · `options.<id>.choices.<valeur>` ·
+  `groups.<id>.label` · `groups.<id>.description` · `components.<id>.name` ·
+  `components.<id>.description` · `launch.<id>.label` · `prereqs.<id>.name` ·
+  `docs.<nom>` (titre d'un document légal). L'anglais est dans installer.toml lui‑même ; la
+  seule chose qui n'y a pas de champ est le libellé d'un choix de `select`, qui va dans
+  `en.toml`.
+- Chaque catalogue commence par `[meta] name = "Français"` (affiché dans le sélecteur) et
+  peut indiquer `direction = "rtl"`.
+
+**Chaîne de repli :** tag demandé → ses formes plus courtes → anglais (`pt-BR` → `pt` →
+`en`), texte par texte. Pour les documents légaux, à chaque étape : l'entrée de
+`localized_documents`, puis un fichier voisin `<NOM>_<TAG>.<ext>` dans le paquet
+(`TOS_FR.md`), puis les `documents` anglais. Quand un document retombe sur une autre langue
+que celle affichée, la page Conditions le signale au‑dessus.
+
+**Droite à gauche :** un catalogue avec `direction = "rtl"` aligne le texte à droite. La mise
+en page n'est pas inversée, et le rendu des écritures RTL dépend du moteur de rendu de
+Slint ; aucun catalogue RTL n'a encore été testé.
+
+**Signature :** installer.toml (donc `[i18n]`, `group`, `sends_data`, `localized_documents`)
+est ajouté à l'installeur EN DEHORS du paquet signé, comme tous les autres champs de la
+config. Les catalogues et les documents eux‑mêmes sont des fichiers du paquet, couverts par sa
+signature Ed25519. L'installeur ne les lit pas depuis un paquet dont la signature est connue
+comme invalide, et l'installation est de toute façon refusée avant d'écrire un seul fichier.
+
+Les tests de `bpkg-core` vérifient les catalogues du moteur contre l'anglais, et l'exemple BMM
+vérifie ses catalogues produit contre chaque clé déclarée par son installer.toml
+(`InstallerConfig::translatable_keys`).
 
 ### `[[launch]]` — « Lancer maintenant » post-install (page Terminé)
 

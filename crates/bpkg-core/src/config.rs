@@ -40,6 +40,53 @@ pub struct InstallerConfig {
     /// Installer color theme — override any palette colour from the TOML. Optional.
     #[serde(default)]
     pub theme: ThemeConfig,
+    /// Installer language settings and where the product's own catalogues live. Optional.
+    #[serde(default)]
+    pub i18n: Option<I18nConfig>,
+    /// Headings the Configuration page groups its options under, in display order.
+    #[serde(default, rename = "setup_group")]
+    pub setup_groups: Vec<SetupGroup>,
+}
+
+/// `[i18n]`: which language the installer opens in, and where the product ships its
+/// translations.
+///
+/// This table lives in installer.toml, which is appended to the installer OUTSIDE the
+/// signed package, like every other field of the config. What it points at is not: the
+/// catalogue files and the per-language legal documents are read from the package, whose
+/// Ed25519 signature covers them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct I18nConfig {
+    /// A language tag (`fr`, `pt-BR`) to open in, or `"auto"` (the default) for the
+    /// OS language. The user can still switch in the installer.
+    #[serde(default)]
+    pub default: Option<String>,
+    /// Folder inside the package holding `<code>.toml` product catalogues. Defaults to
+    /// `installer-locales`. Relative, and checked like every path in this file.
+    #[serde(default)]
+    pub locales_dir: Option<String>,
+}
+
+impl I18nConfig {
+    pub const DEFAULT_LOCALES_DIR: &'static str = "installer-locales";
+
+    pub fn locales_dir(&self) -> &str {
+        self.locales_dir
+            .as_deref()
+            .unwrap_or(Self::DEFAULT_LOCALES_DIR)
+    }
+}
+
+/// A heading on the Configuration page. Options name it with `group = "<id>"`.
+///
+/// `label` and `description` are the English text; a product catalogue translates them as
+/// `groups.<id>.label` / `groups.<id>.description`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetupGroup {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Hex colours (e.g. "#0d1117") overriding the installer's built-in palette. Any
@@ -289,7 +336,114 @@ impl InstallerConfig {
             // error would send somebody looking for a syntax mistake.
             p.validate().map_err(crate::error::Error::Other)?;
         }
+        self.validate_i18n().map_err(crate::error::Error::Other)?;
         Ok(())
+    }
+
+    /// The i18n fields: a language tag that is one, a locales folder that stays inside the
+    /// package, per-language documents that line up with the English list, and groups
+    /// that exist.
+    fn validate_i18n(&self) -> std::result::Result<(), String> {
+        if let Some(i) = &self.i18n {
+            if let Some(d) = i.default.as_deref() {
+                if d != "auto" && crate::i18n::normalize(d).is_none() {
+                    return Err(format!("i18n.default: {d:?} is not a language code"));
+                }
+            }
+            if let Some(dir) = i.locales_dir.as_deref() {
+                check_relative("i18n", "locales_dir", dir)?;
+            }
+        }
+        for o in &self.setup_options {
+            for ld in &o.localized_documents {
+                let code = &ld.lang;
+                if crate::i18n::normalize(code).is_none() {
+                    return Err(format!(
+                        "{}: localized_documents lang {code:?} is not a language code",
+                        o.id
+                    ));
+                }
+                // Positional: entry N translates documents[N]. A shorter list would leave a
+                // document with no translation and no way to tell which one.
+                if ld.documents.len() != o.documents.len() {
+                    return Err(format!(
+                        "{}: localized_documents for {code} lists {} document(s), documents lists {}",
+                        o.id,
+                        ld.documents.len(),
+                        o.documents.len()
+                    ));
+                }
+            }
+            if let Some(g) = &o.group {
+                if !self.setup_groups.iter().any(|sg| &sg.id == g) {
+                    return Err(format!("{}: group {g:?} has no [[setup_group]]", o.id));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Every product string the installer can show, as the catalogue key it is looked up
+    /// under, with the English text this file gives it (`None` when the config has no field
+    /// for it, as for a `select` choice label: that English must come from a catalogue).
+    ///
+    /// The list a translator works from, and what the catalogue-completeness tests check a
+    /// product's `<code>.toml` against. Derived here, next to the fields, so a new option
+    /// cannot be added without its key appearing.
+    pub fn translatable_keys(&self) -> Vec<(String, Option<String>)> {
+        let mut out: Vec<(String, Option<String>)> = Vec::new();
+        let mut push = |k: String, en: Option<&str>| {
+            out.push((k, en.filter(|s| !s.is_empty()).map(String::from)));
+        };
+        for g in &self.setup_groups {
+            push(format!("groups.{}.label", g.id), Some(&g.label));
+            if g.description.is_some() {
+                push(
+                    format!("groups.{}.description", g.id),
+                    g.description.as_deref(),
+                );
+            }
+        }
+        for o in &self.setup_options {
+            // A license option is not a row: its documents are the text, translated as
+            // files (`localized_documents`), and its label is never on screen.
+            if matches!(o.kind, SetupOptionKind::License) {
+                continue;
+            }
+            push(format!("options.{}.label", o.id), o.label.as_deref());
+            if o.description.is_some() {
+                push(
+                    format!("options.{}.description", o.id),
+                    o.description.as_deref(),
+                );
+            }
+            if matches!(o.kind, SetupOptionKind::Select | SetupOptionKind::Swatch) {
+                for c in &o.choices {
+                    let preview = o
+                        .previews
+                        .iter()
+                        .find(|p| &p.value == c)
+                        .and_then(|p| p.label.as_deref());
+                    push(format!("options.{}.choices.{c}", o.id), preview);
+                }
+            }
+        }
+        for c in &self.components {
+            push(format!("components.{}.name", c.id), Some(&c.name));
+            if !c.description.is_empty() {
+                push(
+                    format!("components.{}.description", c.id),
+                    Some(&c.description),
+                );
+            }
+        }
+        for l in &self.launch {
+            push(format!("launch.{}.label", l.id), Some(&l.label));
+        }
+        for p in self.prerequisites.iter().filter(|p| !p.required) {
+            push(format!("prereqs.{}.name", p.id), Some(&p.name));
+        }
+        out
     }
 
     /// Load and parse an `installer.toml` from disk.
@@ -475,6 +629,23 @@ pub struct SetupOption {
     /// Whether the user must satisfy this option to proceed.
     #[serde(default)]
     pub required: bool,
+    /// For `license`: translated versions of `documents`, one entry per language. Entry N
+    /// of an entry's list translates `documents[N]`. A language with no entry falls back
+    /// along its chain (`pt-BR` → `pt`), then to a `<name>_<LANG>.<ext>` sibling in the
+    /// package, then to the English `documents`.
+    ///
+    /// A list of tables rather than a map keyed by language, so the emitted schema can
+    /// name every key: a map's keys are data, and `bpkg schema` would report `fr` as an
+    /// unknown field.
+    #[serde(default)]
+    pub localized_documents: Vec<LocalizedDocuments>,
+    /// The `[[setup_group]]` this option is listed under. Ungrouped options come first.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// The option makes the app send data off the machine when on. Shown as a badge next
+    /// to the label, so nobody has to read the description to find out.
+    #[serde(default)]
+    pub sends_data: bool,
     /// Which key(s) in handoff.settings this option writes to. A `license` option
     /// may map to several keys (e.g. privacy_accepted + tos_accepted).
     #[serde(default)]
@@ -508,6 +679,15 @@ pub struct SetupChoicePreview {
     /// half-filled entry renders as a dull tile rather than an invisible one.
     #[serde(default)]
     pub colors: Vec<String>,
+}
+
+/// One language's version of a `license` option's documents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalizedDocuments {
+    /// Language tag, e.g. `fr` or `pt-BR`.
+    pub lang: String,
+    /// Same length and order as the option's `documents`.
+    pub documents: Vec<String>,
 }
 
 /// `maps_to` accepts either a single key or a list of keys.
@@ -655,6 +835,12 @@ fn maximal() -> InstallerConfig {
             documents: vec![],
             require_scroll: false,
             required: false,
+            localized_documents: vec![LocalizedDocuments {
+                lang: String::new(),
+                documents: vec![],
+            }],
+            group: None,
+            sends_data: false,
             maps_to: MapsTo::None,
         }],
         security: Some(Security {
@@ -703,6 +889,15 @@ fn maximal() -> InstallerConfig {
             danger: None,
             shadow: None,
         },
+        i18n: Some(I18nConfig {
+            default: None,
+            locales_dir: None,
+        }),
+        setup_groups: vec![SetupGroup {
+            id: String::new(),
+            label: String::new(),
+            description: None,
+        }],
     }
 }
 
@@ -1139,6 +1334,82 @@ mod tests {
         let toml =
             recipe_with("[[prerequisite]]\nid = \"p\"\nname = \"P\"\ncheck_command = \"py\"\n");
         assert!(InstallerConfig::from_toml(&toml).is_ok());
+    }
+
+    // ── Translations ─────────────────────────────────────────────────────────────
+
+    fn bmm_catalogue(code: &str) -> crate::i18n::Catalog {
+        let path = format!(
+            "{}/../../examples/bmm/installer-locales/{code}.toml",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        crate::i18n::Catalog::parse(code, &text).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// The BMM installer ships in English and French, complete. English is this file plus
+    /// en.toml for what it cannot say; French is fr.toml for everything. A new option
+    /// without its French text fails here instead of appearing in English on a French
+    /// screen, next to French buttons.
+    #[test]
+    fn the_bmm_catalogues_cover_every_product_string() {
+        let cfg = InstallerConfig::load(BMM_MANIFEST).unwrap();
+        let en = bmm_catalogue("en");
+        let fr = bmm_catalogue("fr");
+        let keys = cfg.translatable_keys();
+        assert!(keys.len() > 40, "suspiciously few keys: {}", keys.len());
+
+        let no_english: Vec<_> = keys
+            .iter()
+            .filter(|(k, en_text)| en_text.is_none() && en.get(k).is_none())
+            .map(|(k, _)| k)
+            .collect();
+        assert!(
+            no_english.is_empty(),
+            "no English text anywhere for {no_english:?}"
+        );
+
+        let no_french: Vec<_> = keys
+            .iter()
+            .filter(|(k, _)| fr.get(k).is_none())
+            .map(|(k, _)| k)
+            .collect();
+        assert!(no_french.is_empty(), "fr.toml is missing {no_french:?}");
+
+        // And nothing in either file that the config does not have: a key for a renamed
+        // option would be dead text that looks like a translation.
+        for cat in [&en, &fr] {
+            let stray: Vec<_> = cat
+                .keys()
+                .filter(|k| !keys.iter().any(|(kk, _)| kk == k))
+                .collect();
+            assert!(
+                stray.is_empty(),
+                "{}.toml has keys the config does not: {stray:?}",
+                cat.code
+            );
+        }
+    }
+
+    #[test]
+    fn i18n_fields_are_validated_at_load() {
+        let base = "[app]\nid = \"x\"\nname = \"X\"\nversion = \"1.0.0\"\npublisher = \"P\"\n";
+        let bad_dir = format!("{base}[i18n]\nlocales_dir = \"../escape\"\n");
+        assert!(InstallerConfig::from_toml(&bad_dir).is_err());
+        let bad_default = format!("{base}[i18n]\ndefault = \"not a tag\"\n");
+        assert!(InstallerConfig::from_toml(&bad_default).is_err());
+        let uneven = format!(
+            "{base}[[setup_option]]\nid = \"legal\"\ntype = \"license\"\nlabel_key = \"l\"\n\
+             documents = [\"A.md\", \"B.md\"]\n\
+             localized_documents = [{{ lang = \"fr\", documents = [\"A_FR.md\"] }}]\n"
+        );
+        assert!(InstallerConfig::from_toml(&uneven).is_err());
+        let orphan_group = format!(
+            "{base}[[setup_option]]\nid = \"o\"\ntype = \"bool\"\nlabel_key = \"o\"\ngroup = \"nope\"\n"
+        );
+        assert!(InstallerConfig::from_toml(&orphan_group).is_err());
+        let fine = format!("{base}[i18n]\ndefault = \"pt-BR\"\nlocales_dir = \"loc\"\n");
+        assert!(InstallerConfig::from_toml(&fine).is_ok());
     }
 
     #[test]

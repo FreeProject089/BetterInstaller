@@ -1,0 +1,22 @@
+# Better Mods Manager installer: English strings installer.toml has no field for.
+#
+# Labels and descriptions are written in English in installer.toml itself; this file only
+# holds what a TOML option cannot say, the readable label of each `select` choice. Without
+# it the dropdowns would show raw values ("full", "network").
+#
+# Copied into the signed package by build-installer.ps1 (installer-locales/).
+
+[options.language.choices]
+auto = "Same as the installer"
+en = "English"
+fr = "Français"
+
+[options.system_access.choices]
+full = "Full access"
+limited = "Limited"
+
+[options.csp_preset.choices]
+none = "Default"
+network = "Pin the network"
+strict = "Strict"
+custom = "Custom"

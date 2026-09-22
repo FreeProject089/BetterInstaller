@@ -96,7 +96,7 @@ docker run --rm -e CARGO_TARGET_DIR=/tmp/t -v "${PWD}:/app" betterinstaller-dev
 | Vérif des prérequis + auto-téléchargement/-install des manquants | ✅ |
 | **Update avec rollback atomique** (local + manifest distant) | ✅ |
 | **Patches delta binaires** (bsdiff — patch ~1 % du nouveau fichier) | ✅ |
-| i18n (en / fr) pour l'UI | ✅ |
+| i18n : toute langue par simple ajout d'un fichier catalogue, documents légaux par langue, sélecteur de langue à l'exécution (EN + FR livrés) | ✅ |
 | Packing par composants (`[[components]].paths` → mapping par fichier) | ✅ |
 | Désinstalleur auto-suppressif | ✅ |
 | Backend Linux (raccourcis `.desktop` + protocole `xdg-mime`) | ✅ |
@@ -104,8 +104,9 @@ docker run --rm -e CARGO_TARGET_DIR=/tmp/t -v "${PWD}:/app" betterinstaller-dev
 | CI (GitHub Actions : fmt + clippy + test + release, Windows & Linux) | ✅ |
 
 **Pas encore** (honnête, mineur) : enregistrement runtime du protocole macOS (il est
-déclaré dans l'Info.plist du `.app`, pas au runtime) ; changement de langue réactif en
-cours de flux. SmartScreen requiert toujours Authenticode (Ed25519 ne couvre que
+déclaré dans l'Info.plist du `.app`, pas au runtime) ; inversion de la mise en page pour
+les langues de droite à gauche (le texte RTL est aligné à droite, la mise en page n'est pas
+inversée). SmartScreen requiert toujours Authenticode (Ed25519 ne couvre que
 l'intégrité du paquet, pas la réputation Windows).
 
 ---

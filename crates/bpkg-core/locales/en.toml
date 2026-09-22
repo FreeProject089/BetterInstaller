@@ -1,0 +1,153 @@
+# BetterInstaller engine strings: English, the reference catalogue.
+#
+# Every other catalogue in this folder is checked against this one (i18n tests): a key
+# present here and missing elsewhere falls back to English at runtime, and the test says so.
+#
+# Adding a language = adding `<code>.toml` next to this file (e.g. `de.toml`, `pt-BR.toml`).
+# No code change: build.rs embeds every file in this folder. A product can also ship a
+# catalogue inside its signed package (see `[i18n]` in GUIDE.md), with no engine rebuild.
+#
+# Placeholders in braces are filled in by the engine: {app} {publisher} {version}
+# {installed_version} {new_version} are always available; others are listed per key.
+
+[meta]
+name = "English"        # shown in the language picker, in the language itself
+direction = "ltr"       # "ltr" or "rtl"
+
+[ui]
+next = "Next"
+back = "Back"
+install = "Install"
+finish = "Finish"
+browse = "Browse…"
+cancel = "Cancel"
+language = "Language"
+choose_folder = "Choose install location"
+
+[steps]
+welcome = "Welcome"
+terms = "Terms"
+setup = "Setup"
+install = "Install"
+done = "Done"
+repair = "Repair"
+update = "Update"
+uninstall = "Uninstall"
+
+[welcome]
+title = "Install {app}"
+version = "Version {version}"
+location = "Install location"
+components = "Components"
+required = "required"
+
+[signature]
+preview = "Unsigned (developer preview)"
+unreadable = "Package unreadable"
+unsigned = "Unsigned package  ·  publisher: {publisher}"
+verified = "Signed & verified  ·  {publisher}"
+signed = "Signed  ·  {publisher}"
+invalid = "Signature INVALID. Do not trust this package."
+
+[prereq]
+missing_download = "Not found on this PC. Downloaded during installation."
+missing_install = "Not found on this PC. Downloaded and installed alongside the app."
+
+[legal]
+# {doc}: the document title
+accept = "I have read and accept the {doc}."
+scroll_hint = "Scroll to the end to accept."
+# {n} {total}
+counter = "Document {n} / {total}"
+# {language}: the name of the language that was asked for
+fallback_notice = "This document is not available in {language}. The English version is shown."
+
+[docs]
+tos = "Terms of Service"
+privacy = "Privacy Policy"
+license = "License"
+eula = "License Agreement"
+
+[setup]
+title = "Configuration"
+hint = "These choices are applied the first time the app starts. Every one of them can be changed later in the app's settings."
+accept = "I accept"
+on = "On"
+off = "Off"
+# {value}: the default, already translated
+default = "Default: {value}"
+changed = "Changed"
+reset = "Restore defaults"
+sends_data = "Sends data"
+general = "General"
+
+[progress]
+preparing = "Preparing…"
+installing = "Installing…"
+# {pct} {file}
+installing_file = "Installing…  {pct}%  ·  {file}"
+installing_pct = "Installing…  {pct}%"
+# {name}
+prerequisite = "Installing prerequisite: {name}…"
+closing = "Closing the running app…"
+finishing = "Finishing up…"
+repairing = "Repairing…"
+updating = "Updating…"
+uninstalling = "Uninstalling…"
+downloading = "Downloading v{new_version}…"
+
+[done]
+launch_now = "Launch now"
+is_installed = "{app} is installed"
+installed_title = "{app} was installed"
+# {n} {dir}
+installed_message = "Installed {n} files to {dir}"
+install_failed_title = "Installation failed"
+# {error}
+install_failed_message = "Install failed: {error}"
+# {path}
+handoff_written = "First-run settings written to {path}"
+# {error}
+handoff_failed = "Could not write the first-run settings: {error}"
+final_save_failed = "Could not save that choice. The one picked during setup stands."
+repaired_title = "{app} was repaired"
+# {n} {dir}
+repaired_message = "Repaired: {n} files in {dir}"
+repair_failed_title = "Repair failed"
+repair_nothing = "Nothing to repair: no package is embedded."
+updated_title = "{app} was updated"
+updated_to_title = "{app} was updated to v{new_version}"
+# {n} {dir}
+updated_message = "Updated: {n} files in {dir}"
+updated_to_message = "Updated to v{new_version}: {n} files in {dir}"
+update_failed_title = "Update failed"
+update_nothing = "No update package available."
+uninstalled_title = "{app} was uninstalled"
+uninstalled_message = "{app} and its files were removed."
+uninstall_failed_title = "Uninstall failed"
+
+[final]
+title = "Pick a look"
+apply = "Apply"
+skip = "Keep current"
+
+[maintenance]
+installed = "Installed"
+installed_version = "Installed  ·  v{installed_version}"
+update_available = "Update available: v{installed_version}  →  v{new_version}"
+question = "What would you like to do?"
+update = "Update"
+repair = "Repair"
+uninstall = "Uninstall"
+confirm_uninstall = "Uninstall {app}? This removes all installed files."
+confirm_update = "Update {app} to v{new_version}?"
+confirm_repair = "Repair {app}? Files will be re-verified and restored."
+yes_uninstall = "Yes, uninstall"
+yes_update = "Yes, update"
+yes_repair = "Yes, repair"
+
+[errors]
+# {dir} {error}
+not_writable = "Can't write to {dir}: {error}\nPick a folder you can write to (the default is under your user profile). Installing into Program Files needs an administrator (elevated) installer."
+signature_invalid = "The package signature is INVALID. Refusing to install."
+signature_missing = "The package is not signed, but a signature is required."

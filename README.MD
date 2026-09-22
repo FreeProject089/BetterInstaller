@@ -99,7 +99,7 @@ docker build -t betterinstaller-dev . && docker run --rm -e CARGO_TARGET_DIR=/tm
 | Prerequisites check + auto-download/-install of missing ones | ✅ |
 | **Update with atomic rollback** (local + remote manifest) | ✅ |
 | **Binary delta patches** (bsdiff — patches ~1% of the new file) | ✅ |
-| i18n (en / fr) for the UI chrome | ✅ |
+| i18n: any language by adding a catalogue file, per-language legal documents, runtime language picker (EN + FR shipped) | ✅ |
 | Component-aware packing (`[[components]].paths` → per-file mapping) | ✅ |
 | Self-deleting uninstaller | ✅ |
 | Linux backend (`.desktop` shortcuts, `xdg-mime` protocol, install receipt) | ✅ |
@@ -108,7 +108,7 @@ docker build -t betterinstaller-dev . && docker run --rm -e CARGO_TARGET_DIR=/tm
 | CI (GitHub Actions: fmt + clippy + test + release, Windows & Linux) | ✅ |
 
 **Not yet** (honest, minor): macOS runtime protocol registration (it's declared in the `.app`
-Info.plist, not at runtime); reactive UI language switch mid-flow. The macOS backend is
+Info.plist, not at runtime); right-to-left layout mirroring (RTL text is right-aligned, the layout is not mirrored). The macOS backend is
 written and compiles, but has never been RUN — there is no macOS in the CI matrix, so read
 that row as compiled, not exercised. SmartScreen still needs
 Authenticode (Ed25519 only covers package integrity, not Windows reputation).
@@ -130,7 +130,7 @@ crates/
       embed.rs   # self-extracting stamp / read
       update.rs  # update + rollback
       prereq.rs  # prerequisite checks
-      i18n.rs    # en/fr UI strings
+      i18n.rs    # runtime catalogues (locales/<code>.toml + product ones), fallback chain
   bpkg-cli/    # the `bpkg` packaging tool
   installer/   # the Slint GUI binary (`betterinstaller`)
     ui/main.slint

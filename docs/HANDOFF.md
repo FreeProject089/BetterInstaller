@@ -43,8 +43,9 @@ File name: `[handoff].file` (default `installer-handoff.json`).
 
 `settings` is built from `[[setup_option]]` entries: each option's value is written
 to its `maps_to` key(s) with the leading `settings.` stripped. A `select` left on
-the `"auto"` sentinel is resolved to the detected OS value first (so the app always
-gets a concrete choice).
+the `"auto"` sentinel is resolved first to the language the installer is shown in (the
+OS language unless the user picked another), taking the first of its fallback chain found
+in `choices` (so the app always gets a concrete choice).
 
 ## What the app must do (once, on first launch)
 
@@ -88,7 +89,7 @@ maps_to     = "settings.telemetry"          # → settings.telemetry in the JSON
 id          = "language"
 type        = "select"
 label       = "Language"
-choices     = ["auto", "en", "fr"]          # "auto" → resolved to the detected OS language
+choices     = ["auto", "en", "fr"]          # "auto" → resolved to the installer's language
 default     = "auto"
 maps_to     = "settings.language"
 

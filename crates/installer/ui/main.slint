@@ -18,6 +18,20 @@ export global Pal {
     in-out property <color> shadow: #04060b;
 }
 
+// Every string on screen that is not product data comes through here.
+//
+// `tr(key, rev)` is answered by Rust from the runtime catalogues (bpkg-core/src/i18n.rs).
+// `rev` is not used by the lookup: passing it makes every binding that shows a string
+// depend on it, so bumping it after a language switch re-evaluates all of them at once.
+// That is what lets the language change mid-flow without rebuilding the window.
+export global I18n {
+    in property <int> rev: 0;
+    // Right-to-left language: text is right-aligned. The layout itself is NOT mirrored
+    // (Slint lays out left to right); see the note at the entry point in main.rs.
+    in property <bool> rtl: false;
+    pure callback tr(string, int) -> string;
+}
+
 // One tile of a `swatch` option: a value, a name, and the four colors the little
 // fake window in the tile is painted with.
 export struct SwatchRow {
@@ -34,10 +48,23 @@ export struct OptionRow {
     kind: string,
     label: string,
     description: string,
+    // For `select`: the values (written to the handoff) and, index for index, what the
+    // user reads. The dropdown shows the labels and reports an index, so a translated
+    // label can never leak into the handoff as a value.
     choices: [string],
+    choice-labels: [string],
+    choice-index: int,
     bool-value: bool,
     string-value: string,
     previews: [SwatchRow],
+    // "Default: On", already translated. Shown on every row so the default is visible
+    // without having to remember it or reset the page.
+    default-label: string,
+    is-default: bool,
+    sends-data: bool,
+    // Non-empty on the first row of a group: the heading drawn above that row.
+    header: string,
+    header-description: string,
 }
 
 export struct CompRow {
@@ -150,6 +177,10 @@ component BrutalCheck inherits Rectangle {
             font-size: 13px;
             font-weight: 600;
             vertical-alignment: center;
+            // Elided, not clipped: a French label is often a third longer than the
+            // English one it replaced, and a fixed 26px row cannot grow to wrap.
+            overflow: elide;
+            horizontal-stretch: 1;
         }
     }
     ta := TouchArea {
@@ -251,7 +282,6 @@ component WelcomePage inherits VerticalLayout {
     in property <string> app-name;
     in property <string> app-version;
     in property <string> publisher;
-    in property <string> loc-label: "Install location";
     in property <bool> signed: false;
     in property <string> signature-status;
     in property <[CompRow]> components;
@@ -259,8 +289,8 @@ component WelcomePage inherits VerticalLayout {
     callback component-toggled(string, bool);
     callback browse();
     spacing: 10px;
-    Text { text: "Install " + app-name; font-size: 26px; font-weight: 900; color: white; }
-    Text { text: "Version " + app-version + (publisher != "" ? "  ·  " + publisher : ""); font-size: 13px; color: Pal.dim; }
+    Text { text: I18n.tr("welcome.title", I18n.rev); font-size: 26px; font-weight: 900; color: white; wrap: word-wrap; }
+    Text { text: I18n.tr("welcome.version", I18n.rev) + (publisher != "" ? "  ·  " + publisher : ""); font-size: 13px; color: Pal.dim; }
 
     // Signature / publisher trust badge.
     Rectangle {
@@ -290,7 +320,7 @@ component WelcomePage inherits VerticalLayout {
     }
 
     Rectangle { height: 6px; }
-    Text { text: loc-label; font-size: 12px; font-weight: 700; color: Pal.dim; }
+    Text { text: I18n.tr("welcome.location", I18n.rev); font-size: 12px; font-weight: 700; color: Pal.dim; }
     HorizontalLayout {
         spacing: 10px;
         Rectangle {
@@ -311,10 +341,10 @@ component WelcomePage inherits VerticalLayout {
                 }
             }
         }
-        BrutalBtn { text: "Browse…"; min-width: 96px; clicked => { root.browse(); } }
+        BrutalBtn { text: I18n.tr("ui.browse", I18n.rev); min-width: 96px; clicked => { root.browse(); } }
     }
     if root.components.length > 0 : Text {
-        text: "Components"; font-size: 12px; font-weight: 700; color: Pal.dim;
+        text: I18n.tr("welcome.components", I18n.rev); font-size: 12px; font-weight: 700; color: Pal.dim;
     }
     ScrollView {
         vertical-stretch: 1;
@@ -351,7 +381,7 @@ component WelcomePage inherits VerticalLayout {
                         HorizontalLayout {
                             spacing: 8px;
                             Text { text: c.name; font-size: 13px; font-weight: 700; color: white; vertical-alignment: center; }
-                            if c.required : Text { text: "required"; font-size: 10px; font-weight: 700; color: Pal.accent; vertical-alignment: center; }
+                            if c.required : Text { text: I18n.tr("welcome.required", I18n.rev); font-size: 10px; font-weight: 700; color: Pal.accent; vertical-alignment: center; }
                             Rectangle { horizontal-stretch: 1; }
                             Text { text: c.size; font-size: 11px; color: Pal.dim; vertical-alignment: center; }
                         }
@@ -507,77 +537,174 @@ component SwatchGrid inherits Rectangle {
     }
 }
 
+// A small pill next to an option's label ("Sends data", "Changed").
+component Tag inherits Rectangle {
+    in property <string> text;
+    in property <color> tint: Pal.accent;
+    height: 18px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.tint;
+    background: transparent;
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        Text {
+            text: root.text;
+            color: root.tint;
+            font-size: 10px;
+            font-weight: 800;
+            vertical-alignment: center;
+            wrap: no-wrap;
+        }
+    }
+}
+
 component SetupPage inherits VerticalLayout {
     in property <[OptionRow]> options;
-    in property <string> title: "Configuration";
-    in property <string> hint;
-    in property <string> accept-label: "I accept";
     callback option-bool-changed(string, bool);
     callback option-select-changed(string, string);
+    callback option-choice-picked(string, int);
+    callback reset();
     spacing: 8px;
-    Text { text: title; font-size: 22px; font-weight: 900; color: white; }
-    Text { text: hint; font-size: 12px; color: Pal.dim; wrap: word-wrap; }
-    Rectangle { height: 6px; }
+    HorizontalLayout {
+        spacing: 12px;
+        Text {
+            text: I18n.tr("setup.title", I18n.rev);
+            font-size: 22px; font-weight: 900; color: white;
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            horizontal-alignment: I18n.rtl ? right : left;
+        }
+        // Undo every change on this page in one click. Legal acceptance is not an option
+        // here and is never touched by it.
+        BrutalBtn {
+            height: 34px;
+            min-width: 0px;
+            text: I18n.tr("setup.reset", I18n.rev);
+            clicked => { root.reset(); }
+        }
+    }
+    Text {
+        text: I18n.tr("setup.hint", I18n.rev);
+        font-size: 12px; color: Pal.dim; wrap: word-wrap;
+        horizontal-alignment: I18n.rtl ? right : left;
+    }
+    Rectangle { height: 4px; }
     ScrollView {
         vertical-stretch: 1;
         VerticalLayout {
-            spacing: 12px;
-            padding-right: 8px;
-            padding-bottom: 4px;
-            // The card is a Rectangle with a SINGLE layout child so its height is
-            // driven by the content (a sibling TouchArea breaks that propagation and
-            // clips wrapped descriptions — that was the bug).
-            for opt in options : Rectangle {
-                background: Pal.panel;
-                border-radius: 7px;
-                border-width: 2px;
-                border-color: Pal.border;
-                drop-shadow-offset-x: 3px;
-                drop-shadow-offset-y: 3px;
-                drop-shadow-blur: 0px;
-                drop-shadow-color: Pal.shadow;
-                HorizontalLayout {
-                    // Full-height accent stripe (in-layout so it spans the card).
-                    Rectangle {
-                        width: 5px;
-                        background: Pal.accent;
-                        border-top-left-radius: 5px;
-                        border-bottom-left-radius: 5px;
+            spacing: 10px;
+            padding-right: 12px;
+            padding-bottom: 6px;
+            for opt in options : VerticalLayout {
+                spacing: 8px;
+                // Group heading, drawn above the first option of each group. Part of the
+                // row rather than a row of its own so the model stays one entry per option
+                // and every callback keeps addressing options by id.
+                if opt.header != "" : VerticalLayout {
+                    padding-top: 10px;
+                    spacing: 2px;
+                    Text {
+                        text: opt.header;
+                        font-size: 15px; font-weight: 900; color: white;
+                        wrap: word-wrap;
+                        horizontal-alignment: I18n.rtl ? right : left;
                     }
+                    if opt.header-description != "" : Text {
+                        text: opt.header-description;
+                        font-size: 11px; color: Pal.dim; wrap: word-wrap;
+                        horizontal-alignment: I18n.rtl ? right : left;
+                    }
+                    Rectangle { height: 2px; background: Pal.border; }
+                }
+                // The card is a Rectangle with a SINGLE layout child so its height is
+                // driven by the content (a sibling TouchArea breaks that propagation and
+                // clips wrapped descriptions — that was the bug).
+                Rectangle {
+                    background: Pal.panel;
+                    border-radius: 7px;
+                    border-width: 2px;
+                    border-color: opt.is-default ? Pal.border : Pal.accent-dark;
+                    drop-shadow-offset-x: 3px;
+                    drop-shadow-offset-y: 3px;
+                    drop-shadow-blur: 0px;
+                    drop-shadow-color: Pal.shadow;
                     HorizontalLayout {
-                        padding: 15px;
-                        spacing: 14px;
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 5px;
-                            alignment: start;
-                            Text { text: opt.label; font-size: 14px; font-weight: 800; color: white; }
-                            if opt.description != "" : Text {
-                                text: opt.description; font-size: 11px; color: Pal.dim; wrap: word-wrap;
-                            }
-                            if opt.kind == "license" : BrutalCheck {
-                                text: accept-label;
-                                checked: opt.bool-value;
-                                toggled => { option-bool-changed(opt.id, self.checked); }
-                            }
-                            // A swatch is too wide to sit beside its label, so it
-                            // goes under it and spans the card.
-                            if opt.kind == "swatch" : SwatchGrid {
-                                rows: opt.previews;
-                                value: opt.string-value;
-                                picked(v) => { option-select-changed(opt.id, v); }
-                            }
+                        // Full-height accent stripe (in-layout so it spans the card).
+                        Rectangle {
+                            width: 5px;
+                            background: opt.sends-data ? #d98a1c : Pal.accent;
+                            border-top-left-radius: 5px;
+                            border-bottom-left-radius: 5px;
                         }
-                        if opt.kind == "bool" : BrutalCheck {
-                            checked: opt.bool-value;
-                            toggled => { option-bool-changed(opt.id, self.checked); }
-                        }
-                        if opt.kind == "select" : ComboBox {
-                            width: 150px;
-                            height: 36px;
-                            model: opt.choices;
-                            current-value: opt.string-value;
-                            selected(v) => { option-select-changed(opt.id, v); }
+                        HorizontalLayout {
+                            padding: 13px;
+                            spacing: 14px;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 5px;
+                                alignment: start;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    // Wraps: a label is never cut at the card's edge, in any
+                                    // language.
+                                    Text {
+                                        text: opt.label;
+                                        font-size: 14px; font-weight: 800; color: white;
+                                        wrap: word-wrap;
+                                        horizontal-stretch: 1;
+                                        horizontal-alignment: I18n.rtl ? right : left;
+                                    }
+                                    if opt.sends-data : Tag {
+                                        text: I18n.tr("setup.sends_data", I18n.rev);
+                                        tint: #f0a53a;
+                                    }
+                                }
+                                if opt.description != "" : Text {
+                                    text: opt.description; font-size: 11px; color: Pal.dim; wrap: word-wrap;
+                                    horizontal-alignment: I18n.rtl ? right : left;
+                                }
+                                // The default, always on screen, and whether this row has
+                                // moved away from it.
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    if opt.default-label != "" : Text {
+                                        text: opt.default-label;
+                                        font-size: 10px; font-weight: 700; color: Pal.dim;
+                                        vertical-alignment: center;
+                                    }
+                                    if !opt.is-default : Tag { text: I18n.tr("setup.changed", I18n.rev); }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                // A swatch is too wide to sit beside its label, so it
+                                // goes under it and spans the card.
+                                if opt.kind == "swatch" : SwatchGrid {
+                                    rows: opt.previews;
+                                    value: opt.string-value;
+                                    picked(v) => { option-select-changed(opt.id, v); }
+                                }
+                            }
+                            if opt.kind == "bool" : VerticalLayout {
+                                alignment: center;
+                                BrutalCheck {
+                                    width: 22px;
+                                    checked: opt.bool-value;
+                                    toggled => { option-bool-changed(opt.id, self.checked); }
+                                }
+                            }
+                            // Shows labels, reports an index: the value written is always
+                            // one of `choices`, whatever language the label is in.
+                            if opt.kind == "select" : VerticalLayout {
+                                alignment: center;
+                                ComboBox {
+                                    min-width: 200px;
+                                    height: 36px;
+                                    model: opt.choice-labels;
+                                    current-index: opt.choice-index;
+                                    selected => { option-choice-picked(opt.id, self.current-index); }
+                                }
+                            }
                         }
                     }
                 }
@@ -666,7 +793,7 @@ component CompletePage inherits VerticalLayout {
     }
     Text {
         text: root.result-title != "" ? root.result-title
-            : (root.success ? app-name + " is installed" : "Installation failed");
+            : (root.success ? I18n.tr("done.is_installed", I18n.rev) : I18n.tr("done.install_failed_title", I18n.rev));
         font-size: 21px; font-weight: 900; color: white; horizontal-alignment: center;
     }
     Text { text: result-message; font-size: 12px; color: Pal.dim; horizontal-alignment: center; wrap: word-wrap; }
@@ -680,7 +807,7 @@ component CompletePage inherits VerticalLayout {
         border-radius: 6px; border-width: 2px; border-color: Pal.border;
         VerticalLayout {
             padding: 14px; spacing: 10px;
-            Text { text: "Launch now"; font-size: 12px; font-weight: 700; color: Pal.dim; }
+            Text { text: I18n.tr("done.launch_now", I18n.rev); font-size: 12px; font-weight: 700; color: Pal.dim; }
             for it in root.launch-items : BrutalCheck {
                 text: it.label;
                 checked: it.checked;
@@ -697,7 +824,10 @@ component LegalPage inherits VerticalLayout {
     in property <int> index;
     in property <int> count;
     in property <string> accept-text;
-    in property <string> scroll-hint: "Scroll to the end to accept.";
+    // "Document 1 / 2", worded by Rust.
+    in property <string> counter;
+    // Non-empty when this document is not in the language the installer is shown in.
+    in property <string> notice;
     in property <bool> require-scroll: false;
     in-out property <bool> accepted;
     callback accept-toggled(bool);
@@ -718,8 +848,24 @@ component LegalPage inherits VerticalLayout {
     // Once accepted, stay unlocked: scrolling back up to re-read must not un-tick it.
     property <bool> may-accept: !root.require-scroll || root.at-end || root.accepted;
     HorizontalLayout {
-        Text { text: doc-title; font-size: 22px; font-weight: 900; color: white; horizontal-stretch: 1; }
-        Text { text: "Doc " + (index + 1) + " / " + count; font-size: 12px; font-weight: 700; color: Pal.dim; vertical-alignment: center; }
+        Text { text: doc-title; font-size: 22px; font-weight: 900; color: white; horizontal-stretch: 1; horizontal-alignment: I18n.rtl ? right : left; }
+        Text { text: root.counter; font-size: 12px; font-weight: 700; color: Pal.dim; vertical-alignment: center; }
+    }
+    // Saying the document is in another language is part of consent: someone accepting
+    // text they may not read should at least be told that is what is happening.
+    if root.notice != "" : Rectangle {
+        background: #2b2412;
+        border-radius: 4px;
+        border-width: 2px;
+        border-color: #d98a1c;
+        HorizontalLayout {
+            padding: 8px;
+            Text {
+                text: root.notice;
+                color: #f0c27a; font-size: 12px; font-weight: 700;
+                wrap: word-wrap;
+            }
+        }
     }
     Rectangle {
         vertical-stretch: 1;
@@ -764,6 +910,7 @@ component LegalPage inherits VerticalLayout {
                     }
                     if b.level != 5 : Text {
                         text: b.level == 4 ? "•  " + b.text : b.text;
+                        horizontal-alignment: I18n.rtl ? right : left;
                         font-size: b.level == 1 ? 18px : (b.level == 2 ? 15px : (b.level == 3 ? 13px : 12px));
                         font-weight: (b.level >= 1 && b.level <= 3) ? 800 : 400;
                         color: (b.level >= 1 && b.level <= 3) ? white : Pal.text;
@@ -803,7 +950,7 @@ component LegalPage inherits VerticalLayout {
         // and so into whether the end had been reached. Opacity is not a layout property,
         // so nothing here can influence the measurement it reacts to.
         Text {
-            text: root.scroll-hint;
+            text: I18n.tr("legal.scroll_hint", I18n.rev);
             opacity: root.may-accept ? 0 : 1;
             font-size: 11px;
             color: Pal.dim;
@@ -828,7 +975,7 @@ component MaintenancePage inherits VerticalLayout {
     spacing: 12px;
     Text { text: app-name; font-size: 26px; font-weight: 900; color: white; }
     Text {
-        text: "Installed" + (root.installed-version != "" ? "  ·  v" + root.installed-version : "");
+        text: root.installed-version != "" ? I18n.tr("maintenance.installed_version", I18n.rev) : I18n.tr("maintenance.installed", I18n.rev);
         font-size: 13px; color: Pal.dim;
     }
     Text { text: location; font-size: 12px; color: Pal.text; wrap: word-wrap; }
@@ -841,7 +988,7 @@ component MaintenancePage inherits VerticalLayout {
         HorizontalLayout {
             padding-left: 10px; padding-right: 12px; spacing: 8px; alignment: start;
             Text {
-                text: "Update available: v" + root.installed-version + "  →  v" + root.new-version;
+                text: I18n.tr("maintenance.update_available", I18n.rev);
                 color: #8be0ab; font-size: 12px; font-weight: 700; vertical-alignment: center;
             }
         }
@@ -850,13 +997,13 @@ component MaintenancePage inherits VerticalLayout {
 
     if root.pending == "" : VerticalLayout {
         spacing: 12px;
-        Text { text: "What would you like to do?"; font-size: 13px; font-weight: 700; color: Pal.dim; }
+        Text { text: I18n.tr("maintenance.question", I18n.rev); font-size: 13px; font-weight: 700; color: Pal.dim; }
         HorizontalLayout {
             spacing: 12px;
             // Update only appears when a newer version is bundled.
-            if root.update-available : BrutalBtn { text: "Update"; primary: true; clicked => { root.pending = "update"; } }
-            BrutalBtn { text: "Repair"; primary: !root.update-available; clicked => { root.pending = "repair"; } }
-            BrutalBtn { text: "Uninstall"; clicked => { root.pending = "uninstall"; } }
+            if root.update-available : BrutalBtn { text: I18n.tr("maintenance.update", I18n.rev); primary: true; clicked => { root.pending = "update"; } }
+            BrutalBtn { text: I18n.tr("maintenance.repair", I18n.rev); primary: !root.update-available; clicked => { root.pending = "repair"; } }
+            BrutalBtn { text: I18n.tr("maintenance.uninstall", I18n.rev); clicked => { root.pending = "uninstall"; } }
             Rectangle { horizontal-stretch: 1; }
         }
     }
@@ -864,17 +1011,17 @@ component MaintenancePage inherits VerticalLayout {
         spacing: 14px;
         Text {
             text: root.pending == "uninstall"
-                ? "Uninstall " + root.app-name + "?  This removes all installed files."
+                ? I18n.tr("maintenance.confirm_uninstall", I18n.rev)
                 : (root.pending == "update"
-                    ? "Update " + root.app-name + " to v" + root.new-version + "?"
-                    : "Repair " + root.app-name + "?  Files will be re-verified and restored.");
+                    ? I18n.tr("maintenance.confirm_update", I18n.rev)
+                    : I18n.tr("maintenance.confirm_repair", I18n.rev));
             font-size: 14px; font-weight: 700; color: Pal.text; wrap: word-wrap;
         }
         HorizontalLayout {
             spacing: 12px;
             BrutalBtn {
-                text: root.pending == "uninstall" ? "Yes, uninstall"
-                    : (root.pending == "update" ? "Yes, update" : "Yes, repair");
+                text: root.pending == "uninstall" ? I18n.tr("maintenance.yes_uninstall", I18n.rev)
+                    : (root.pending == "update" ? I18n.tr("maintenance.yes_update", I18n.rev) : I18n.tr("maintenance.yes_repair", I18n.rev));
                 primary: true;
                 clicked => {
                     if (root.pending == "uninstall") { root.uninstall(); }
@@ -883,7 +1030,7 @@ component MaintenancePage inherits VerticalLayout {
                     root.pending = "";
                 }
             }
-            BrutalBtn { text: "Cancel"; clicked => { root.pending = ""; } }
+            BrutalBtn { text: I18n.tr("ui.cancel", I18n.rev); clicked => { root.pending = ""; } }
             Rectangle { horizontal-stretch: 1; }
         }
     }
@@ -928,7 +1075,8 @@ export component MainWindow inherits Window {
     in property <string> legal-title;
     in property <[MdBlock]> legal-blocks;
     in property <string> legal-accept-text: "I have read and accept this document.";
-    in property <string> legal-scroll-hint: "Scroll to the end to accept.";
+    in property <string> legal-counter;
+    in property <string> legal-notice;
     in property <bool> legal-require-scroll: false;
     in property <int> legal-index: 0;
     in property <int> legal-count: 0;
@@ -948,21 +1096,14 @@ export component MainWindow inherits Window {
     in property <string> final-title: "Pick a look";
     in property <string> final-hint;
     in-out property <string> final-value;
-    in property <string> t-final-apply: "Apply";
-    in property <string> t-final-skip: "Keep current";
     callback final-picked(string);
     callback final-apply();
     callback final-skip();
 
-    in property <string> t-next: "Next";
-    in property <string> t-back: "Back";
-    in property <string> t-install: "Install";
-    in property <string> t-finish: "Finish";
-    in property <string> t-config-title: "Configuration";
-    in property <string> t-config-hint: "These choices are applied on first launch — no setup needed inside the app.";
-    in property <string> t-install-loc: "Install location";
-    in property <string> t-installing: "Installing…";
-    in property <string> t-accept: "I accept";
+    // Native names of the available languages, and which one is showing.
+    in property <[string]> language-names;
+    in property <int> language-index: 0;
+    callback language-picked(int);
 
     callback go-back();
     callback go-next();
@@ -970,6 +1111,8 @@ export component MainWindow inherits Window {
     callback finish();
     callback option-bool-changed(string, bool);
     callback option-select-changed(string, string);
+    callback option-choice-picked(string, int);
+    callback reset-options();
     callback component-toggled(string, bool);
     callback legal-accept-toggled(bool);
     callback open-url(string);
@@ -1046,14 +1189,31 @@ export component MainWindow inherits Window {
                     Rectangle { vertical-stretch: 1; }   // push the steps toward the bottom
                     VerticalLayout {
                         spacing: 16px;
-                        StepItem { label: "Welcome"; index: 0; current: root.page; }
+                        StepItem { label: I18n.tr("steps.welcome", I18n.rev); index: 0; current: root.page; }
                         // Terms + Setup are only part of a fresh install.
-                        if !root.maintenance && root.legal-count > 0 : StepItem { label: "Terms"; index: 1; current: root.page; }
-                        if !root.maintenance : StepItem { label: "Setup"; index: 2; current: root.page; }
+                        if !root.maintenance && root.legal-count > 0 : StepItem { label: I18n.tr("steps.terms", I18n.rev); index: 1; current: root.page; }
+                        if !root.maintenance : StepItem { label: I18n.tr("steps.setup", I18n.rev); index: 2; current: root.page; }
                         // The action step: "Install" for a fresh install, else the
                         // maintenance verb (Repair / Update / Uninstall).
-                        StepItem { label: root.maintenance ? root.maintenance-verb : "Install"; index: 3; current: root.page; }
-                        StepItem { label: "Done"; index: 4; current: root.page; }
+                        StepItem { label: root.maintenance ? root.maintenance-verb : I18n.tr("steps.install", I18n.rev); index: 3; current: root.page; }
+                        StepItem { label: I18n.tr("steps.done", I18n.rev); index: 4; current: root.page; }
+                    }
+                    // The language picker. Offered until the install starts: after that
+                    // the Done page is the only one left, and switching there would
+                    // translate the buttons but not the result already written.
+                    if root.page <= 2 && root.language-names.length > 1 : VerticalLayout {
+                        padding-top: 18px;
+                        spacing: 5px;
+                        Text {
+                            text: I18n.tr("ui.language", I18n.rev);
+                            font-size: 11px; font-weight: 700; color: Pal.dim;
+                        }
+                        ComboBox {
+                            height: 34px;
+                            model: root.language-names;
+                            current-index: root.language-index;
+                            selected => { root.language-picked(self.current-index); }
+                        }
                     }
                 }
             }
@@ -1081,7 +1241,6 @@ export component MainWindow inherits Window {
                             app-name: root.app-name;
                             app-version: root.app-version;
                             publisher: root.publisher;
-                            loc-label: root.t-install-loc;
                             signed: root.signed;
                             signature-status: root.signature-status;
                             components: root.components;
@@ -1095,7 +1254,8 @@ export component MainWindow inherits Window {
                             index: root.legal-index;
                             count: root.legal-count;
                             accept-text: root.legal-accept-text;
-                            scroll-hint: root.legal-scroll-hint;
+                            counter: root.legal-counter;
+                            notice: root.legal-notice;
                             require-scroll: root.legal-require-scroll;
                             accepted: root.legal-accepted;
                             accept-toggled(v) => { root.legal-accept-toggled(v); }
@@ -1103,16 +1263,15 @@ export component MainWindow inherits Window {
                         }
                         if root.page == 2 : SetupPage {
                             options: root.options;
-                            title: root.t-config-title;
-                            hint: root.t-config-hint;
-                            accept-label: root.t-accept;
                             option-bool-changed(id, v) => { root.option-bool-changed(id, v); }
                             option-select-changed(id, v) => { root.option-select-changed(id, v); }
+                            option-choice-picked(id, i) => { root.option-choice-picked(id, i); }
+                            reset => { root.reset-options(); }
                         }
                         if root.page == 3 : ProgressPage {
                             progress: root.progress;
                             progress-label: root.progress-label;
-                            installing-label: root.maintenance ? root.maintenance-verb + "…" : root.t-installing;
+                            installing-label: root.maintenance ? root.maintenance-verb + "…" : I18n.tr("progress.installing", I18n.rev);
                         }
                         if root.page == 4 : CompletePage {
                             app-name: root.app-name;
@@ -1128,21 +1287,21 @@ export component MainWindow inherits Window {
                         spacing: 12px;
                         Rectangle { horizontal-stretch: 1; }
                         if root.page == 1 || root.page == 2 : BrutalBtn {
-                            text: root.t-back;
+                            text: I18n.tr("ui.back", I18n.rev);
                             clicked => { root.go-back(); }
                         }
                         if (root.page == 0 && !root.maintenance) || root.page == 1 : BrutalBtn {
-                            text: root.t-next; primary: true;
+                            text: I18n.tr("ui.next", I18n.rev); primary: true;
                             enabled: root.can-proceed;
                             clicked => { root.go-next(); }
                         }
                         if root.page == 2 : BrutalBtn {
-                            text: root.t-install; primary: true;
+                            text: I18n.tr("ui.install", I18n.rev); primary: true;
                             enabled: root.can-proceed;
                             clicked => { root.install(); }
                         }
                         if root.page == 4 : BrutalBtn {
-                            text: root.t-finish; primary: true;
+                            text: I18n.tr("ui.finish", I18n.rev); primary: true;
                             clicked => { root.finish(); }
                         }
                     }
@@ -1215,11 +1374,11 @@ export component MainWindow inherits Window {
                     spacing: 12px;
                     Rectangle { horizontal-stretch: 1; }
                     BrutalBtn {
-                        text: root.t-final-skip;
+                        text: I18n.tr("final.skip", I18n.rev);
                         clicked => { root.final-skip(); }
                     }
                     BrutalBtn {
-                        text: root.t-final-apply;
+                        text: I18n.tr("final.apply", I18n.rev);
                         primary: true;
                         clicked => { root.final-apply(); }
                     }

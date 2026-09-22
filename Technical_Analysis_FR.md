@@ -116,8 +116,14 @@ via `build.rs` + `slint-build`. `main.rs` câble le flux : stage du paquet embar
 détection/vérif de signature → licence/composants → vérif + extraction sur un thread
 worker avec progression throttlée → raccourcis/registre → fini ; plus la Maintenance
 (Réparer = re-vérif + restaure la même version ; Mise à jour = vérifie le manifeste,
-delta ou complet). `i18n.rs` fournit des chaînes localisées (EN/FR), en phase avec les
-docs bilingues.
+delta ou complet). `i18n.rs` contient les catalogues d'exécution : textes du moteur dans
+`crates/bpkg-core/locales/<code>.toml` (intégrés par `build.rs`), textes du produit dans des
+fichiers `<code>.toml` du paquet signé, fusionnés par langue avec une chaîne de repli (tag
+demandé → langue de base → anglais). Le côté Slint les lit par un seul callback
+`I18n.tr(key, rev)` ; incrémenter `rev` retraduit la fenêtre, et c'est ainsi que le
+sélecteur change de langue en cours de flux. Le `@tr()`/gettext de Slint n'a pas été
+retenu : il compile les traductions dans le binaire et ne voit jamais les textes du
+produit.
 
 ## 9. Build & utilisation (CLI)
 

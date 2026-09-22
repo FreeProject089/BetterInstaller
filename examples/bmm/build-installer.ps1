@@ -87,10 +87,23 @@ foreach ($d in @("_up_", "resources")) {
 }
 # Legal docs at the payload ROOT too — the installer's Terms step reads TOS.md /
 # PRIVACY.md from the package root (separate from the in-app copies under _up_).
-foreach ($doc in @("TOS.md","PRIVACY.md")) {
+# The French pair too: installer.toml's localized_documents names them, and copying only
+# the English ones meant a French installer showed English terms under French buttons.
+# A MISSING one is an error, not a skip: the Terms page would silently fall back to English.
+foreach ($doc in @("TOS.md","PRIVACY.md","TOS_FR.md","PRIVACY_FR.md")) {
     $p = Join-Path $BmmRoot $doc
-    if (Test-Path $p) { Copy-Item $p $payload }
+    if (-not (Test-Path $p)) { throw "legal document not found: $p" }
+    Copy-Item $p $payload
 }
+
+# The installer's own translations (option labels, component names, ...): one <code>.toml
+# per language, read from the SIGNED package at startup ([i18n] locales_dir). Adding a
+# language to the BMM installer = adding a file to examples/bmm/installer-locales.
+$locSrc = Join-Path $PSScriptRoot "installer-locales"
+$locDst = Join-Path $payload "installer-locales"
+New-Item -ItemType Directory -Force $locDst | Out-Null
+Copy-Item (Join-Path $locSrc "*.toml") $locDst
+Write-Host ("      installer languages: {0}" -f ((Get-ChildItem $locDst -Filter *.toml | ForEach-Object { $_.BaseName }) -join ', '))
 
 # App logo for the installer sidebar ([branding].logo = "assets/logo.png").
 #

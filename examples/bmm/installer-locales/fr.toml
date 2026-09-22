@@ -1,0 +1,153 @@
+# Installateur de Better Mods Manager : textes en français.
+#
+# Chaque texte de installer.toml (libellés, descriptions, groupes, composants, lancements,
+# prérequis) a sa clé ici ; le test `the_bmm_catalogues_cover_every_product_string`
+# (bpkg-core, config.rs) échoue si l'une manque. Le sens doit rester celui de l'anglais :
+# les descriptions des options qui envoient des données sont des engagements.
+#
+# Copié dans le paquet signé par build-installer.ps1 (installer-locales/).
+
+[meta]
+name = "Français"
+
+[groups.look]
+label = "Langue et apparence"
+description = "L'apparence de BMM à sa première ouverture."
+
+[groups.privacy]
+label = "Confidentialité et données"
+description = "Ce que BMM peut envoyer hors de ce PC. Les options qui envoient des données portent une marque orange."
+
+[groups.guidance]
+label = "Aide et accompagnement"
+description = "Le tutoriel, la mascotte Tasky et les astuces dans l'application."
+
+[groups.behaviour]
+label = "Comportement"
+
+[groups.content]
+label = "Contenu de départ"
+description = "Contenu supplémentaire copié au premier lancement."
+
+[groups.security]
+label = "Sécurité"
+description = "Limites que BMM s'impose. Les deux se changent ensuite dans Paramètres → Sécurité."
+
+[options.language]
+label = "Langue"
+description = "Langue de l'interface de Better Mods Manager."
+
+[options.language.choices]
+auto = "Comme l'installateur"
+en = "English"
+fr = "Français"
+
+[options.theme]
+label = "Thème"
+description = "Apparence de départ. Tous ces thèmes sont fournis avec BMM, et vous pouvez en changer à tout moment dans les Paramètres."
+
+# Les noms de thèmes sont des noms propres : BMM ne les traduit pas non plus.
+[options.theme.choices]
+bmm-default = "Default"
+bmm-sombre = "Graphite"
+bmm-void = "Pure Black"
+bmm-white = "Daylight"
+bmm-discord = "Indigo"
+bmm-orange = "Ember"
+bmm-spotify = "Neon"
+bmm-brutal = "Newsprint"
+bmm-claude = "Clay"
+bmm-nord = "Arctic"
+bmm-sakura = "Blossom"
+bmm-vscode = "Editor"
+bmm-macos = "Cobalt"
+
+[options.skip_tutorial]
+label = "Passer le tutoriel interactif"
+description = "Ne pas afficher la visite guidée à la première ouverture de BMM."
+
+[options.telemetry]
+label = "Télémétrie d'utilisation et de diagnostic"
+description = "Activée par défaut : décochez pour la désactiver. Si elle est activée, BMM envoie au serveur de télémétrie de BetterCommunity : votre Creator ID (un identifiant stable dérivé de ce PC), votre profil matériel et système, y compris votre adresse IP publique et locale, les pages et fonctions que vous utilisez, des mesures de performance, les journaux d'avertissements et d'erreurs (qui peuvent contenir des chemins de dossiers), un enregistrement masqué de la fenêtre de BMM, et un benchmark hebdomadaire accompagné d'un rapport matériel détaillé (numéros de série, adresses MAC). Jamais le contenu de vos mods ou de vos fichiers, jamais le texte que vous saisissez dans les champs. Liste complète dans la Politique de confidentialité. Paramètres → Confidentialité la désactive à tout moment."
+
+[options.session_recorder]
+label = "Replay de session dans la télémétrie"
+description = "Ne compte que si la télémétrie est activée. Activé par défaut : décochez pour le désactiver. Ajoute à la télémétrie un enregistrement de la fenêtre de BMM (mise en page, clics, défilement, navigation), le texte des champs de saisie étant masqué. Aucune autre fenêtre ni votre écran ne sont jamais enregistrés. Décochez pour garder la télémétrie sans le replay."
+
+[options.discord_rpc]
+label = "Discord Rich Presence"
+description = "Activé par défaut ici (BMM l'a désactivé par défaut) : décochez pour le désactiver. Affiche sur votre profil Discord, à toute personne qui peut le voir : le nom de votre profil BMM actif, le nombre de mods activés, votre Creator ID et un lien qui le contient. Transmis par l'application Discord installée sur ce PC."
+
+[options.tasky_visible]
+label = "Afficher Tasky"
+description = "La mascotte dans le coin de l'application. La masquer la retire aussi de la barre latérale."
+
+[options.tasky_tooltip]
+label = "Bulles d'aide de Tasky"
+description = "Les bulles que Tasky affiche pour expliquer un écran. Indépendant de l'affichage de Tasky lui-même."
+
+[options.tasky_animated]
+label = "Animer Tasky"
+description = "Mouvement au repos. Désactivé, la mascotte reste immobile, ce qui convient avec les réglages de réduction des animations."
+
+[options.tips_visible]
+label = "Astuces dans l'application"
+description = "Les petits encadrés explicatifs dans toute l'interface. Les avertissements ne sont jamais masqués par cette option."
+
+[options.smart_io]
+label = "Smart I/O (recommandé)"
+description = "Accélère l'installation, l'activation et la désactivation des mods en regroupant les opérations disque et en choisissant la stratégie la plus rapide pour votre disque. Activé par défaut."
+
+[options.sound_effects]
+label = "Effets sonores de l'interface"
+description = "Sons discrets de clic et de confirmation dans l'interface. Activé par défaut."
+
+[options.system_access]
+label = "Contrôle d'accès au système"
+description = "L'étendue de l'accès aux fichiers accordé aux opérations de BMM. « Accès complet » est le mode normal. « Limité » cantonne les opérations sur les fichiers aux dossiers que vous configurez : plus sûr, mais certaines actions peuvent demander plus de confirmations. Modifiable ensuite dans les Paramètres."
+
+[options.system_access.choices]
+full = "Accès complet"
+limited = "Limité"
+
+[options.import_themes]
+label = "Importer le pack de thèmes de départ"
+description = "Ajoute une sélection de thèmes prêts à l'emploi à la première ouverture de BMM. Décochez pour ne garder que les thèmes intégrés."
+
+[options.import_languages]
+label = "Importer des packs de langues supplémentaires"
+description = "Installe des traductions de la communauté en plus de l'anglais et du français intégrés (ces deux-là sont toujours installés)."
+
+[options.csp_preset]
+label = "Politique de sécurité du navigateur"
+description = "Des restrictions supplémentaires sur ce que BMM peut charger et exécuter, ajoutées à la politique qu'il embarque : elles ne peuvent que la durcir, jamais l'assouplir. « Par défaut » garde la politique embarquée, qui refuse déjà les scripts inline. « Verrouiller le réseau » empêche l'application de contacter les hôtes dont elle n'a pas besoin ; « Strict » bloque en plus les scripts tiers, ce qui désactive les vidéos YouTube intégrées et le widget de retours BetaHub. Modifiable à tout moment dans Paramètres → Sécurité."
+
+[options.csp_preset.choices]
+none = "Par défaut"
+network = "Verrouiller le réseau"
+strict = "Strict"
+custom = "Personnalisée"
+
+[components.core]
+name = "Better Mods Manager"
+description = "Application principale, requise."
+
+[components.mcp-server]
+name = "Serveur IA MCP (sidecar)"
+description = "Serveur de contrôle par IA (Claude/ChatGPT via le protocole MCP)."
+
+[components.cli]
+name = "Outils en ligne de commande"
+description = "Automatisation en ligne de commande (bmm-cli.exe)."
+
+[launch.app]
+label = "Lancer Better Mods Manager"
+
+[launch.mcp]
+label = "Démarrer le serveur IA MCP maintenant"
+
+[prereqs.python]
+name = "Python 3.12 (embarquable)"
+
+[prereqs.node]
+name = "Node.js 20 ou plus récent"

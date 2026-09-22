@@ -43,8 +43,10 @@ Nom de fichier : `[handoff].file` (défaut `installer-handoff.json`).
 
 `settings` est construit depuis les entrées `[[setup_option]]` : la valeur de chaque
 option est écrite dans sa/ses clé(s) `maps_to` en retirant le préfixe `settings.`. Un
-`select` resté sur le sentinel `"auto"` est d'abord résolu vers la valeur OS détectée
-(pour que l'app reçoive toujours un choix concret).
+`select` resté sur le sentinel `"auto"` est d'abord résolu vers la langue dans laquelle
+l'installeur est affiché (celle de l'OS sauf choix contraire), en prenant la première de
+sa chaîne de repli présente dans `choices` (pour que l'app reçoive toujours un choix
+concret).
 
 ## Ce que l'app doit faire (une fois, au 1er lancement)
 
@@ -89,7 +91,7 @@ maps_to     = "settings.telemetry"             # → settings.telemetry dans le 
 id          = "language"
 type        = "select"
 label       = "Langue"
-choices     = ["auto", "en", "fr"]             # "auto" → résolu vers la langue OS détectée
+choices     = ["auto", "en", "fr"]             # "auto" → résolu vers la langue de l'installeur
 default     = "auto"
 maps_to     = "settings.language"
 
