@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip
@@ -111,7 +111,11 @@ jobs:
           path: site
 
   deploy:
-    if: github.ref == 'refs/heads/master'
+    # GitHub Pages is not enabled on this repository yet, so every master run went red on
+    # 'Creating Pages deployment failed: Not Found'. Deploying waits for the owner to enable
+    # Pages (Settings > Pages > Source: GitHub Actions) and set the repository variable
+    # PAGES_ENABLED=true. The build job still builds and checks the site on every push.
+    if: github.ref == 'refs/heads/master' && vars.PAGES_ENABLED == 'true'
     needs: build
     runs-on: ubuntu-latest
     environment:

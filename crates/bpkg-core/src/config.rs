@@ -1215,9 +1215,11 @@ mod tests {
     fn the_committed_schema_is_current() {
         const COMMITTED: &str = include_str!("../../../schema/installer-schema.json");
         let fresh = schema_json().expect("the schema must serialize");
+        // Line endings do not count: the Windows runner checks the file out with CRLF
+        // (core.autocrlf), the CLI writes LF, and CI was red on that alone.
         assert_eq!(
-            COMMITTED.trim_end(),
-            fresh.trim_end(),
+            COMMITTED.replace("\r\n", "\n").trim_end(),
+            fresh.replace("\r\n", "\n").trim_end(),
             "schema/installer-schema.json is stale — run `bpkg schema --out schema/installer-schema.json`"
         );
     }
