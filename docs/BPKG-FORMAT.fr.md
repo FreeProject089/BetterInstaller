@@ -58,6 +58,10 @@ JSON UTF-8, `manifest_len` octets, immédiatement après le header :
 ```
 
 - Chaque fichier du payload a un `sha256` — vérifié avant d'être écrit sur le disque.
+- Le manifeste est la liste qui fait foi : une entrée de l'archive absente du manifeste est
+  refusée, pas installée. Elle n'a pas de `sha256` à vérifier, elle n'appartient à aucun
+  composant, et rien de ce qui est montré avant l'installation (liste des composants,
+  tailles, `bpkg info`) ne la mentionne.
 - `component` lie un fichier à un composant optionnel (`null` = toujours installé / core).
 
 ## Payload

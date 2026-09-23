@@ -144,10 +144,12 @@ pub fn download_and_apply(
         _ => download_any(&m.url, &m.urls)?, // full download
     };
 
-    let tmp = std::env::temp_dir().join(format!("bi-update-{}.bpkg", std::process::id()));
-    std::fs::write(&tmp, &new_bytes).map_err(|e| Error::io(&tmp, e))?;
+    // Private scratch dir: `apply_package_update` verifies the signature of this path and
+    // then reads it again to extract, so a path a local attacker can write is a package
+    // that is verified and a package that is installed (crate::tmp).
+    let tmp = crate::tmp::stage("update.bpkg", &new_bytes)?;
     let res = apply_package_update(&tmp, install_dir, None, verify_key);
-    let _ = std::fs::remove_file(&tmp);
+    crate::tmp::discard(&tmp);
     res
 }
 

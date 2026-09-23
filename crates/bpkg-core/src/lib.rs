@@ -9,6 +9,7 @@
 //! - [`config`] — `installer.toml` parsing, including the first-run handoff config.
 //! - [`handoff`] — the app-agnostic `installer-handoff.json` first-run contract.
 //! - [`platform`] — the `PlatformOps` abstraction (Windows/Linux/macOS).
+//! - [`tmp`] — the per-process private scratch directory everything is staged in.
 //!
 //! See `.Assets/.md/PLAN_BETTER_INSTALLER.md` (v2 + v3 Addendum) for the full plan.
 
@@ -24,6 +25,7 @@ pub mod package;
 pub mod platform;
 pub mod prereq;
 pub mod sign;
+pub mod tmp;
 pub mod update;
 pub mod version;
 

@@ -58,6 +58,10 @@ UTF-8 JSON, `manifest_len` bytes, immediately after the header:
 ```
 
 - Every payload file has a `sha256` — verified before it is written to disk.
+- The manifest is the definitive list of what the package contains: an archive entry the
+  manifest does not list is refused, not installed. It has no `sha256` to check, it is not
+  counted in any component, and none of what the user is shown before installing (the
+  component list, its sizes, `bpkg info`) mentions it.
 - `component` ties a file to an optional component (`null` = always installed / core).
 
 ## Payload

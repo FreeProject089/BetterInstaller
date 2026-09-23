@@ -121,15 +121,20 @@ pub fn auto_install(p: &Prerequisite, install_dir: &std::path::Path) -> crate::e
     } else {
         "exe"
     };
-    let path = std::env::temp_dir().join(format!("bpkg-prereq-{}.{}", sanitise_id(&p.id), ext));
-    std::fs::write(&path, &bytes).map_err(|e| Error::io(&path, e))?;
+    // Staged in this process's private directory, never straight into a shared /tmp: the
+    // bytes are hashed above, but what runs below is the FILE, and a name another local
+    // user can predict is a file they can replace in between (see crate::tmp).
+    let path = crate::tmp::stage(
+        &format!("bpkg-prereq-{}.{}", sanitise_id(&p.id), ext),
+        &bytes,
+    )?;
 
     let mut cmd = std::process::Command::new(&path);
     if let Some(args) = &p.silent_args {
         cmd.args(args.split_whitespace());
     }
     let status = cmd.status().map_err(|e| Error::io(&path, e));
-    let _ = std::fs::remove_file(&path);
+    crate::tmp::discard(&path);
     let status = status?;
     if !status.success() {
         return Err(Error::Other(format!(

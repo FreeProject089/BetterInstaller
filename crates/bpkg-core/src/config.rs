@@ -337,6 +337,39 @@ impl InstallerConfig {
             p.validate().map_err(crate::error::Error::Other)?;
         }
         self.validate_i18n().map_err(crate::error::Error::Other)?;
+        self.validate_paths().map_err(crate::error::Error::Other)?;
+        Ok(())
+    }
+
+    /// Every field of this file that the installer turns into a filesystem path.
+    ///
+    /// `installer.toml` is appended to the installer OUTSIDE the signed package, so these
+    /// strings are not covered by the publisher's key even when the payload is. A package
+    /// re-stamped with a hostile config still shows "Signed & verified" on the Welcome
+    /// page, and these three are what it can do with that:
+    ///
+    /// - `handoff.file` is joined to the app-data (or install) directory and written —
+    ///   and `Path::join` with an absolute path discards the base, so an absolute value IS
+    ///   the destination, contents included (`maps_to` keys and `default` values);
+    /// - `install.main_exe` is joined to the install directory and becomes the Start Menu
+    ///   shortcut target and the handler registered for the `protocol` scheme;
+    /// - `launch[].exe` is joined and spawned when its Done-page checkbox is ticked.
+    ///
+    /// `check_relative` and its rules were already here, already tested, and already
+    /// called for `install_to` and `locales_dir`. Nothing was wrong with the check; these
+    /// fields were never added to the list of things it is called on.
+    fn validate_paths(&self) -> std::result::Result<(), String> {
+        if let Some(h) = &self.handoff {
+            if h.enabled {
+                check_relative("handoff", "file", &h.file)?;
+            }
+        }
+        if let Some(e) = self.install.main_exe.as_deref() {
+            check_relative("install", "main_exe", e)?;
+        }
+        for l in &self.launch {
+            check_relative(&l.id, "exe", &l.exe)?;
+        }
         Ok(())
     }
 
@@ -1389,6 +1422,62 @@ mod tests {
                 cat.code
             );
         }
+    }
+
+    /// Every config field that becomes a filesystem path has to be relative.
+    ///
+    /// `installer.toml` sits OUTSIDE the signed package, so in the "someone re-stamped a
+    /// genuine package" model these three strings are the attacker's and the payload is
+    /// still the publisher's — the Welcome page says "Signed & verified" while the config
+    /// decides where things are written and what is launched:
+    ///
+    /// - `handoff.file` is joined to the app-data directory and written
+    ///   (`dir.join(&h.file)`); `Path::join` with an absolute path THROWS THE BASE AWAY, so
+    ///   `C:/…/Start Menu/Programs/Startup/x.hta` is that path, and the file's contents are
+    ///   `maps_to` keys and `default` values, i.e. the config's own text;
+    /// - `install.main_exe` is joined to the install directory and becomes a Start Menu
+    ///   shortcut target and the handler of the registered `protocol` scheme;
+    /// - `launch[].exe` is joined and SPAWNED when its Done-page box is ticked.
+    ///
+    /// `check_relative` already existed and was already wired for `install_to` and
+    /// `locales_dir`. These three were simply never added to the list.
+    #[test]
+    fn a_config_path_that_escapes_is_refused_at_load() {
+        let base = "[app]\nid = \"x\"\nname = \"X\"\nversion = \"1.0.0\"\npublisher = \"P\"\n";
+        let escapes = [
+            "../../evil",
+            "/etc/cron.d/evil",
+            "C:/Windows/System32/calc.exe",
+            "C:evil",
+            "\\\\\\\\server\\\\share\\\\evil.exe",
+            "a/../../evil",
+        ];
+        for e in escapes {
+            assert!(
+                InstallerConfig::from_toml(&format!("{base}[handoff]\nfile = \"{e}\"\n")).is_err(),
+                "handoff.file accepted {e:?}"
+            );
+            assert!(
+                InstallerConfig::from_toml(&format!("{base}[install]\nmain_exe = \"{e}\"\n"))
+                    .is_err(),
+                "install.main_exe accepted {e:?}"
+            );
+            assert!(
+                InstallerConfig::from_toml(&format!(
+                    "{base}[[launch]]\nid = \"l\"\nlabel = \"L\"\nexe = \"{e}\"\n"
+                ))
+                .is_err(),
+                "launch.exe accepted {e:?}"
+            );
+        }
+
+        // The ordinary shapes still load, including a nested one.
+        let good = format!(
+            "{base}[handoff]\nfile = \"installer-handoff.json\"\n\
+             [install]\nmain_exe = \"bin/app.exe\"\n\
+             [[launch]]\nid = \"l\"\nlabel = \"L\"\nexe = \"app.exe\"\n"
+        );
+        InstallerConfig::from_toml(&good).expect("a relative config must still load");
     }
 
     #[test]

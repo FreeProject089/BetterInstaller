@@ -267,7 +267,8 @@ localized_documents = [
   fichier est une nouvelle langue après un rebuild.
 - Les textes de ton produit vont dans `<locales_dir>/<code>.toml` dans le paquet, chargés au
   démarrage sans rebuild du moteur. Un catalogue produit peut aussi remplacer des textes du
-  moteur ou apporter une langue que le moteur n'a pas. Clés :
+  moteur (sauf les clés réservées au moteur, plus bas) ou apporter une langue que le moteur
+  n'a pas. Clés :
   `options.<id>.label` · `options.<id>.description` · `options.<id>.choices.<valeur>` ·
   `groups.<id>.label` · `groups.<id>.description` · `components.<id>.name` ·
   `components.<id>.description` · `launch.<id>.label` · `prereqs.<id>.name` ·
@@ -292,6 +293,14 @@ est ajouté à l'installeur EN DEHORS du paquet signé, comme tous les autres ch
 config. Les catalogues et les documents eux‑mêmes sont des fichiers du paquet, couverts par sa
 signature Ed25519. L'installeur ne les lit pas depuis un paquet dont la signature est connue
 comme invalide, et l'installation est de toute façon refusée avant d'écrire un seul fichier.
+
+Les catalogues d'un paquet NON signé sont lus — les refuser laisserait en anglais
+précisément l'écran qui doit dire « non signé ». Un catalogue est donc du texte non fiable,
+et une poignée de clés appartiennent au moteur seul : `signature.*`, `errors.signature_*`,
+`setup.sends_data` et `legal.fallback_notice` — tout ce par quoi l'installeur parle DU
+paquet au lieu de parler pour lui. Un catalogue produit qui en définit une est ignoré, avec
+une ligne sur stderr. Les surcharges bidirectionnelles et les caractères de contrôle sont
+retirés de toute chaîne de catalogue et de tout document légal avant affichage.
 
 Les tests de `bpkg-core` vérifient les catalogues du moteur contre l'anglais, et l'exemple BMM
 vérifie ses catalogues produit contre chaque clé déclarée par son installer.toml

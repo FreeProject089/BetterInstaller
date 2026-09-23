@@ -257,8 +257,8 @@ localized_documents = [
   `crates/bpkg-core/locales/<code>.toml`, embedded at build time: a new file there is a
   new language after a rebuild.
 - Your product's strings go in `<locales_dir>/<code>.toml` inside the package, loaded at
-  startup with no engine rebuild. A product catalogue can also override engine strings or
-  bring a language the engine does not have. Keys:
+  startup with no engine rebuild. A product catalogue can also override engine strings
+  (except the engine-only keys below) or bring a language the engine does not have. Keys:
   `options.<id>.label` · `options.<id>.description` · `options.<id>.choices.<value>` ·
   `groups.<id>.label` · `groups.<id>.description` · `components.<id>.name` ·
   `components.<id>.description` · `launch.<id>.label` · `prereqs.<id>.name` ·
@@ -282,6 +282,14 @@ is appended to the installer OUTSIDE the signed package, like every other config
 The catalogues and the documents themselves are files in the package and are covered by
 its Ed25519 signature. The installer does not read them from a package whose signature is
 known to be invalid, and the install is refused anyway before any file is written.
+
+An UNSIGNED package's catalogues ARE read — refusing them would leave exactly the screen
+that has to say "unsigned" in English. So a catalogue is untrusted text, and a handful of
+keys are the engine's alone and cannot be overridden by one: `signature.*`,
+`errors.signature_*`, `setup.sends_data` and `legal.fallback_notice` — everything in which
+the installer speaks ABOUT the package rather than for it. A product catalogue that sets
+one is ignored with a line on stderr. Bidirectional overrides and control characters are
+stripped from every catalogue string and every legal document before it is drawn.
 
 `bpkg-core`'s tests check the engine catalogues against English, and the BMM example
 checks its product catalogues against every key its installer.toml declares

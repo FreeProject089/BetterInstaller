@@ -170,9 +170,11 @@ fn resolve_sources() -> anyhow::Result<Sources> {
     {
         let cfg = InstallerConfig::from_toml(&String::from_utf8_lossy(&emb.config))
             .map_err(|e| anyhow::anyhow!("embedded config: {e}"))?;
-        // Stage the embedded .bpkg to a temp file so Package::open can read it.
-        let tmp = std::env::temp_dir().join(format!("betterinstaller-{}.bpkg", std::process::id()));
-        std::fs::write(&tmp, &emb.bpkg)?;
+        // Stage the embedded .bpkg so Package::open can read it. In this process's own
+        // private directory (bpkg_core::tmp), not at a pid-shaped name in a shared /tmp:
+        // this path is what the signature is checked against AND what is extracted, in two
+        // separate reads, so anyone who can write it decides what gets installed.
+        let tmp = bpkg_core::tmp::stage("payload.bpkg", &emb.bpkg)?;
         return Ok((cfg, Some(tmp), None));
     }
 
@@ -426,9 +428,7 @@ fn run_gui(
                         .extension()
                         .and_then(|e| e.to_str())
                         .unwrap_or("png");
-                    let tmp =
-                        std::env::temp_dir().join(format!("bi-logo-{}.{ext}", std::process::id()));
-                    if std::fs::write(&tmp, bytes).is_ok() {
+                    if let Ok(tmp) = bpkg_core::tmp::stage(&format!("logo.{ext}"), bytes) {
                         if let Ok(img) = slint::Image::load_from_path(&tmp) {
                             ui.set_app_logo(img);
                         }
@@ -1566,9 +1566,11 @@ fn run_real_install(
                 .unwrap_or(100);
             if pct != last_pct {
                 last_pct = pct;
+                // `file` is an archive entry path — the package's text, drawn on screen.
+                let file = bpkg_core::i18n::sanitize_text(file);
                 let label = tr.t_with(
                     "progress.installing_file",
-                    &[("pct", &pct.to_string()), ("file", file)],
+                    &[("pct", &pct.to_string()), ("file", &file)],
                 );
                 let _ = weak.upgrade_in_event_loop(move |ui| {
                     ui.set_progress(pct as f32 / 100.0);
@@ -2134,6 +2136,11 @@ fn fallback_notice(doc_lang: &str, tr: &Translator) -> String {
 /// paragraphs (level 0). Inline emphasis/code markers are stripped; links become
 /// `text (url)`.
 fn parse_md(text: &str) -> Vec<MdBlock> {
+    // A legal document is package text, and in the "someone hands you a package" model it
+    // is attacker text. A right-to-left override in it reverses the rest of the line on
+    // screen, which is how a URL shown under a privacy policy comes to read as another
+    // domain; see `bpkg_core::i18n::sanitize_text`.
+    let text = bpkg_core::i18n::sanitize_text(text);
     let mut out = Vec::new();
     let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
     // Header cells of the table currently being read, if any. A table ends at the first

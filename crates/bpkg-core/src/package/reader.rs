@@ -196,18 +196,27 @@ impl Package {
             if !Self::selected(comp, components) {
                 return Ok(()); // unselected optional component
             }
-            // Integrity: never write a file whose hash doesn't match the manifest.
-            if let Some(exp) = expected.get(path) {
-                let mut h = Sha256::new();
-                h.update(data);
-                let actual = hex(&h.finalize());
-                if actual != *exp {
-                    return Err(Error::HashMismatch {
-                        path: path.to_string(),
-                        expected: exp.clone(),
-                        actual,
-                    });
-                }
+            // Integrity: never write a file whose hash doesn't match the manifest, and
+            // never write one the manifest does not describe at all.
+            //
+            // `if let Some(exp)` used to mean an UNLISTED entry skipped the hash check and
+            // was written anyway — and `Self::selected` reads a missing component as
+            // "core", so it also ignored the component tick-boxes. Everything shown before
+            // the install (the component list and its sizes, `bpkg info`) is read off the
+            // manifest, so a file that is not in it is a file nobody agreed to. `verify()`
+            // has always refused this; the path that actually writes did not.
+            let exp = expected
+                .get(path)
+                .ok_or_else(|| Error::Corrupt(format!("file {path} not in manifest")))?;
+            let mut h = Sha256::new();
+            h.update(data);
+            let actual = hex(&h.finalize());
+            if actual != *exp {
+                return Err(Error::HashMismatch {
+                    path: path.to_string(),
+                    expected: exp.clone(),
+                    actual,
+                });
             }
             if unsafe_entry_path(path) {
                 return Err(Error::Corrupt(format!("unsafe path in archive: {path}")));
@@ -237,6 +246,11 @@ impl Package {
         let mut written = 0u64;
         let dest = dest.to_path_buf();
         self.for_each_entry(|path, data| {
+            // Same rule as the install path: the manifest is the list of what this
+            // package contains, and an entry outside it is not part of the package.
+            if !comp_of.contains_key(path) {
+                return Err(Error::Corrupt(format!("file {path} not in manifest")));
+            }
             // component gate
             if let Some(sel) = components {
                 if let Some(Some(c)) = comp_of.get(path) {
@@ -308,7 +322,7 @@ fn read_u64(buf: &[u8], pos: &mut usize) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::unsafe_entry_path;
+    use super::{unsafe_entry_path, Package, HEADER_LEN};
 
     #[test]
     fn rejects_escaping_entry_paths() {
@@ -328,5 +342,114 @@ mod tests {
         for p in ["ok.txt", "dir/ok.txt", "a/b/c.dll", "deep/nested/file"] {
             assert!(!unsafe_entry_path(p), "should allow: {p:?}");
         }
+    }
+
+    /// A package whose ARCHIVE holds a file its MANIFEST does not list.
+    ///
+    /// `verify()` has always refused this ("file {path} not in manifest"), but `verify()`
+    /// is only what `bpkg verify` calls. The install path checked a hash *if* the manifest
+    /// had one and wrote the file either way, and `Self::selected` reads a missing entry as
+    /// "core", so the smuggled file also ignored the component tick-boxes. Everything the
+    /// user is shown before installing — the component list, its sizes, what `bpkg info`
+    /// prints — comes from the manifest, so this is a file that installs without ever
+    /// appearing in what was agreed to.
+    fn package_with_an_unlisted_entry(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let base = std::env::temp_dir().join(format!("bpkg-unlisted-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("ok.txt"), b"legit").unwrap();
+        std::fs::write(src.join("extra.dll"), b"smuggled").unwrap();
+        let out = base.join("p.bpkg");
+        let mut m = crate::package::create_from_dir(
+            &src,
+            crate::manifest::AppMeta {
+                id: "t".into(),
+                name: "T".into(),
+                version: "1".into(),
+                publisher: "P".into(),
+                homepage: None,
+                platforms: vec![],
+            },
+            vec![],
+            |_| None,
+            &out,
+        )
+        .unwrap();
+
+        // Drop `extra.dll` from the manifest, leaving it in the payload.
+        m.files.retain(|f| f.path != "extra.dll");
+        let new_manifest = serde_json::to_vec(&m).unwrap();
+        let data = std::fs::read(&out).unwrap();
+        let h = super::super::format::Header::from_bytes(&data).unwrap();
+        let payload = &data[HEADER_LEN + h.manifest_len as usize..][..h.payload_len as usize];
+        let mut rebuilt = super::super::format::Header {
+            format_version: h.format_version,
+            flags: h.flags,
+            manifest_len: new_manifest.len() as u32,
+            payload_len: h.payload_len,
+        }
+        .to_bytes()
+        .to_vec();
+        rebuilt.extend_from_slice(&new_manifest);
+        rebuilt.extend_from_slice(payload);
+        std::fs::write(&out, &rebuilt).unwrap();
+        (base, out)
+    }
+
+    #[test]
+    fn an_entry_missing_from_the_manifest_is_never_installed() {
+        let (base, out) = package_with_an_unlisted_entry("install");
+        let dest = base.join("dest");
+        let err = Package::open(&out)
+            .unwrap()
+            .install_with_progress(&dest, None, |_, _, _| {})
+            .expect_err("a file the manifest does not describe must not install");
+        assert!(format!("{err}").contains("extra.dll"), "{err}");
+        assert!(!dest.join("extra.dll").exists(), "the smuggled file landed");
+
+        // Same rule on the plain extract path — it had no hash check at all.
+        let dest2 = base.join("dest2");
+        assert!(Package::open(&out).unwrap().extract(&dest2, None).is_err());
+        assert!(!dest2.join("extra.dll").exists());
+
+        // And a package whose manifest DOES describe everything still installs.
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_well_formed_package_still_installs() {
+        let base = std::env::temp_dir().join(format!("bpkg-wf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join("src");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("a.txt"), b"a").unwrap();
+        std::fs::write(src.join("sub/b.txt"), b"b").unwrap();
+        let out = base.join("p.bpkg");
+        crate::package::create_from_dir(
+            &src,
+            crate::manifest::AppMeta {
+                id: "t".into(),
+                name: "T".into(),
+                version: "1".into(),
+                publisher: "P".into(),
+                homepage: None,
+                platforms: vec![],
+            },
+            vec![],
+            |_| None,
+            &out,
+        )
+        .unwrap();
+        let dest = base.join("dest");
+        assert_eq!(
+            Package::open(&out)
+                .unwrap()
+                .install_with_progress(&dest, None, |_, _, _| {})
+                .unwrap(),
+            2
+        );
+        assert!(dest.join("sub/b.txt").exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -9,7 +9,8 @@
 //! 2. **Product** catalogues, `<code>.toml` files shipped inside the product's signed
 //!    package (`[i18n] locales_dir`). They add the product's own strings (option labels,
 //!    component names…) and may override engine strings or add a language the engine
-//!    does not have, with no engine rebuild at all.
+//!    does not have, with no engine rebuild at all — everything except the handful of keys
+//!    in [`ENGINE_ONLY`], where the installer speaks ABOUT the package rather than for it.
 //!
 //! Lookups walk a fallback chain: the requested tag, its shorter prefixes, then English
 //! (`pt-BR` → `pt` → `en`). A key missing everywhere comes back as the key itself, so a
@@ -27,6 +28,61 @@ include!(concat!(env!("OUT_DIR"), "/builtin_locales.rs"));
 /// The language every chain ends with, and the one whose catalogue is complete.
 pub const FALLBACK: &str = "en";
 
+/// Where a catalogue came from, and therefore how far its strings are trusted.
+///
+/// A product catalogue is read out of a package the installer has not necessarily
+/// verified — `Trust::may_read` lets an UNSIGNED package supply one, because refusing to
+/// read it would leave the screen that has to say "unsigned" untranslated. Its strings are
+/// therefore attacker-controlled in the "someone hands you a package" model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// Compiled into this binary from `crates/bpkg-core/locales/`.
+    Engine,
+    /// Read at runtime from a product's package (or, in dev mode, from beside
+    /// `installer.toml`). Untrusted.
+    Product,
+}
+
+/// Keys only the ENGINE may word: the ones in which the installer speaks about the
+/// package rather than for it.
+///
+/// Every other string is fair game — overriding `ui.next` or `done.installed_title` is the
+/// documented point of product catalogues. These are not text about the product; they are
+/// the installer's own verdict ON the product, plus the badge that warns an option sends
+/// data off the machine. A package that can word them can show "Signed & verified" while
+/// being unsigned, or blank the "Sends data" badge on a telemetry toggle, and the reader
+/// has no way to tell the engine's voice from the package's.
+const ENGINE_ONLY: &[&str] = &[
+    "signature.",
+    "errors.signature",
+    "setup.sends_data",
+    "legal.fallback_notice",
+];
+
+fn engine_only(key: &str) -> bool {
+    ENGINE_ONLY.iter().any(|p| key.starts_with(p))
+}
+
+/// Strip the characters that let a string lie about its own shape.
+///
+/// Explicit bidirectional formatting (`U+202A`..`U+202E`, `U+2066`..`U+2069`) reverses
+/// the visual order of what follows it: `https://\u{202e}moc.live` renders as
+/// `https://evil.com` backwards, and a filename or a URL next to a legal document then
+/// reads as something it is not. The RTL *marks* (`U+200E`/`U+200F`) are left alone — real
+/// Arabic and Hebrew text needs them, and they cannot reorder ASCII on their own.
+///
+/// C0 controls go too (except tab and newline, which the markdown renderer uses): a
+/// carriage return in a Slint `Text` run, or a NUL in a path shown mid-progress, is never
+/// something a translator wrote.
+pub fn sanitize_text(s: &str) -> String {
+    s.chars()
+        .filter(|c| {
+            !matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+                && (!c.is_control() || *c == '\n' || *c == '\t')
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Ltr,
@@ -40,19 +96,37 @@ pub struct Catalog {
     /// The language's own name for itself, shown in the picker ("Français").
     pub name: Option<String>,
     pub direction: Option<Direction>,
+    pub origin: Origin,
     strings: BTreeMap<String, String>,
 }
 
 impl Catalog {
+    /// Parse a catalogue that came from a package: [`Origin::Product`], and so subject to
+    /// [`ENGINE_ONLY`] when it is layered in.
+    ///
+    /// Untrusted is the DEFAULT on purpose. The trusted constructor is the one that has to
+    /// be asked for by name, because there are two catalogues compiled into this binary and
+    /// an unbounded number that arrive from outside it; a default that has to be remembered
+    /// is the one that gets forgotten by whoever adds the third source.
+    pub fn parse(code: &str, text: &str) -> Result<Catalog, String> {
+        Self::parse_with(code, text, Origin::Product)
+    }
+
+    /// A catalogue that ships inside this binary. Nothing is filtered from it.
+    pub fn parse_engine(code: &str, text: &str) -> Result<Catalog, String> {
+        Self::parse_with(code, text, Origin::Engine)
+    }
+
     /// Parse a catalogue. `code` comes from the file name, not the contents, so a file
     /// cannot claim to be another language than the one it is stored as.
-    pub fn parse(code: &str, text: &str) -> Result<Catalog, String> {
+    fn parse_with(code: &str, text: &str, origin: Origin) -> Result<Catalog, String> {
         let code = normalize(code).ok_or_else(|| format!("{code:?} is not a language code"))?;
         let root: toml::Table = toml::from_str(text).map_err(|e| format!("{code}.toml: {e}"))?;
         let mut cat = Catalog {
             code: code.clone(),
             name: None,
             direction: None,
+            origin,
             strings: BTreeMap::new(),
         };
         for (k, v) in root {
@@ -60,7 +134,7 @@ impl Catalog {
                 let meta = v
                     .as_table()
                     .ok_or_else(|| format!("{code}.toml: [meta] must be a table"))?;
-                cat.name = meta.get("name").and_then(|n| n.as_str()).map(String::from);
+                cat.name = meta.get("name").and_then(|n| n.as_str()).map(sanitize_text);
                 cat.direction = match meta.get("direction").and_then(|d| d.as_str()) {
                     None => None,
                     Some("ltr") => Some(Direction::Ltr),
@@ -102,7 +176,9 @@ fn flatten(
 ) -> Result<(), String> {
     match v {
         toml::Value::String(s) => {
-            out.insert(prefix.to_string(), s.clone());
+            // Sanitised here, at the one door every catalogue string comes through, rather
+            // than at each of the dozen places one is handed to Slint.
+            out.insert(prefix.to_string(), sanitize_text(s));
             Ok(())
         }
         toml::Value::Table(t) => {
@@ -124,7 +200,7 @@ pub fn builtin_catalogs() -> Vec<Catalog> {
         .map(|(code, text)| {
             // build.rs guarantees the name; a parse error here is a broken file in this
             // repository, which the tests catch before anyone ships it.
-            Catalog::parse(code, text).unwrap_or_else(|e| panic!("engine catalogue {e}"))
+            Catalog::parse_engine(code, text).unwrap_or_else(|e| panic!("engine catalogue {e}"))
         })
         .collect()
 }
@@ -252,7 +328,22 @@ impl Translator {
     }
 
     /// Layer a catalogue over whatever is already loaded for its language.
-    pub fn add_catalog(&mut self, c: Catalog) {
+    ///
+    /// A [`Origin::Product`] catalogue loses its [`ENGINE_ONLY`] keys on the way in: it may
+    /// translate the installer, it may not use it to make a claim about itself.
+    pub fn add_catalog(&mut self, mut c: Catalog) {
+        if c.origin == Origin::Product {
+            let refused: Vec<String> = c
+                .strings
+                .keys()
+                .filter(|k| engine_only(k))
+                .cloned()
+                .collect();
+            for k in &refused {
+                c.strings.remove(k);
+                eprintln!("{}.toml: {k} is the engine's to word; ignored", c.code);
+            }
+        }
         match self.catalogs.get_mut(&c.code) {
             Some(existing) => existing.merge(c),
             None => {
@@ -525,6 +616,84 @@ mod tests {
         let fr = cats.iter().find(|c| c.code == "fr").expect("fr.toml");
         let missing: Vec<_> = en.keys().filter(|k| fr.get(k).is_none()).collect();
         assert!(missing.is_empty(), "fr.toml is missing {missing:?}");
+    }
+
+    /// A package's own catalogue must not be able to word the badge that says whether
+    /// that package can be trusted. `Trust::may_read` hands an UNSIGNED package's
+    /// catalogues to the translator — deliberately, so the screen that has to say
+    /// "unsigned" is not the one screen left in English — and every one of these keys was
+    /// then the package's to rewrite. The Welcome page read "Signed & verified" for a
+    /// package carrying no signature at all.
+    #[test]
+    fn a_product_catalogue_cannot_reword_the_engine_verdict() {
+        let mut t = Translator::builtin();
+        t.add_catalog(
+            Catalog::parse(
+                "en",
+                "[signature]\nunsigned = \"Signed & verified\"\ninvalid = \"All good\"\n\
+                 [errors]\nsignature_invalid = \"Installed successfully.\"\n\
+                 [setup]\nsends_data = \"\"\n\
+                 [legal]\nfallback_notice = \"\"\n\
+                 [ui]\nnext = \"Continue\"\n",
+            )
+            .unwrap(),
+        );
+        t.set_language("en");
+        assert!(t.t("signature.unsigned").starts_with("Unsigned package"));
+        assert!(t.t("signature.invalid").contains("INVALID"));
+        assert!(t.t("errors.signature_invalid").contains("INVALID"));
+        assert_eq!(t.t("setup.sends_data"), "Sends data");
+        assert!(t.t("legal.fallback_notice").contains("{language}"));
+        // …and everything else still translates, which is the point of the layer.
+        assert_eq!(t.t("ui.next"), "Continue");
+    }
+
+    /// The same keys in a language the engine does not speak: the chain must reach the
+    /// ENGINE's English rather than stop at the product's wording of the verdict.
+    #[test]
+    fn the_verdict_survives_a_language_the_engine_does_not_speak() {
+        let mut t = Translator::builtin();
+        t.add_catalog(
+            Catalog::parse(
+                "de",
+                "[meta]\nname = \"Deutsch\"\n[signature]\nunsigned = \"Signiert und geprueft\"\n",
+            )
+            .unwrap(),
+        );
+        t.set_language("de");
+        assert_eq!(t.language(), "de");
+        assert!(t.t("signature.unsigned").starts_with("Unsigned package"));
+    }
+
+    /// An engine catalogue is not filtered: the restriction is about where a string came
+    /// from, not about the key being untouchable.
+    #[test]
+    fn an_engine_catalogue_may_word_its_own_verdict() {
+        let mut t = Translator::builtin();
+        t.add_catalog(
+            Catalog::parse_engine("en", "[signature]\nunsigned = \"Not signed\"").unwrap(),
+        );
+        t.set_language("en");
+        assert_eq!(t.t("signature.unsigned"), "Not signed");
+    }
+
+    /// A right-to-left OVERRIDE inside a string reverses what follows it on screen, so a
+    /// URL or a filename can be made to read as another one. Real RTL languages need the
+    /// MARKS (200E/200F), not the overrides, so only the overrides go.
+    #[test]
+    fn bidi_overrides_and_controls_are_stripped_from_catalogue_strings() {
+        let c = Catalog::parse(
+            "ar",
+            "[meta]\nname = \"\u{202e}Arabic\"\ndirection = \"rtl\"\n\
+             [ui]\nnext = \"a\u{202e}b\u{2069}c\\u0007d\"\n\
+             [legal]\naccept = \"\u{200f}\u{627}\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.get("ui.next"), Some("abcd"));
+        assert_eq!(c.name.as_deref(), Some("Arabic"));
+        // The mark a real Arabic string needs is untouched.
+        assert_eq!(c.get("legal.accept"), Some("\u{200f}\u{627}"));
+        assert_eq!(c.direction, Some(Direction::Rtl));
     }
 
     #[test]
