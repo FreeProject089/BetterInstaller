@@ -10,7 +10,8 @@ env:
 
 # Least privilege for GITHUB_TOKEN. Without a block the token gets the repository's default,
 # which on an older repository is write-all, and this repository is PUBLIC — so a fork's
-# pull request runs these same third-party actions. Nothing here writes anything.#
+# pull request runs these same third-party actions. Nothing here writes anything.
+#
 # Every action is pinned to a full commit SHA, the tag in the comment (SECURITY_SUMMARY §9 #3 in
 # BCW): a tag can be moved by whoever controls the action's repository, a SHA cannot. To bump:
 # `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>` (peel an annotated tag with

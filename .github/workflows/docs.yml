@@ -6,7 +6,8 @@ name: Docs
 #
 # Separate from ci.yml on purpose: that one is the Rust workspace (fmt, clippy, tests) and
 # has nothing to do with the docs. Coupling them would mean a typo in a markdown file
-# blocking a code merge, and a Rust failure hiding a broken site.#
+# blocking a code merge, and a Rust failure hiding a broken site.
+#
 # Every action is pinned to a full commit SHA, the tag in the comment (SECURITY_SUMMARY §9 #3 in
 # BCW): a tag can be moved by whoever controls the action's repository, a SHA cannot. To bump:
 # `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>` (peel an annotated tag with
