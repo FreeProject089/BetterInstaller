@@ -22,7 +22,9 @@ param(
     [string]$Config  = "examples/bmm/installer.toml",
     [string]$Out     = "",                         # default: <BmmRoot>/Release/BMM-Setup.exe
     [string]$Logo    = "",                         # override the sidebar logo; see below
-    [string]$Icon    = ""                          # override the EXE icon (.ico); see below
+    [string]$Icon    = "",                         # override the EXE icon (.ico); see below
+    [string]$Notes   = "",                         # release notes in update.json
+    [string[]]$Deltas = @()                        # "<from-version>=<patch url>" entries for update.json
 )
 $ErrorActionPreference = "Stop"
 
@@ -190,9 +192,15 @@ Write-Host "[5/5] Building $Out ..."
 & $bpkg build --installer $inst --config $Config --package $pkg --out $Out
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
-# 6) Emit update.json — the auto-update manifest. Upload BOTH this file and the
-#    signed bmm.bpkg to the GitHub release so installed copies can auto-update.
-#    (manifest_url in installer.toml points at .../releases/latest/download/update.json)
+# 6) Emit update.json -- the SIGNED auto-update manifest (bpkg update-manifest). Upload BOTH
+#    this file and the signed bmm.bpkg to the GitHub release so installed copies can
+#    auto-update. (manifest_url in installer.toml points at .../releases/latest/download/update.json)
+#
+#    The manifest is signed with the same key as the package and EXPIRES after 7 days:
+#    between releases, renew it at least weekly with
+#      bpkg resign-manifest <update.json> --key examples/bmm/keys/private.key
+#    and re-upload it (release asset + the BCWEB "bmm-update-json" slot). An expired
+#    manifest is refused by every installer that verifies, so updates stop until it is renewed.
 $cfgText = Get-Content $Config -Raw
 $verMatch = [regex]::Match($cfgText, '(?m)^\s*version\s*=\s*"([^"]+)"')
 $urlMatch = [regex]::Match($cfgText, '(?m)^\s*manifest_url\s*=\s*"([^"]+)"')
@@ -219,18 +227,18 @@ if ($verMatch.Success -and $urlMatch.Success) {
             if ($m -and $m -ne $pkgUrl) { $mirrors += $m }
         }
     }
-    $manifest = [ordered]@{
-        version = $ver
-        url     = $pkgUrl
-        notes   = "Better Mods Manager $ver"
-    }
+    $manifestPath = Join-Path $relDir "update.json"
+    $noteText = if ($Notes) { $Notes } else { "Better Mods Manager $ver" }
+    $umArgs = @("update-manifest", "--package", $pkg, "--config", $Config, "--key", $priv,
+                "--url", $pkgUrl, "--notes", $noteText, "--out", $manifestPath)
+    foreach ($m in $mirrors) { $umArgs += @("--mirror", $m) }
+    foreach ($d in $Deltas)  { $umArgs += @("--delta", $d) }
     if ($mirrors.Count -gt 0) {
-        $manifest.urls = @($mirrors)
         Write-Host ("      {0} package mirror(s) in update.json" -f $mirrors.Count)
     }
-    $manifestPath = Join-Path $relDir "update.json"
-    ($manifest | ConvertTo-Json) | Set-Content -Encoding ASCII $manifestPath
-    Write-Host "      update.json -> $manifestPath (version $ver)"
+    & $bpkg @umArgs
+    if ($LASTEXITCODE -ne 0) { throw "update-manifest failed" }
+    Write-Host "      update.json -> $manifestPath (version $ver, signed, expires in 7 days)"
 } else {
     Write-Host "      (skipped update.json: version/manifest_url not found in config)"
 }

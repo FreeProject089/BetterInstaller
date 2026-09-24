@@ -69,7 +69,7 @@ Le pipeline complet, à la main :
 ```
 
 `release.ps1` incrémente les versions, construit BMM, empaquette/signe/estampille, fabrique
-un delta par rapport à la release précédente, écrit un `update.json` multi-sources, et peut
+un delta par rapport à la release précédente, écrit un `update.json` multi-sources signé (à renouveler chaque semaine : `bpkg resign-manifest`), et peut
 publier la release GitHub avec tous ses assets.
 
 Depuis le dépôt BMM, la même chose s'appelle `npm run build:installer`, et `npm run release`

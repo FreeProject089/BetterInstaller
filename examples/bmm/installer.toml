@@ -271,8 +271,10 @@ id          = "session_recorder"
 type        = "bool"
 label_key   = "setup.sessionRecorder"
 label       = "Session replay in telemetry"
-description  = "Only matters while telemetry is on. On by default: untick to turn it off. Adds to telemetry a recording of the BMM window (layout, clicks, scrolling, navigation), with the text of input fields masked. Recordings of other windows or of your screen are never made. Untick to keep telemetry without the replay."
-default     = true
+description  = "Only matters while telemetry is on. Off by default: tick it to turn it on. Adds to telemetry a recording of the BMM window (layout, clicks, scrolling, navigation), with the text of input fields masked. Recordings of other windows or of your screen are never made. Leave it unticked to keep telemetry without the replay."
+# OFF by default (card C-8), like every other option that sends data: it only shapes what
+# telemetry contains, but a box nobody looked at should add nothing to what is sent.
+default     = false
 maps_to     = "settings.session_recorder"
 group       = "privacy"
 sends_data  = true

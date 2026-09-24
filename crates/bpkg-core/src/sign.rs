@@ -2,12 +2,16 @@
 //!
 //! Keys are stored as hex text: `private.key` (32-byte seed) and `public.key`
 //! (32-byte verifying key). A signature covers the package's header, manifest and
-//! payload — bytes `0 .. 24+N+M` (see `package::sign_package`). Never commit
-//! `private.key`.
+//! payload — bytes `0 .. 24+N+M` (see `package::sign_package`). The same key also signs
+//! the update manifest (`update.json`), over a context string followed by the signed body
+//! (see `update::sign_manifest`), so neither signature can stand in for the other. Never
+//! commit `private.key`.
 
 use std::path::Path;
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, Verifier};
+/// Re-exported so a crate that only depends on bpkg-core (the GUI) can name the key types.
+pub use ed25519_dalek::{SigningKey, VerifyingKey};
 
 use crate::error::{Error, Result};
 
@@ -83,7 +87,7 @@ pub fn verify_message(vk: &VerifyingKey, msg: &[u8], sig: &[u8; 64]) -> bool {
     vk.verify(msg, &Signature::from_bytes(sig)).is_ok()
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
         s.push_str(&format!("{:02x}", b));
@@ -91,7 +95,7 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-fn hex_decode(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn hex_decode(s: &str) -> Option<Vec<u8>> {
     let s = s.trim();
     // Byte-indexed slicing below: a multi-byte character would split mid-codepoint and
     // panic instead of reporting "bad hex".

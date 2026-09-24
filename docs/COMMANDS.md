@@ -68,7 +68,7 @@ The full pipeline, by hand:
 ```
 
 `release.ps1` bumps versions, builds BMM, packs/signs/stamps, makes a delta against the
-previous release, writes a multi-source `update.json`, and can publish the GitHub release
+previous release, writes a signed multi-source `update.json` (renew it weekly: `bpkg resign-manifest`), and can publish the GitHub release
 with every asset attached.
 
 From the BMM repository the same thing is `npm run build:installer`, and `npm run release`

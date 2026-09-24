@@ -62,6 +62,32 @@ Ce qui authentifie la config, c'est une **signature Authenticode du `*-Setup.exe
 le moteur retrouve sa charge utile devant la table de certificats). Ed25519 protège les
 **mises à jour** : elles sont vérifiées contre la clé du build déjà installé.
 
+Le manifest de mise à jour signé porte aussi le SHA-256 de l'`installer.toml` estampillé
+dans le setup de cette release (`config_sha256`). `bpkg verify-manifest update.json --key
+public.key --setup App-Setup.exe` vérifie un setup contre lui, avec la clé de l'éditeur que
+tu détiens déjà et non une clé apportée par le setup. Une config re-tamponnée devient ainsi
+**détectable** par qui fait la vérification (une chaîne de release, une page de
+téléchargement, un support) ; cela n'empêche pas un utilisateur de lancer un setup
+re-tamponné. Le setup ne se vérifie pas lui-même à l'installation : une première
+installation ne fait aucune requête réseau, et une vérification contre la clé de sa propre
+config ne prouverait rien. Seule une signature Authenticode, qui demande un certificat de
+signature de code, ferme ce point.
+
+## Le manifest de mise à jour (`update.json`)
+
+La même clé signe `update.json` (`bpkg update-manifest`), sur la ligne de contexte
+`BetterInstaller update manifest v1` et un saut de ligne suivis des octets exacts du corps
+signé. Le corps nomme l'app, la version, les URLs, le SHA-256 du paquet, le SHA-256 de la
+config, et une expiration au plus 7 jours après la signature ; renouvelle-le avec
+`bpkg resign-manifest`. Avec un `public_key` défini, un installeur refuse un manifest non
+signé, signé par une autre clé, modifié, expiré, pour une autre app, ou pas plus récent que
+l'installé. Format, règle de migration et hébergement : [UPDATES.fr.md](UPDATES.fr.md).
+
+Garde la clé privée là où tourne la re-signature hebdomadaire (un secret de CI, une machine
+hors ligne avec un rappel) : un manifest expiré est refusé, donc une clé que personne ne
+peut atteindre pendant une semaine arrête les mises à jour jusqu'à ce qu'elle serve de
+nouveau.
+
 ## Rotation des clés
 
 Signe une release avec la nouvelle clé, livre un build dont le `public_key` est la

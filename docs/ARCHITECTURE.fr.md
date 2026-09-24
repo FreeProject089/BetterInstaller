@@ -18,7 +18,7 @@ Le cœur réutilisable. Modules :
 | `config` | Parse `installer.toml` (`InstallerConfig` + toutes les sections). |
 | `sign` | Keygen / sign / verify Ed25519 (ed25519-dalek). |
 | `handoff` | Construit + écrit `installer-handoff.json` (le contrat 1er lancement). |
-| `update` | Vérif manifest distant, download, apply delta bsdiff, rollback atomique. |
+| `update` | Vérif du manifest distant signé (clé éditeur, expiration 7 jours), download, apply delta bsdiff, rollback atomique. |
 | `delta` | Diff/patch binaire (qbsdiff). |
 | `embed` | Lecture/écriture du trailer auto-extractible (config + bpkg ajoutés à l'exe). |
 | `prereq` | Détecter/auto-installer les prérequis (vérifs registre/fichier/commande). |
@@ -27,7 +27,8 @@ Le cœur réutilisable. Modules :
 
 ### `bpkg-cli` (`bpkg`)
 Une CLI fine au-dessus de `bpkg-core` : `pack`, `sign`, `verify`, `keygen`, `build`,
-`info`, `extract`, `install`, `update`, `fetch-update`, `delta`, `apply-delta`.
+`info`, `extract`, `install`, `update`, `fetch-update`, `delta`, `apply-delta`,
+`update-manifest`, `resign-manifest`, `verify-manifest`.
 Voir [CLI.md](CLI.md).
 
 ### `installer` (`betterinstaller.exe`)
@@ -71,8 +72,8 @@ Par-utilisateur partout (correspond au manifeste `asInvoker` — pas d'admin req
 
 Activé quand `installed_dir` est trouvé (ou `--uninstall`). Lit l'`InstallLocation` ARP ;
 propose **Réparer** (re-vérif+restaure), **Mettre à jour** (seulement si une version plus
-récente est trouvée — manifest distant ou paquet embarqué plus récent ; download + apply
-avec rollback), **Désinstaller** (tue l'app en cours → annule l'intégration → retire le
+récente est trouvée — manifest distant signé ou paquet embarqué plus récent ; download,
+vérification, fermeture de l'app en cours, apply avec rollback), **Désinstaller** (tue l'app en cours → annule l'intégration → retire le
 dossier, y compris le désinstalleur via une auto-suppression détachée). Tout avec
 confirmation et Annuler.
 

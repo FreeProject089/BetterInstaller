@@ -99,5 +99,5 @@ sandbox et d'intégrité de paquet sont traités en priorité haute.
 ## Publier une release (mainteneurs)
 
 Voir `examples/bmm/release.ps1` et `docs/UPDATER-SETUP.md` — bump des versions → build →
-delta → `update.json` multi-source → `gh release create` avec les 3 (ou 4, avec un delta)
+delta → `update.json` multi-source signé → `gh release create` avec les 3 (ou 4, avec un delta)
 assets.

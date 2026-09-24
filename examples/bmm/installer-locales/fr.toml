@@ -76,7 +76,7 @@ description = "Désactivé par défaut. N'a d'effet que si vous acceptez la tél
 
 [options.session_recorder]
 label = "Replay de session dans la télémétrie"
-description = "Ne compte que si la télémétrie est activée. Activé par défaut : décochez pour le désactiver. Ajoute à la télémétrie un enregistrement de la fenêtre de BMM (mise en page, clics, défilement, navigation), le texte des champs de saisie étant masqué. Aucune autre fenêtre ni votre écran ne sont jamais enregistrés. Décochez pour garder la télémétrie sans le replay."
+description = "Ne compte que si la télémétrie est activée. Désactivé par défaut : cochez pour l'activer. Ajoute à la télémétrie un enregistrement de la fenêtre de BMM (mise en page, clics, défilement, navigation), le texte des champs de saisie étant masqué. Aucune autre fenêtre ni votre écran ne sont jamais enregistrés. Laissez décoché pour garder la télémétrie sans le replay."
 
 [options.discord_rpc]
 label = "Discord Rich Presence"

@@ -17,7 +17,7 @@ The reusable core. Modules:
 | `config` | Parses `installer.toml` (`InstallerConfig` + all sections). |
 | `sign` | Ed25519 keygen / sign / verify (ed25519-dalek). |
 | `handoff` | Builds + writes `installer-handoff.json` (the first-run contract). |
-| `update` | Remote manifest check, download, bsdiff delta apply, atomic rollback. |
+| `update` | Signed remote manifest check (publisher key, 7-day expiry), download, bsdiff delta apply, atomic rollback. |
 | `delta` | Binary diff/patch (qbsdiff). |
 | `embed` | Self-extracting trailer read/write (config + bpkg appended to the exe). |
 | `prereq` | Detect/auto-install prerequisites (registry/file/command checks). |
@@ -26,7 +26,8 @@ The reusable core. Modules:
 
 ### `bpkg-cli` (`bpkg`)
 A thin CLI over `bpkg-core`: `pack`, `sign`, `verify`, `keygen`, `build`,
-`info`, `extract`, `install`, `update`, `fetch-update`, `delta`, `apply-delta`.
+`info`, `extract`, `install`, `update`, `fetch-update`, `delta`, `apply-delta`,
+`update-manifest`, `resign-manifest`, `verify-manifest`.
 See [CLI.md](CLI.md).
 
 ### `installer` (`betterinstaller.exe`)
@@ -70,8 +71,8 @@ Per-user everywhere (matches the `asInvoker` manifest — no admin needed).
 
 Entered when `installed_dir` is found (or `--uninstall`). Reads the ARP
 `InstallLocation`; offers **Repair** (re-verify+restore), **Update** (only if a
-newer version is found — remote manifest or newer bundled package; download + apply
-with rollback), **Uninstall** (kill running app → reverse integration → remove dir,
+newer version is found — signed remote manifest or newer bundled package; download,
+verify, close the running app, apply with rollback), **Uninstall** (kill running app → reverse integration → remove dir,
 incl. the uninstaller via a detached self-delete). All confirm-gated with Cancel.
 
 ## First-run handoff

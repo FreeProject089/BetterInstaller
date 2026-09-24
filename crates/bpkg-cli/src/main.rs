@@ -133,6 +133,67 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Write a SIGNED update.json for a signed .bpkg (card C-1).
+    ///
+    /// The signed part names the app, the version, the URLs, the package's SHA-256, the
+    /// SHA-256 of the installer.toml stamped into the setup, and an expiry at most 7 days
+    /// away: renew it with `resign-manifest` at least that often, or clients stop
+    /// believing it.
+    UpdateManifest {
+        /// The signed .bpkg this manifest offers (app id, version and hash are read from it).
+        #[arg(long)]
+        package: PathBuf,
+        /// The installer.toml `bpkg build` stamps into the setup (its hash is recorded).
+        #[arg(long)]
+        config: PathBuf,
+        /// The publisher's private.key (the key that signed the package).
+        #[arg(long)]
+        key: PathBuf,
+        /// Where clients download the .bpkg.
+        #[arg(long)]
+        url: String,
+        /// A mirror of the same .bpkg (repeatable).
+        #[arg(long = "mirror")]
+        mirrors: Vec<String>,
+        /// A delta patch, as `<from-version>=<url>` (repeatable).
+        #[arg(long = "delta")]
+        deltas: Vec<String>,
+        /// Release notes.
+        #[arg(long)]
+        notes: Option<String>,
+        /// Days until the manifest expires (1 to 7).
+        #[arg(long, default_value_t = 7)]
+        valid_days: i64,
+        /// Output update.json.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Renew the expiry of a signed update.json (run it at least weekly between releases).
+    ResignManifest {
+        /// The signed update.json to renew (rewritten in place unless --out is given).
+        manifest: PathBuf,
+        /// The publisher's private.key; the manifest's current signature must be by it.
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long, default_value_t = 7)]
+        valid_days: i64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Check a signed update.json: signature, expiry, and optionally that a setup carries
+    /// exactly the installer.toml and .bpkg the manifest names.
+    VerifyManifest {
+        manifest: PathBuf,
+        /// The publisher's public.key.
+        #[arg(long)]
+        key: PathBuf,
+        /// The app id the manifest must name.
+        #[arg(long)]
+        app_id: Option<String>,
+        /// A stamped setup to check against the manifest's config and package hashes.
+        #[arg(long)]
+        setup: Option<PathBuf>,
+    },
     /// Check a remote update manifest and, if newer, download + apply it.
     /// Print the installer.toml schema as JSON — every key the engine understands.
     ///
@@ -222,7 +283,198 @@ fn main() -> Result<()> {
             current,
             key,
         } => cmd_fetch_update(&url, &dir, &current, key.as_deref()),
+        Command::UpdateManifest {
+            package,
+            config,
+            key,
+            url,
+            mirrors,
+            deltas,
+            notes,
+            valid_days,
+            out,
+        } => cmd_update_manifest(ManifestArgs {
+            package: &package,
+            config: &config,
+            key: &key,
+            url,
+            mirrors,
+            deltas: &deltas,
+            notes,
+            valid_days,
+            out: &out,
+        }),
+        Command::ResignManifest {
+            manifest,
+            key,
+            valid_days,
+            out,
+        } => cmd_resign_manifest(&manifest, &key, valid_days, out.as_deref()),
+        Command::VerifyManifest {
+            manifest,
+            key,
+            app_id,
+            setup,
+        } => cmd_verify_manifest(&manifest, &key, app_id.as_deref(), setup.as_deref()),
     }
+}
+
+struct ManifestArgs<'a> {
+    package: &'a Path,
+    config: &'a Path,
+    key: &'a Path,
+    url: String,
+    mirrors: Vec<String>,
+    deltas: &'a [String],
+    notes: Option<String>,
+    valid_days: i64,
+    out: &'a Path,
+}
+
+/// The signed update.json for `a.package`, as text. Split from the command so a test can
+/// read what it produces.
+fn build_update_manifest(a: &ManifestArgs) -> Result<String> {
+    use bpkg_core::update::{sha256_hex, sign_manifest, DeltaEntry, UpdateManifest};
+    let sk = bpkg_core::sign::load_private(a.key).context("loading private key")?;
+    let bpkg =
+        std::fs::read(a.package).with_context(|| format!("reading {}", a.package.display()))?;
+    let mut pkg = Package::open(a.package).context("opening package")?;
+    // The manifest vouches for this package, so it must be one this key signed.
+    if !pkg
+        .verify_signature(&sk.verifying_key())
+        .context("verifying the package signature")?
+    {
+        anyhow::bail!(
+            "{} is not signed by this key: sign it first (`bpkg sign`)",
+            a.package.display()
+        );
+    }
+    let app = pkg.manifest.app.clone();
+    let cfg_bytes =
+        std::fs::read(a.config).with_context(|| format!("reading {}", a.config.display()))?;
+    let cfg = InstallerConfig::from_toml(&String::from_utf8_lossy(&cfg_bytes))
+        .context("invalid installer.toml")?;
+    if cfg.app.id != app.id || !bpkg_core::version::same_release(&cfg.app.version, &app.version) {
+        anyhow::bail!(
+            "installer.toml is {} {} but the package is {} {}",
+            cfg.app.id,
+            cfg.app.version,
+            app.id,
+            app.version
+        );
+    }
+    let deltas = a
+        .deltas
+        .iter()
+        .map(|d| {
+            d.split_once('=')
+                .map(|(from, url)| DeltaEntry {
+                    from: from.trim().to_string(),
+                    url: url.trim().to_string(),
+                    urls: vec![],
+                })
+                .ok_or_else(|| anyhow::anyhow!("--delta {d:?}: expected <from-version>=<url>"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let body = UpdateManifest {
+        app_id: Some(app.id.clone()),
+        version: app.version.clone(),
+        url: a.url.clone(),
+        urls: a.mirrors.clone(),
+        notes: a.notes.clone(),
+        deltas,
+        sha256: Some(sha256_hex(&bpkg)),
+        config_sha256: Some(sha256_hex(&cfg_bytes)),
+        ..Default::default()
+    };
+    sign_manifest(&body, &sk, chrono::Utc::now(), a.valid_days).context("signing manifest")
+}
+
+fn cmd_update_manifest(a: ManifestArgs) -> Result<()> {
+    let text = build_update_manifest(&a)?;
+    std::fs::write(a.out, format!("{text}\n"))
+        .with_context(|| format!("writing {}", a.out.display()))?;
+    println!(
+        "Signed update manifest → {} (valid {} days; renew with `bpkg resign-manifest`)",
+        a.out.display(),
+        a.valid_days
+    );
+    Ok(())
+}
+
+fn cmd_resign_manifest(
+    manifest: &Path,
+    key: &Path,
+    valid_days: i64,
+    out: Option<&Path>,
+) -> Result<()> {
+    let sk = bpkg_core::sign::load_private(key).context("loading private key")?;
+    let text = std::fs::read_to_string(manifest)
+        .with_context(|| format!("reading {}", manifest.display()))?;
+    let renewed = bpkg_core::update::resign_manifest(&text, &sk, chrono::Utc::now(), valid_days)
+        .context("re-signing manifest")?;
+    let out = out.unwrap_or(manifest);
+    std::fs::write(out, format!("{renewed}\n"))
+        .with_context(|| format!("writing {}", out.display()))?;
+    println!("Re-signed {} (valid {valid_days} days).", out.display());
+    Ok(())
+}
+
+/// Signature and expiry of `manifest`, and — with `setup` — that the setup carries exactly
+/// the installer.toml and package the manifest names. The config hash is the part of the
+/// setup no Ed25519 signature covers (`installer.toml` rides outside the package).
+fn check_manifest(
+    manifest: &Path,
+    key: &Path,
+    app_id: Option<&str>,
+    setup: Option<&Path>,
+) -> Result<bpkg_core::update::UpdateManifest> {
+    use bpkg_core::update::{parse_manifest, sha256_hex, ManifestPolicy};
+    let vk = bpkg_core::sign::load_public(key).context("loading public key")?;
+    let text = std::fs::read_to_string(manifest)
+        .with_context(|| format!("reading {}", manifest.display()))?;
+    let m = parse_manifest(&text, &ManifestPolicy::new(Some(&vk), app_id))?;
+    if let Some(setup) = setup {
+        let emb = bpkg_core::embed::read_embedded(setup)
+            .with_context(|| format!("reading {}", setup.display()))?
+            .ok_or_else(|| anyhow::anyhow!("{} is not a stamped setup", setup.display()))?;
+        let cfg = sha256_hex(&emb.config);
+        if m.config_sha256.as_deref() != Some(cfg.as_str()) {
+            anyhow::bail!(
+                "the setup's installer.toml is not the one this manifest names (SHA-256 {cfg}, \
+                 expected {})",
+                m.config_sha256.as_deref().unwrap_or("none")
+            );
+        }
+        let pkg = sha256_hex(&emb.bpkg);
+        if m.sha256.as_deref() != Some(pkg.as_str()) {
+            anyhow::bail!(
+                "the setup's package is not the one this manifest names (SHA-256 {pkg}, \
+                 expected {})",
+                m.sha256.as_deref().unwrap_or("none")
+            );
+        }
+    }
+    Ok(m)
+}
+
+fn cmd_verify_manifest(
+    manifest: &Path,
+    key: &Path,
+    app_id: Option<&str>,
+    setup: Option<&Path>,
+) -> Result<()> {
+    let m = check_manifest(manifest, key, app_id, setup)?;
+    println!(
+        "OK — signed manifest for {} {} (expires {}).",
+        m.app_id.as_deref().unwrap_or("?"),
+        m.version,
+        m.expires.as_deref().unwrap_or("?")
+    );
+    if setup.is_some() {
+        println!("OK — the setup carries exactly this release's installer.toml and package.");
+    }
+    Ok(())
 }
 
 fn cmd_delta(old: &Path, new: &Path, out: &Path) -> Result<()> {
@@ -256,7 +508,11 @@ fn cmd_fetch_update(url: &str, dir: &Path, current: &str, key: Option<&Path>) ->
         Some(k) => Some(bpkg_core::sign::load_public(k).context("loading public key")?),
         None => None,
     };
-    match bpkg_core::update::check_remote(url, current).context("checking update")? {
+    // With a key, the manifest itself must be signed by it, unexpired, and newer than
+    // `current` (card C-1). No migration grace here: the CLI has no install record to say
+    // the install predates signed manifests.
+    let policy = bpkg_core::update::ManifestPolicy::new(vk.as_ref(), None);
+    match bpkg_core::update::check_remote(url, current, &policy).context("checking update")? {
         None => println!("Up to date (current {current})."),
         Some(m) => {
             println!("Update available: {current} → {}. Downloading…", m.version);
@@ -609,5 +865,55 @@ mod tests {
         let (_base, bpkg) = packed("nokey");
         let mut pkg = Package::open(&bpkg).unwrap();
         gate_signature(&mut pkg, None, "installing").expect("no key must not be a refusal");
+    }
+
+    /// Card C-1 and the `installer.toml` row: the publisher tool writes a manifest that is
+    /// signed, and that pins the exact config a setup of this release carries. A setup
+    /// re-stamped with another config (same package, same key) no longer matches it.
+    #[test]
+    fn the_published_manifest_is_signed_and_pins_the_setups_config() {
+        use super::{build_update_manifest, check_manifest, ManifestArgs};
+        let (base, bpkg) = packed("manifest");
+        let sk = bpkg_core::sign::generate();
+        let (privf, pubf) = (base.join("private.key"), base.join("public.key"));
+        bpkg_core::sign::save_private(&sk, &privf).unwrap();
+        bpkg_core::sign::save_public(&sk.verifying_key(), &pubf).unwrap();
+        let cfg = base.join("installer.toml");
+        let cfg_text = "[app]\nid = \"t\"\nname = \"T\"\nversion = \"1\"\npublisher = \"p\"\n";
+        std::fs::write(&cfg, cfg_text).unwrap();
+        let out = base.join("update.json");
+        let args = ManifestArgs {
+            package: &bpkg,
+            config: &cfg,
+            key: &privf,
+            url: "https://example.invalid/t.bpkg".into(),
+            mirrors: vec![],
+            deltas: &[],
+            notes: None,
+            valid_days: 7,
+            out: &out,
+        };
+
+        // Only a package this key signed gets a manifest.
+        assert!(build_update_manifest(&args).is_err());
+        package::sign_package(&bpkg, &sk).unwrap();
+        std::fs::write(&out, build_update_manifest(&args).unwrap()).unwrap();
+        let m = check_manifest(&out, &pubf, Some("t"), None).unwrap();
+        assert_eq!(m.trust, bpkg_core::update::ManifestTrust::Verified);
+
+        let engine = base.join("engine.exe");
+        std::fs::write(&engine, b"not really an engine").unwrap();
+        let pkg_bytes = std::fs::read(&bpkg).unwrap();
+        let setup = base.join("setup.exe");
+        bpkg_core::embed::stamp(&engine, cfg_text.as_bytes(), &pkg_bytes, &setup).unwrap();
+        check_manifest(&out, &pubf, Some("t"), Some(&setup))
+            .expect("the setup built from this release's config and package");
+
+        let restamped = base.join("restamped.exe");
+        let other = format!("{cfg_text}[install]\nmain_exe = \"other.exe\"\n");
+        bpkg_core::embed::stamp(&engine, other.as_bytes(), &pkg_bytes, &restamped).unwrap();
+        let err = check_manifest(&out, &pubf, Some("t"), Some(&restamped)).unwrap_err();
+        assert!(err.to_string().contains("installer.toml"), "{err}");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

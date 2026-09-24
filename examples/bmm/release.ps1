@@ -81,16 +81,25 @@ if (Test-Path $prevPkg) {
     }
 }
 
-# 5) Write the final multi-source-aware update.json (version + url + notes + deltas).
+# 5) Re-write update.json with the delta, SIGNED (bpkg update-manifest; same key as the
+#    package, expires in 7 days -- renew weekly with `bpkg resign-manifest`).
+#    Package mirrors come from [update].package_urls, as in build-installer.ps1.
 $pkgUrl = "https://github.com/FreeProject089/BetterModsManager/releases/latest/download/bmm.bpkg"
-$man = [ordered]@{
-    version = $Version
-    url     = $pkgUrl
-    notes   = if ($Notes) { $Notes } else { "Better Mods Manager $Version" }
+$noteText = if ($Notes) { $Notes } else { "Better Mods Manager $Version" }
+$umArgs = @("update-manifest", "--package", $pkg, "--config", $cfgPath, "--key", "examples/bmm/keys/private.key",
+            "--url", $pkgUrl, "--notes", $noteText, "--out", $manifest)
+$cfgText = Get-Content $cfgPath -Raw
+$pkgMatch = [regex]::Match($cfgText, '(?ms)^\s*package_urls\s*=\s*\[(.*?)\]')
+if ($pkgMatch.Success) {
+    foreach ($q in [regex]::Matches($pkgMatch.Groups[1].Value, '"([^"]+)"')) {
+        $mu = $q.Groups[1].Value.Trim()
+        if ($mu -and $mu -ne $pkgUrl) { $umArgs += @("--mirror", $mu) }
+    }
 }
-if ($deltas.Count -gt 0) { $man.deltas = $deltas }
-($man | ConvertTo-Json -Depth 5) | Set-Content -Encoding ASCII $manifest
-Write-Host "[release] wrote $manifest"
+foreach ($d in $deltas) { $umArgs += @("--delta", ("{0}={1}" -f $d.from, $d.url)) }
+& $bpkg @umArgs
+if ($LASTEXITCODE -ne 0) { throw "update-manifest failed" }
+Write-Host "[release] wrote $manifest (signed)"
 if ($ExtraSources.Count -gt 0) {
     Write-Host "[release] NOTE: also publish this update.json to your extra sources: $($ExtraSources -join ', ')"
 }

@@ -77,6 +77,7 @@ file outside the folder survive; a hostile `../outside.txt` entry is ignored),
 **Residual.** In a folder the install does not own, files added later by a *remote*
 update, and zip prerequisites unpacked under the install folder, are not in the record
 and are left behind on uninstall. That is leftover files, not data loss (card C-3).
+*Updates: fixed by C-3 below. Zip prerequisites: still not recorded.*
 
 ## BI-02 — Empty or odd names become registry keys that uninstall deletes recursively
 
@@ -196,7 +197,8 @@ the GUI passes `[app].id`, the CLI passes `None` (the version rules still apply)
 
 **Residual.** `update.json` is still unsigned. Its host can withhold updates, or offer a
 genuine release that is newer than the installed one but older than the latest. Now
-documented (card C-1).
+documented (card C-1). *Fixed by C-1 below: the manifest is signed and expires after 7
+days; withholding now lasts at most until the last manifest a client saw expires.*
 
 ## BI-06 — Code-signing the setup breaks it; the config is unauthenticated
 
@@ -278,7 +280,7 @@ manifest or the recorded file list. The kill also moved after the signature chec
 **Test.** `only_the_packages_own_top_level_executables_are_closed`.
 
 **Residual.** Name-based: a second copy of the same app running from elsewhere is still
-closed (card C-6).
+closed (card C-6). *Fixed by C-6 below: closed by full image path.*
 
 ## BI-10 — `bpkg keygen` replaces the publisher key
 
@@ -347,6 +349,23 @@ The rule is that the docs must not promise more than the code does.
 
 ## Remaining improvements (owner cards)
 
+The owner delegated these decisions on 2026-09-24 (BCWEB `guides/SECURITY_SUMMARY_EN.md`
+§9, item 6 and the BI rows of "Other open items"). Status after the second pass, detailed
+in [Owner cards applied](#owner-cards-applied-september-24-second-pass) below:
+
+| Card | Status |
+|---|---|
+| C-1 signed `update.json` (+ config hash) | **Fixed** |
+| C-2 close the app before a remote update | **Fixed** |
+| C-3 record what updates add | **Fixed** for updates; zip prerequisites still unrecorded |
+| C-4 "Browse…" UX | Open (product choice, not in the delegated list) |
+| C-5 one version comparator | **Fixed** |
+| C-6 close by path | **Fixed** |
+| C-7 `urls` missing from `UPDATES.fr.md` | **Fixed** (the FR page was rewritten with C-1) |
+| C-8 session recorder ticked by default | **Fixed** |
+
+The original cards, as written by the first pass:
+
 - **C-1 Signed update metadata.** Sign `update.json` with the publisher key and check it
   before trusting `version`/`url`, with an expiry to stop freeze attacks. This closes the
   BI-05 residual. It is a format decision.
@@ -365,6 +384,119 @@ The rule is that the docs must not promise more than the code does.
 - **C-8 Privacy.** `session_recorder` defaults to on under an opt-in `telemetry` parent.
   This is deliberately excepted in the defaults test and harmless while the parent is
   off. Worth one line in the privacy review.
+
+## Owner cards applied (September 24, second pass)
+
+Each fix below has a test that was **born red**: the flaw was put back by a one-line
+mutation, the test failed, the mutation was removed. The mutations are listed with each
+card.
+
+### C-1 — Signed update metadata, and the `installer.toml` hash
+
+**Fix.** `crates/bpkg-core/src/update.rs`.
+- `update.json` carries `signed` (a JSON document as a string) and `signature` (Ed25519
+  by the publisher key, the scheme packages already use, over the context line
+  `BetterInstaller update manifest v1\n` followed by the exact bytes of `signed`). The
+  signed body holds `app_id`, `version`, `url`, `urls`, `notes`, `deltas`, `sha256` (the
+  full `.bpkg`), `config_sha256` (the stamped `installer.toml`), `issued`, `expires`.
+  The top-level fields remain as a copy for engines that predate signing.
+- `parse_manifest` + `ManifestPolicy`: with a `public_key`, an unsigned manifest, a bad
+  signature, an edited body, a body for another app, a body without a package hash, an
+  expired body, or one signed for more than 7 days is refused. The signed body is the
+  only thing read. `offer_if_newer` keeps a manifest that is not newer than the installed
+  version from being offered, and `check_offered` still refuses its package.
+- `apply_downloaded` refuses a download whose SHA-256 is not the signed one (a mirror, or
+  a delta that rebuilds something else, can no longer substitute another package the same
+  key signed).
+- Publisher side: `bpkg update-manifest` (refuses a package the key did not sign, or a
+  config for another app/version), `bpkg resign-manifest` (weekly renewal; only a manifest
+  that key signed), `bpkg verify-manifest [--setup]`. `examples/bmm/build-installer.ps1`
+  and `release.ps1` now call `bpkg update-manifest` instead of writing JSON.
+- GUI: the background check, `--check-update` (new `"manifest"` field) and the remote
+  update use the policy with `[security] public_key` and `[app] id`.
+- **Migration rule (one engine release):** an unsigned manifest is accepted, flagged, and
+  the user is told on the result page, only while `MIGRATION_ACCEPTS_UNSIGNED` is `true`
+  (to be set to `false` in the next release) **and** the install was recorded by an
+  engine that predates signed manifests (`uninstall-info.json` exists without
+  `signed_update_manifests`). The next install/repair/update writes that key, so each
+  install gets it once. `bpkg fetch-update` never applies it.
+- `config_sha256`: checked by `bpkg verify-manifest --setup`, with the publisher key the
+  checker already holds. The setup does not check itself (a first install makes no
+  network request, and a check against its own config's key would be circular), so this
+  makes a re-stamped config detectable, not impossible. **Authenticode remains the fix,
+  and it needs a code-signing certificate: the owner's purchase.**
+
+**Tests** (`update.rs`, module `signed_manifest_tests`; `bpkg-cli`):
+`an_unsigned_manifest_is_refused_when_a_key_is_pinned`,
+`a_manifest_signed_by_another_key_or_edited_after_signing_is_refused`,
+`an_expired_manifest_is_refused`, `a_manifest_older_than_the_installed_version_is_not_an_update`,
+`the_unsigned_copy_is_never_read_when_a_signature_is_there`,
+`a_manifest_signed_for_another_app_is_refused`,
+`the_download_must_be_the_package_the_manifest_names`,
+`resigning_renews_an_expired_manifest_but_only_with_the_key_that_signed_it`,
+`a_signed_manifest_round_trips_and_keeps_a_copy_for_older_engines`,
+`the_published_manifest_is_signed_and_pins_the_setups_config`.
+Mutations, each red: unsigned arm removed; expiry check off; signature check off;
+`offer_if_newer` always offers; package hash check off; app-id check off; validity limit
+off; top-level copy read over the signed body; config-hash comparison off.
+
+**Operational cost.** The publisher must re-sign `update.json` at least every 7 days
+between releases, and re-upload it wherever it is served; otherwise installed copies stop
+being offered updates.
+
+### C-2 — Close the app before a remote update
+
+**Fix.** `apply_downloaded` takes a `before_apply` hook, run on the verified package
+manifest after every check and before the snapshot. The GUI's remote path
+(`apply_remote_update`, `crates/installer/src/main.rs`) closes the package's own
+top-level executables there, as the local path does. A refused download closes nothing.
+
+**Test.** `a_remote_update_closes_the_app_first_and_records_what_it_added` (the hook sees
+the old files, and is not called for a package signed by another key). Mutation: the
+hook call removed — red.
+
+### C-3 — Record what updates add
+
+**Fix.** `uninstall::record_update` merges the files a remote update wrote into
+`uninstall-info.json`, keeping every other key; it writes nothing when there is no
+record. The local update path already rewrote the record.
+
+**Tests.** `an_update_adds_its_files_to_the_record_and_keeps_the_rest` and the C-2 test
+(an uninstall from a shared folder then removes the file 1.3.0 added and keeps the user's
+file). Mutations: the `record_update` call removed; the merge removed — both red.
+Zip prerequisites unpacked under the install folder are still not recorded.
+
+### C-5 — One version comparator
+
+**Fix.** `bpkg_core::version::is_newer` / `same_release` (the prerequisite rule:
+first dotted number run, missing component = 0). `update::is_newer` and the installer's
+`version_gt` are deleted; the update check, the package gate and the "Update" button use
+the same function. The pre-existing `version_compare` cases pass unchanged.
+
+**Test.** `the_pairs_the_three_comparators_disagreed_on`: `1.2.3-rc1` > `1.2.2` (old
+`update::is_newer` said older), `v1.3.0` > `1.2.0` (old `version_gt` said not newer),
+`1.2.0+5` = `1.2.0` and `1.2.0-beta.2` = `1.2.0` (both old ones said newer), `1..2` not
+newer than `1.1`. The comparator given each old rule in turn — red both times. Documented
+consequence: a suffix is not a version, so a pre-release needs its own numbers.
+
+### C-6 — Close by path
+
+**Fix.** `crates/installer/src/procs.rs`: Toolhelp32 snapshot, name pre-filter, then
+`OpenProcess` + `QueryFullProcessImageNameW` on the same handle that would terminate it;
+both paths canonicalised; only an exact match is terminated (and waited for, 5 s). Used by
+install, repair, update and uninstall.
+
+**Test.** `only_the_copy_in_the_folder_being_updated_is_closed`: two copies of the
+system's `PING.EXE` under the same unique name in two temp folders; only the one in the
+"install" folder dies. Mutation: back to `taskkill /F /IM <name>` — red (both died).
+
+### C-8 — Session recorder unticked by default
+
+**Fix.** `examples/bmm/installer.toml`: `session_recorder` `default = false`, description
+(EN, FR) says "off by default". The defaults test no longer excepts it.
+
+**Test.** `setup_rows_are_grouped_translated_and_show_their_default` with the exception
+removed. Mutation: `default = true` again — red.
 
 ## What was not reached
 
@@ -385,3 +517,9 @@ Windows, the same commands as CI: `cargo fmt --all -- --check`,
 green; 103 tests before, 126 after. Linux (`betterinstaller-dev` image, `--locked`, run
 as a non-root user so the permission-based tests do not skip): the same three, green, 130
 tests.
+
+Second pass (owner cards): Windows, the same three commands, green, **142** tests (126
+before). Linux (`betterinstaller-dev` image, as root): `fmt --check`, `clippy -D warnings`
+and `test`, green, 144 tests (the C-6 process test is Windows-only; the permission tests
+run on Linux). `mkdocs build --strict`: green. 17 mutations, one per flaw put back: all
+red.

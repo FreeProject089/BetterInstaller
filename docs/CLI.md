@@ -50,14 +50,29 @@ bpkg install <app.bpkg> --dest <dir>       # verify + extract with a progress ba
 ### `update` / `fetch-update` — apply newer versions
 ```
 bpkg update <new.bpkg> --dir <install_dir>            # apply a local newer pkg (rollback on fail)
-bpkg fetch-update --url <manifest.json> --dir <install_dir> --current <version>
+bpkg fetch-update --url <manifest.json> --dir <install_dir> --current <version> [--key public.key]
 ```
-See [UPDATES.md](UPDATES.md).
+With `--key`, the manifest must be signed by that key and unexpired, and the package
+must match it. See [UPDATES.md](UPDATES.md).
+
+### `update-manifest` / `resign-manifest` / `verify-manifest` — the signed `update.json`
+```
+bpkg update-manifest --package <app.bpkg> --config installer.toml --key private.key \
+  --url <package url> [--mirror <url>]… [--delta <from>=<url>]… [--notes <text>] \
+  [--valid-days 1..7] --out update.json
+bpkg resign-manifest <update.json> --key private.key [--valid-days 1..7] [--out <file>]
+bpkg verify-manifest <update.json> --key public.key [--app-id <id>] [--setup <App-Setup.exe>]
+```
+`update-manifest` reads the app id, version and SHA-256 from the (signed) package and the
+SHA-256 of `installer.toml`, then signs; the manifest expires after `--valid-days`
+(default and maximum 7). `resign-manifest` renews the expiry of a manifest the same key
+signed — run it at least weekly between releases. `verify-manifest` checks signature and
+expiry, and with `--setup` that the setup carries exactly the config and package named.
 
 ### `delta` / `apply-delta` — binary patches
 ```
-bpkg delta <old.bpkg> <new.bpkg> <out.patch>     # create a bsdiff patch
-bpkg apply-delta <old.bpkg> <patch> <out.bpkg>   # reconstruct the new package
+bpkg delta --old <old.bpkg> --new <new.bpkg> --out <out.patch>     # create a bsdiff patch
+bpkg apply-delta --old <old.bpkg> --patch <patch> --out <out.bpkg>   # reconstruct the new package
 ```
 
 ## Typical pipeline

@@ -20,15 +20,11 @@ allow_delta   = true
 > sources et utilise la **plus récente** trouvée ; les sources injoignables sont ignorées.
 > Laisse `[]` pour une seule source — le multi est opt-in et totalement rétro-compatible.
 
-Le manifest :
-```json
-{
-  "version": "1.2.0",
-  "url": "https://…/App-1.2.0.bpkg",
-  "notes": "Nouveautés de la 1.2.0",
-  "deltas": [ { "from": "1.1.0", "url": "https://…/1.1.0-to-1.2.0.patch" } ]
-}
-```
+Le manifest est **signé** avec la clé de l'éditeur et expire au bout de 7 jours au
+plus ; écris-le avec `bpkg update-manifest` et renouvelle-le chaque semaine avec
+`bpkg resign-manifest` (format, règles et migration : [UPDATES.fr.md](UPDATES.fr.md)).
+Avec un `public_key` configuré, un manifest non signé, expiré ou d'une autre app est
+refusé.
 
 > Le nouveau `.bpkg` **doit être signé par la même clé** que le build installé
 > (`require_signature` est imposé avant d'appliquer). Voir [SIGNING.md](SIGNING.md).
@@ -54,18 +50,15 @@ GitHub redirige toujours `…/releases/latest/download/<asset>` vers l'asset de 
    ```
 2. (Optionnel) un delta depuis la release précédente :
    ```sh
-   bpkg delta App-1.1.0.bpkg App-1.2.0.bpkg 1.1.0-to-1.2.0.patch
+   bpkg delta --old App-1.1.0.bpkg --new App-1.2.0.bpkg --out 1.1.0-to-1.2.0.patch
    ```
-3. Écris `update.json` pointant vers les URLs **d'assets de release** de *ce* tag :
-   ```json
-   {
-     "version": "1.2.0",
-     "url": "https://github.com/<owner>/<repo>/releases/download/v1.2.0/App-1.2.0.bpkg",
-     "deltas": [
-       { "from": "1.1.0",
-         "url": "https://github.com/<owner>/<repo>/releases/download/v1.2.0/1.1.0-to-1.2.0.patch" }
-     ]
-   }
+3. Écris le `update.json` signé pointant vers les URLs **d'assets de release** de *ce* tag :
+   ```sh
+   bpkg update-manifest --package App-1.2.0.bpkg --config installer.toml \
+     --key keys/private.key \
+     --url https://github.com/<owner>/<repo>/releases/download/v1.2.0/App-1.2.0.bpkg \
+     --delta "1.1.0=https://github.com/<owner>/<repo>/releases/download/v1.2.0/1.1.0-to-1.2.0.patch" \
+     --out update.json
    ```
 4. Crée la GitHub Release `v1.2.0` et uploade `update.json`, `App-1.2.0.bpkg`, et le patch
    comme **assets**.
@@ -73,14 +66,26 @@ GitHub redirige toujours `…/releases/latest/download/<asset>` vers l'asset de 
 `manifest_url` reste `…/releases/latest/download/update.json` pour toujours — chaque
 release publie juste un nouveau `update.json`.
 
-> Automatise-le : un job CI (ou ton script de build) peut générer `update.json` depuis la
-> version du paquet et les URLs d'assets, puis `gh release create … update.json App-*.bpkg`.
+**Entre deux releases**, le manifest doit être renouvelé avant d'expirer (7 jours), sinon
+les copies installées ne se voient plus proposer la mise à jour : un job planifié qui
+détient la clé privée exécute, au moins chaque semaine,
+
+```sh
+gh release download --pattern update.json --dir . --clobber
+bpkg resign-manifest update.json --key keys/private.key
+gh release upload <tag le plus récent> update.json --clobber
+```
+
+et le re-publie partout ailleurs où il est servi (`manifest_urls`).
+
+> Automatise-le : un job CI (ou ton script de build) exécute `bpkg update-manifest` après
+> `bpkg sign`, puis `gh release create … update.json App-*.bpkg`.
 
 ### Exemple bundlé (`examples/`)
 
-Le script de build de l'exemple bundlé **émet `update.json` automatiquement** (il lit
-`[app].version` et dérive l'URL du `.bpkg` depuis `[update].manifest_url`). Une release =
-trois uploads :
+Le script de build de l'exemple bundlé **émet automatiquement un `update.json` signé**
+(`bpkg update-manifest` : l'URL du `.bpkg` est dérivée de `[update].manifest_url`, les
+miroirs viennent de `[update].package_urls`). Une release = trois uploads :
 
 ```
 gh release create v1.0.0 \
@@ -109,7 +114,8 @@ https://downloads.example.com/myapp/1.1.0-to-1.2.0.patch
 
 1. `manifest_url = "https://downloads.example.com/myapp/update.json"`.
 2. À chaque release, uploade le `.bpkg` signé (+ patch optionnel) et écrase `update.json`
-   avec le nouveau `version` + les URLs.
+   avec celui qu'a écrit `bpkg update-manifest` ; renouvelle-le au moins chaque semaine
+   avec `bpkg resign-manifest` et écrase-le de nouveau.
 3. Sers avec les bons content-types et **CORS non requis** (l'updater récupère côté
    serveur via le client HTTP Rust, pas un navigateur).
 
@@ -130,15 +136,20 @@ location /myapp/ {
 
 ## Tester une mise à jour en local
 
+Toute URL de mise à jour doit être en **HTTPS** (une URL `http://` est refusée avant
+toute connexion, redirections comprises) : un simple `python -m http.server` ne marche
+donc pas. Sers le dossier en HTTPS — un hôte de préproduction, ou un serveur local avec un
+certificat auquel cette machine fait confiance — puis :
+
 ```sh
-# sers un dossier avec update.json + le .bpkg en localhost
-python -m http.server 8000        # dans le dossier
-bpkg fetch-update --url http://localhost:8000/update.json --dir <install_dir> --current 1.1.0
+bpkg fetch-update --url https://<staging>/update.json --dir <install_dir> --current 1.1.0 \
+  --key keys/public.key
 ```
 
-Ou mets `manifest_url` sur l'URL localhost, installe un build plus ancien, puis rouvre
+Ou mets `manifest_url` sur cette URL, installe un build plus ancien, puis rouvre
 l'installeur (mode maintenance) — le bouton **Mettre à jour** apparaît quand le manifest
-est plus récent.
+est valide et plus récent. `bpkg verify-manifest update.json --key keys/public.key`
+vérifie un manifest hors ligne (signature, expiration) avant publication.
 
 ---
 
@@ -161,7 +172,7 @@ Imprime un rapport JSON sur **stdout** et pose le **code de sortie** :
 |---|---|
 | `10` | Une mise à jour est disponible |
 | `0`  | Déjà à jour |
-| `2`  | Erreur (pas de `manifest_url`, échec réseau/HTTP, manifest invalide) |
+| `2`  | Erreur (pas de `manifest_url`, échec réseau/HTTP, manifest invalide — non signé, expiré, mauvaise clé ou autre app quand un `public_key` est défini) |
 
 ```jsonc
 // exit 10
@@ -172,7 +183,9 @@ Imprime un rapport JSON sur **stdout** et pose le **code de sortie** :
   "latest_version": "2.0.0",
   "notes": "Ajoute le mode sombre et un scan plus rapide.",   // depuis le manifest, si fourni
   "url": "https://…/app.bpkg",
-  "has_delta": false
+  "has_delta": false,
+  "manifest": "verified"   // ou "unverified" (pas de public_key configuré), ou
+                           // "unsigned-accepted" (la règle de migration, une fois : le dire)
 }
 // exit 0  → { "app": …, "current_version": "2.0.0", "update_available": false }
 // exit 2  → { …, "update_available": false, "error": "HTTP 404 …" }
@@ -189,8 +202,9 @@ Imprime un rapport JSON sur **stdout** et pose le **code de sortie** :
 ```
 
 Ouvre la fenêtre de maintenance et, dès que le manifest confirme une version plus récente,
-**démarre la mise à jour automatiquement** (download → vérif signature → apply avec
-rollback, delta si proposé). Sans `--update`, le lancer normalement affiche le bouton
+**démarre la mise à jour automatiquement** (manifest vérifié → download → hash et
+signature du paquet → fermeture des processus de l'app elle-même → apply avec rollback,
+delta si proposé). Sans `--update`, le lancer normalement affiche le bouton
 **Mettre à jour** que l'utilisateur clique.
 
 ### Le brancher dans ton app (exemple)

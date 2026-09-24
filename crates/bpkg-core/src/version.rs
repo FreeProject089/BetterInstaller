@@ -58,6 +58,40 @@ pub fn cmp_version(a: &[u64], b: &[u64]) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
+/// Is release `a` strictly newer than release `b`?
+///
+/// The ONE version ordering in the workspace (card C-5). There used to be three: this
+/// module (prerequisites), `update::is_newer` (which dropped any component that was not a
+/// bare number, so `1.2.3-rc1` read as `1.2` and ranked BELOW `1.2.2`) and the installer's
+/// `version_gt` (which turned a non-number into 0 and split on `-`/`+`, so `v1.3.0` ranked
+/// below `1.2.0` and `1.2.0+5` above `1.2.0`). The update check, the package gate and the
+/// "Update" button could each give a different answer about the same two strings.
+///
+/// The rule is [`extract_version`] + [`cmp_version`]: the first dotted number run, compared
+/// component by component, a missing component being zero. A suffix after the run
+/// (`-beta.2`, `+5`, `(1)-release`) is not part of the version, so `1.2.0-beta` and `1.2.0`
+/// are the SAME release here — publish a pre-release under its own numbers (`1.2.90`), not
+/// under a suffix, if it must be offered as an update.
+///
+/// `a` with no number at all is never newer than anything: a version nobody can read has
+/// not been shown to be an upgrade. `b` with no number counts as `0`.
+pub fn is_newer(a: &str, b: &str) -> bool {
+    let Some(va) = extract_version(a) else {
+        return false;
+    };
+    let vb = extract_version(b).unwrap_or_default();
+    cmp_version(&va, &vb) == std::cmp::Ordering::Greater
+}
+
+/// `a` and `b` name the same release under [`is_newer`]'s rule (`1.3` = `1.3.0`). Both must
+/// contain a version: two strings with no number in them are not "the same version".
+pub fn same_release(a: &str, b: &str) -> bool {
+    match (extract_version(a), extract_version(b)) {
+        (Some(x), Some(y)) => cmp_version(&x, &y) == std::cmp::Ordering::Equal,
+        _ => false,
+    }
+}
+
 /// Does `found` satisfy `min` / `max`? Both bounds are INCLUSIVE.
 ///
 /// Inclusive because that is what people mean. "Needs 3.10 or later" includes 3.10, and a
@@ -169,6 +203,51 @@ mod tests {
         // machine — a failure nobody can debug from the outside.
         assert!(satisfies("Python 3.12.0", Some("latest"), None));
         assert!(satisfies("Python 3.12.0", None, Some("")));
+    }
+
+    /// The cases `update::is_newer` passed, run against the one comparator that replaced it.
+    #[test]
+    fn release_order_keeps_what_the_update_check_always_answered() {
+        assert!(is_newer("1.2.0", "1.1.9"));
+        assert!(is_newer("2.0.0", "1.9.9"));
+        assert!(is_newer("1.0.1", "1.0"));
+        assert!(!is_newer("1.0.0", "1.0.0"));
+        assert!(!is_newer("1.0.0", "1.0.1"));
+        assert!(is_newer("1.10.0", "1.9.0"));
+        assert!(!is_newer("1.9.0", "1.10.0"));
+        assert!(is_newer("1.0.10", "1.0.9"));
+        assert!(!is_newer("1.2", "1.2.0"));
+        assert!(!is_newer("1.2.0", "1.2"));
+        assert!(same_release("1.3", "1.3.0"));
+        assert!(!same_release("1.2.5", "1.3.0"));
+    }
+
+    /// Card C-5: every pair on which the three comparators that used to exist disagreed,
+    /// with the answer that now holds everywhere (update check, package gate, "Update"
+    /// button). Each line names who got it wrong.
+    #[test]
+    fn the_pairs_the_three_comparators_disagreed_on() {
+        // update::is_newer dropped "3-rc1" and compared 1.2 with 1.2.2: an rc of the next
+        // patch looked OLDER than the current one.
+        assert!(is_newer("1.2.3-rc1", "1.2.2"));
+        // installer's version_gt read "v1" as 0: a v-prefixed release was never newer.
+        assert!(is_newer("v1.3.0", "1.2.0"));
+        assert!(!is_newer("1.2.0", "v1.3.0"));
+        // version_gt split on '+' and read build metadata as a fourth component.
+        assert!(!is_newer("1.2.0+5", "1.2.0"));
+        assert!(same_release("1.2.0+5", "1.2.0"));
+        // Both update::is_newer (1.2.2) and version_gt (1.2.0.0.2) ranked a second beta of
+        // 1.2.0 above the 1.2.0 release itself. A suffix is not part of the version.
+        assert!(!is_newer("1.2.0-beta.2", "1.2.0"));
+        assert!(same_release("1.2.0-beta.2", "1.2.0"));
+        // The one all three agreed on, pinned so it stays deliberate.
+        assert!(same_release("1.2.0-beta", "1.2.0"));
+        // update::is_newer skipped the empty component of "1..2" and read 1.2.
+        assert!(!is_newer("1..2", "1.1"));
+        // No number: never newer, never "the same".
+        assert!(!is_newer("latest", "1.0"));
+        assert!(!same_release("latest", "latest"));
+        assert!(is_newer("1.0", ""));
     }
 
     #[test]

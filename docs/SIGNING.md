@@ -61,6 +61,30 @@ config is an **Authenticode signature over the finished `*-Setup.exe`** (sign it
 engine finds its payload in front of the certificate table). Ed25519 is what protects
 **updates**: they are checked against the key of the build already installed.
 
+The signed update manifest also carries the SHA-256 of the `installer.toml` stamped into
+that release's setup (`config_sha256`). `bpkg verify-manifest update.json --key
+public.key --setup App-Setup.exe` checks a setup against it, with the publisher key you
+already hold rather than one the setup brings. That makes a re-stamped config
+**detectable** by whoever runs the check (a release pipeline, a download page, a
+support person); it does not stop a user from running a re-stamped setup. The setup does
+not check itself at install time: a first install makes no network request, and a check
+against the key in its own config would prove nothing. Only an Authenticode signature,
+which needs a code-signing certificate, closes that.
+
+## The update manifest (`update.json`)
+
+The same key signs `update.json` (`bpkg update-manifest`), over the context line
+`BetterInstaller update manifest v1` and a newline followed by the exact bytes of the
+signed body. The body names the app, the version, the URLs, the package's SHA-256, the
+config's SHA-256, and an expiry at most 7 days after signing; renew it with
+`bpkg resign-manifest`. With a `public_key` set, an installer refuses a manifest that is
+unsigned, signed by another key, edited, expired, for another app, or not newer than
+what is installed. Format, migration rule and hosting: [UPDATES.md](UPDATES.md).
+
+Keep the private key where the weekly re-signing runs (a CI secret, an offline machine
+with a reminder): an expired manifest is refused, so a key nobody can reach for a week
+stops updates until it is used again.
+
 ## Rotating keys
 
 Sign a release with the new key, ship a build whose `public_key` is the new one, and

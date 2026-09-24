@@ -54,6 +54,9 @@ High-impact areas (treated as priority):
 - Keep the **private key offline**; never commit it (it's gitignored).
 - Host `update.json` and packages over **HTTPS**; the new package must be signed by the
   **same key** the installed build trusts.
+- Produce `update.json` with `bpkg update-manifest` (signed with that key, expires after
+  7 days) and renew it at least weekly with `bpkg resign-manifest`; an installer with a
+  `public_key` refuses an unsigned or expired manifest.
 - Validate anything your app reads from `installer-handoff.json` — treat it as input.
 
 ## Supported versions

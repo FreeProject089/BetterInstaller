@@ -126,20 +126,16 @@ auto_check   = true                        # check when maintenance opens
 allow_delta  = true                        # prefer a small binary patch
 ```
 
-The **manifest** is JSON:
-```json
-{
-  "version": "1.2.0",
-  "url": "https://…/App-1.2.0.bpkg",
-  "deltas": [{ "from": "1.1.0", "url": "https://…/1.1.0-to-1.2.0.patch" }]
-}
-```
+The **manifest** is JSON **signed with your publisher key**, written by
+`bpkg update-manifest` and valid for at most 7 days (renew it with
+`bpkg resign-manifest`). With a `public_key` set, an unsigned or expired manifest is
+refused. Format and rules: [docs/UPDATES.md](docs/UPDATES.md).
 
 When the app is already installed and you re-run the setup (or it's opened via the
 ARP entry), BetterInstaller checks the manifest in the background. If it advertises
 a newer version, the **Update** button appears and downloads + applies it (using a
 delta from the installed version when offered), with **automatic rollback** on any
-failure. Create deltas with `bpkg delta old.bpkg new.bpkg patch`.
+failure. Create deltas with `bpkg delta --old old.bpkg --new new.bpkg --out patch`.
 
 If `[update]` is omitted, the **Update** button still appears when the *bundled*
 setup is newer than what's installed (it re-extracts the embedded package).
@@ -424,4 +420,5 @@ Receipts are per-user, matching where these installers actually put things: they
 3. Put your built binaries + `TOS.md`/`PRIVACY.md` (+ optional `bundle/`) in the payload.
 4. Implement the handoff reader in your app (apply settings once, mark consumed).
 5. `pack → sign → build` (or copy `build-installer.ps1`).
-6. Host an `update.json` if you want auto-update; set `[update].manifest_url`.
+6. If you want auto-update: set `[update].manifest_url`, host the `update.json`
+   `bpkg update-manifest` writes, and renew it weekly (`bpkg resign-manifest`).

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+mod procs;
 mod uninstall;
 
 use i_slint_backend_winit::WinitWindowAccessor;
@@ -105,14 +106,24 @@ fn run_check_update(cfg: &InstallerConfig) -> anyhow::Result<()> {
         .installed_version(&cfg.app.id)
         .unwrap_or_else(|| cfg.app.version.clone());
 
+    let vk = pinned_key(cfg);
+    let install_dir = plat.installed_dir(&cfg.app.id);
+    let key = vk.as_ref().ok().and_then(Option::as_ref);
+    let policy = manifest_policy(key, &cfg.app.id, install_dir.as_deref());
     let result = match cfg.update.as_ref() {
+        _ if vk.is_err() => serde_json::json!({
+            "app": app_name,
+            "current_version": current,
+            "update_available": false,
+            "error": vk.as_ref().err(),
+        }),
         None => serde_json::json!({
             "app": app_name,
             "current_version": current,
             "update_available": false,
             "error": "no [update] manifest_url configured",
         }),
-        Some(uc) => match bpkg_core::update::check_remote_multi(&uc.sources(), &current) {
+        Some(uc) => match bpkg_core::update::check_remote_multi(&uc.sources(), &current, &policy) {
             Ok(Some(m)) => serde_json::json!({
                 "app": app_name,
                 "current_version": current,
@@ -121,6 +132,9 @@ fn run_check_update(cfg: &InstallerConfig) -> anyhow::Result<()> {
                 "notes": m.notes,
                 "url": m.url,
                 "has_delta": !m.deltas.is_empty(),
+                // "verified", "unverified" (no key configured) or "unsigned-accepted" (the
+                // one-time migration rule; the caller should say so).
+                "manifest": manifest_trust_label(m.trust),
             }),
             Ok(None) => serde_json::json!({
                 "app": app_name,
@@ -145,6 +159,43 @@ fn run_check_update(cfg: &InstallerConfig) -> anyhow::Result<()> {
         0
     };
     std::process::exit(code);
+}
+
+/// `[security] public_key`, parsed. A key that does not parse is an `Err`, never `None`:
+/// `None` means "no key, read unverified", and turning a typo into that is BI-03. Config
+/// validation already refuses such a key at load; this is the second line.
+fn pinned_key(cfg: &InstallerConfig) -> Result<Option<bpkg_core::sign::VerifyingKey>, String> {
+    match cfg.security.as_ref().and_then(|s| s.public_key.as_deref()) {
+        Some(pk) => bpkg_core::sign::parse_public(pk.trim())
+            .map(Some)
+            .map_err(|e| format!("security.public_key: {e}")),
+        None => Ok(None),
+    }
+}
+
+/// What an `update.json` must be for this installer (card C-1): signed by the pinned key,
+/// unexpired, for this app. The one exception is the migration rule — an install recorded
+/// by an engine from before signed manifests, while the engine still carries
+/// `MIGRATION_ACCEPTS_UNSIGNED` — which accepts an unsigned manifest once, flagged so the
+/// user is told.
+fn manifest_policy<'a>(
+    key: Option<&'a bpkg_core::sign::VerifyingKey>,
+    app_id: &'a str,
+    install_dir: Option<&Path>,
+) -> bpkg_core::update::ManifestPolicy<'a> {
+    let mut p = bpkg_core::update::ManifestPolicy::new(key, Some(app_id));
+    p.accept_unsigned = bpkg_core::update::MIGRATION_ACCEPTS_UNSIGNED
+        && install_dir.is_some_and(uninstall::installed_before_signed_manifests);
+    p
+}
+
+fn manifest_trust_label(t: bpkg_core::update::ManifestTrust) -> &'static str {
+    use bpkg_core::update::ManifestTrust;
+    match t {
+        ManifestTrust::Verified => "verified",
+        ManifestTrust::Unverified => "unverified",
+        ManifestTrust::UnsignedAccepted => "unsigned-accepted",
+    }
 }
 
 /// Load DLLs from System32 only — never from the folder the setup was started from.
@@ -337,7 +388,10 @@ fn run_gui(
     let installed_version = plat.installed_version(&app_meta.id);
     let update_available = installed_version
         .as_deref()
-        .map(|iv| version_gt(&app_meta.version, iv))
+        // The one version ordering (card C-5): the same answer the update check and the
+        // package gate give. This used to be its own `version_gt`, which read "v1.3.0" as
+        // older than "1.2.0" and "1.2.0+5" as newer than "1.2.0".
+        .map(|iv| bpkg_core::version::is_newer(&app_meta.version, iv))
         .unwrap_or(false);
 
     // Signature first: it decides whether the product's catalogues and legal documents
@@ -1089,12 +1143,18 @@ fn run_gui(
     // Remote update: if configured, check the manifest in the background and flip
     // the maintenance "Update" button on when a newer version is published online.
     if maintenance {
-        if let Some(uc) = cfg.update.as_ref().filter(|u| u.auto_check) {
+        // A key that does not parse never reaches here (the config would not have loaded);
+        // if it somehow did, no check is better than an unverified one.
+        let key = pinned_key(&cfg);
+        if let (Some(uc), Ok(key)) = (cfg.update.as_ref().filter(|u| u.auto_check), key) {
             let urls = uc.sources();
             let cur = current_version.clone();
             let weak = ui.as_weak();
+            let app_id = cfg.app.id.clone();
+            let dir = installed.clone();
             std::thread::spawn(move || {
-                if let Ok(Some(m)) = bpkg_core::update::check_remote_multi(&urls, &cur) {
+                let policy = manifest_policy(key.as_ref(), &app_id, dir.as_deref());
+                if let Ok(Some(m)) = bpkg_core::update::check_remote_multi(&urls, &cur, &policy) {
                     let newv = m.version.clone();
                     let _ = weak.upgrade_in_event_loop(move |ui| {
                         UI_TRANSLATOR.with(|c| {
@@ -1417,32 +1477,49 @@ fn run_gui(
                     _ => None,
                 };
                 let app_id = integ.app.id.clone();
+                let closing = trs.t("progress.closing");
                 std::thread::spawn(move || {
-                    let res = bpkg_core::update::download_and_apply(
-                        &m,
-                        &cur,
-                        cur_bpkg.as_deref(),
-                        &dir,
-                        update_vk.as_ref(),
-                        Some(&app_id),
-                    );
+                    let weak_close = weak.clone();
+                    let res = bpkg_core::update::download_update(&m, &cur, cur_bpkg.as_deref())
+                        .map_err(|e| e.to_string())
+                        .and_then(|bytes| {
+                            apply_remote_update(
+                                &bytes,
+                                &m,
+                                &cur,
+                                &dir,
+                                update_vk.as_ref(),
+                                &app_id,
+                                |dir, files| {
+                                    let _ = weak_close.upgrade_in_event_loop(move |ui| {
+                                        ui.set_progress_label(closing.into());
+                                    });
+                                    kill_running_apps(dir, files);
+                                    std::thread::sleep(std::time::Duration::from_millis(400));
+                                },
+                            )
+                        });
                     let _ = weak.upgrade_in_event_loop(move |ui| {
                         let v: &[(&str, &str)] = &[("new_version", &m.version)];
                         match res {
                             Ok(n) => {
                                 ui.set_success(true);
                                 ui.set_result_title(trs.t_with("done.updated_to_title", v).into());
-                                ui.set_result_message(
-                                    trs.t_with(
-                                        "done.updated_to_message",
-                                        &[
-                                            ("new_version", &m.version),
-                                            ("n", &n.to_string()),
-                                            ("dir", &dir.display().to_string()),
-                                        ],
-                                    )
-                                    .into(),
+                                let mut msg = trs.t_with(
+                                    "done.updated_to_message",
+                                    &[
+                                        ("new_version", &m.version),
+                                        ("n", &n.to_string()),
+                                        ("dir", &dir.display().to_string()),
+                                    ],
                                 );
+                                // The migration rule let an unsigned update.json through:
+                                // said out loud, not applied silently.
+                                if m.trust == bpkg_core::update::ManifestTrust::UnsignedAccepted {
+                                    msg.push_str("\n\n");
+                                    msg.push_str(&trs.t("done.update_unsigned_manifest"));
+                                }
+                                ui.set_result_message(msg.into());
                                 apply_launch_rows(&ui, lrows);
                             }
                             Err(e) => {
@@ -1533,6 +1610,40 @@ fn run_gui(
 
     ui.run()?;
     Ok(())
+}
+
+/// The remote update after its download: verify the package against the manifest, the key
+/// and the offer; close the running app (`close`, cards C-2 / C-6); apply with rollback;
+/// then add what it wrote to `uninstall-info.json` (card C-3). Returns the files written.
+///
+/// `close` runs only once every check has passed and before the install directory is
+/// snapshotted: the local path always closed the app first, the remote one never did, so
+/// an update started while the app was running failed on its locked executable (and rolled
+/// back). It is given the install directory and the NEW package's file list.
+fn apply_remote_update(
+    bytes: &[u8],
+    m: &bpkg_core::update::UpdateManifest,
+    current_version: &str,
+    dir: &Path,
+    key: Option<&bpkg_core::sign::VerifyingKey>,
+    app_id: &str,
+    close: impl FnOnce(&Path, &[String]),
+) -> Result<u64, String> {
+    let applied = bpkg_core::update::apply_downloaded(
+        bytes,
+        m,
+        current_version,
+        dir,
+        key,
+        Some(app_id),
+        |pkg| {
+            let files: Vec<String> = pkg.files.iter().map(|f| f.path.clone()).collect();
+            close(dir, &files);
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    uninstall::record_update(dir, &applied.files);
+    Ok(applied.written)
 }
 
 /// Verify + extract a package on a worker thread, pushing throttled (per whole
@@ -1716,6 +1827,8 @@ fn do_system_integration(dest: &Path, integ: &SystemIntegration, record: &Instal
         "install_dir": dest.to_string_lossy(),
         "owns_dir": record.owns_dir,
         "files": record.files,
+        // This engine verifies signed update manifests (card C-1, migration rule).
+        uninstall::SIGNED_MANIFESTS_MARK: 1,
     });
     if let Ok(bytes) = serde_json::to_vec_pretty(&info) {
         let _ = std::fs::write(dest.join(uninstall::INFO_FILE), bytes);
@@ -1783,31 +1896,21 @@ fn do_uninstall_full(dir: &Path, fallback_files: &[String]) -> Result<(), String
 /// uninstaller itself.
 ///
 /// Only top-level `.exe` files the PACKAGE installs — `installed` is its file list. It
-/// used to be every `.exe` found in the folder, and `taskkill /IM` matches by image name
-/// system-wide: installing into a folder that already held other programs force-closed
-/// every running process that shared a name with any of them.
-#[cfg(windows)]
+/// used to be every `.exe` found in the folder (BI-09), and then every process sharing a
+/// NAME with one of the package's executables (`taskkill /IM`, card C-6): a second copy of
+/// the app running from another folder was closed too. Now only a process whose image is
+/// the very file in `dir` is closed (procs.rs).
 fn kill_running_apps(dir: &Path, installed: &[String]) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let self_exe = std::env::current_exe().unwrap_or_default();
-    for name in top_level_exes(installed) {
-        let p = dir.join(&name);
-        if p == self_exe || !p.is_file() {
-            continue;
-        }
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/IM", &name])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
-    }
+    let targets: Vec<PathBuf> = top_level_exes(installed)
+        .into_iter()
+        .map(|name| dir.join(name))
+        .filter(|p| *p != self_exe && p.is_file())
+        .collect();
+    procs::close_by_path(&targets);
 }
 
-#[cfg(not(windows))]
-fn kill_running_apps(_dir: &Path, _installed: &[String]) {}
-
 /// The `.exe` entries at the top of a package file list (`app.exe`, not `tools/x.exe`).
-#[cfg(any(windows, test))]
 fn top_level_exes(files: &[String]) -> Vec<String> {
     files
         .iter()
@@ -1963,24 +2066,6 @@ fn signature_verdict(
         return Err("errors.signature_missing");
     }
     Ok(())
-}
-
-/// Compare dotted version strings numerically: is `a` newer than `b`?
-fn version_gt(a: &str, b: &str) -> bool {
-    let parse = |s: &str| -> Vec<u64> {
-        s.split(['.', '-', '+'])
-            .map(|p| p.parse::<u64>().unwrap_or(0))
-            .collect()
-    };
-    let (va, vb) = (parse(a), parse(b));
-    for i in 0..va.len().max(vb.len()) {
-        let x = va.get(i).copied().unwrap_or(0);
-        let y = vb.get(i).copied().unwrap_or(0);
-        if x != y {
-            return x > y;
-        }
-    }
-    false
 }
 
 /// Spawn `exe` detached (no console window, survives the installer closing).
@@ -3070,14 +3155,11 @@ After the table.";
         // looked at is a box that sent nothing — that is what makes "opt-in" true rather
         // than a word in a description.
         //
-        // `session_recorder` is the one exception, and it is one because it cannot send
-        // anything by itself: it shapes WHAT telemetry contains, and telemetry is off and
-        // unticked above it. Its own description says so. Every other `sends_data` option
-        // must start off; add one with `default = true` and this fails.
-        for r in rows
-            .iter()
-            .filter(|r| r.sends_data && r.id != "session_recorder")
-        {
+        // No exception (card C-8). `session_recorder` used to be one, on the ground that it
+        // only shapes WHAT telemetry contains; it was still a pre-ticked box that adds a
+        // recording of the window to what is sent. Every `sends_data` option starts off;
+        // add one with `default = true` and this fails.
+        for r in rows.iter().filter(|r| r.sends_data) {
             assert!(
                 r.default_label.contains("Désactiv"),
                 "{} sends data and is pre-ticked: {}",
@@ -3125,6 +3207,103 @@ After the table.";
         );
         let err = signature_verdict(false, false, true).expect_err("required means required");
         assert_eq!(err, "errors.signature_missing");
+    }
+
+    /// Cards C-2 and C-3. The remote update closes the running app only once the download
+    /// has passed every check, and before a single file is replaced; then it records the
+    /// files it added, so uninstalling from a folder the install does not own removes them.
+    #[test]
+    fn a_remote_update_closes_the_app_first_and_records_what_it_added() {
+        use bpkg_core::manifest::AppMeta;
+        use bpkg_core::update::{sha256_hex, UpdateManifest};
+        let base = std::env::temp_dir().join(format!("bi-remote-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let install = base.join("install");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::write(install.join("app.exe"), b"build 1.2.0").unwrap();
+        std::fs::write(install.join("notes.txt"), b"the user's").unwrap();
+        std::fs::write(
+            install.join(crate::uninstall::INFO_FILE),
+            br#"{ "app_id": "app", "owns_dir": false, "files": ["app.exe"] }"#,
+        )
+        .unwrap();
+
+        // 1.3.0 adds a file.
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("app.exe"), b"build 1.3.0").unwrap();
+        std::fs::write(src.join("new.dll"), b"added in 1.3.0").unwrap();
+        let bpkg = base.join("app.bpkg");
+        let app = AppMeta {
+            id: "app".into(),
+            name: "App".into(),
+            version: "1.3.0".into(),
+            publisher: "p".into(),
+            homepage: None,
+            platforms: vec![],
+        };
+        bpkg_core::package::create_from_dir(&src, app, vec![], |_| None, &bpkg).unwrap();
+        let sk = bpkg_core::sign::generate();
+        bpkg_core::package::sign_package(&bpkg, &sk).unwrap();
+        let bytes = std::fs::read(&bpkg).unwrap();
+        let m = UpdateManifest {
+            app_id: Some("app".into()),
+            version: "1.3.0".into(),
+            url: "https://example.invalid/app.bpkg".into(),
+            sha256: Some(sha256_hex(&bytes)),
+            ..Default::default()
+        };
+
+        // Refused (another key): the app is never closed for an update that does not happen.
+        let other = bpkg_core::sign::generate().verifying_key();
+        let mut closed = false;
+        assert!(super::apply_remote_update(
+            &bytes,
+            &m,
+            "1.2.0",
+            &install,
+            Some(&other),
+            "app",
+            |_, _| { closed = true }
+        )
+        .is_err());
+        assert!(
+            !closed,
+            "the app was closed for a package that was then refused"
+        );
+
+        let mut seen = None;
+        let vk = sk.verifying_key();
+        let n =
+            super::apply_remote_update(&bytes, &m, "1.2.0", &install, Some(&vk), "app", |d, f| {
+                seen = Some((std::fs::read(d.join("app.exe")).unwrap(), f.to_vec()))
+            })
+            .unwrap();
+        assert_eq!(n, 2);
+        let (before, files) = seen.expect("C-2: the running app was never closed");
+        assert_eq!(
+            before, b"build 1.2.0",
+            "closed only after files were replaced"
+        );
+        assert!(files.contains(&"app.exe".to_string()), "{files:?}");
+        assert_eq!(
+            std::fs::read(install.join("app.exe")).unwrap(),
+            b"build 1.3.0"
+        );
+
+        // C-3: the record knows new.dll, so an uninstall from this shared folder removes it
+        // and still leaves the user's file.
+        let info = crate::uninstall::read_info(&install);
+        assert_eq!(info["files"], serde_json::json!(["app.exe", "new.dll"]));
+        let plan = crate::uninstall::plan(&install, &info, &[]);
+        assert!(!plan.recursive);
+        crate::uninstall::remove_listed(&install, &plan.files, std::path::Path::new("not-running"));
+        assert!(
+            !install.join("new.dll").exists(),
+            "C-3: new.dll left behind"
+        );
+        assert!(install.join("notes.txt").exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// `taskkill /IM` matches by name across the whole system, so the list it is fed must be

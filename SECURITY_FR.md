@@ -55,6 +55,9 @@ Zones à fort impact (traitées en priorité) :
 - Garde la **clé privée hors-ligne** ; ne la commit jamais (elle est gitignorée).
 - Héberge `update.json` et les paquets en **HTTPS** ; le nouveau paquet doit être signé
   par la **même clé** que celle à laquelle le build installé fait confiance.
+- Produis `update.json` avec `bpkg update-manifest` (signé avec cette clé, expire au bout
+  de 7 jours) et renouvelle-le au moins chaque semaine avec `bpkg resign-manifest` ; un
+  installeur avec un `public_key` refuse un manifest non signé ou expiré.
 - Valide tout ce que ton app lit depuis `installer-handoff.json` — traite-le comme une entrée.
 
 ## Versions supportées

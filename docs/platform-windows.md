@@ -69,4 +69,7 @@ Downloads is not loaded into it.
   the user's home is never removed whole.
 - The uninstaller deletes itself (detached `cmd`) after removing the files, and first
   closes the app's own executables (the top-level `.exe` files of the package) so files
-  aren't locked.
+  aren't locked. A process is closed only when its image is that very file in the
+  install folder (full path, via Toolhelp32 and `QueryFullProcessImageNameW`), never by
+  name: a copy of the same program running from another folder is left alone. Install,
+  repair and update (local or remote) close the app the same way.

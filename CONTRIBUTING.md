@@ -97,5 +97,5 @@ package-integrity bugs are treated as high priority.
 ## Releasing (maintainers)
 
 See `examples/bmm/release.ps1` and `docs/UPDATER-SETUP.md` — bump versions → build →
-delta → multi-source `update.json` → `gh release create` with the 3 (or 4, with a delta)
+delta → signed multi-source `update.json` → `gh release create` with the 3 (or 4, with a delta)
 assets.

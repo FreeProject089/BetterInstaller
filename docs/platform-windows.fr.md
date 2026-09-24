@@ -73,4 +73,8 @@ côté du setup dans Téléchargements n'y est pas chargée.
   jamais supprimés entiers.
 - Le désinstalleur se supprime lui-même (`cmd` détaché) après avoir retiré les fichiers,
   et ferme d'abord les exécutables de l'app (les `.exe` de premier niveau du paquet) pour
-  que les fichiers ne soient pas verrouillés.
+  que les fichiers ne soient pas verrouillés. Un processus n'est fermé que si son image est
+  ce fichier-là dans le dossier d'install (chemin complet, via Toolhelp32 et
+  `QueryFullProcessImageNameW`), jamais par son nom : une copie du même programme lancée
+  depuis un autre dossier n'est pas touchée. L'installation, la réparation et la mise à
+  jour (locale ou distante) ferment l'app de la même façon.

@@ -127,20 +127,16 @@ auto_check   = true                        # vérifie à l'ouverture de la maint
 allow_delta  = true                        # préfère un petit patch binaire
 ```
 
-Le **manifest** est du JSON :
-```json
-{
-  "version": "1.2.0",
-  "url": "https://…/App-1.2.0.bpkg",
-  "deltas": [{ "from": "1.1.0", "url": "https://…/1.1.0-to-1.2.0.patch" }]
-}
-```
+Le **manifest** est du JSON **signé avec ta clé d'éditeur**, écrit par
+`bpkg update-manifest` et valable 7 jours au plus (renouvelle-le avec
+`bpkg resign-manifest`). Avec un `public_key` défini, un manifest non signé ou expiré est
+refusé. Format et règles : [docs/UPDATES.fr.md](docs/UPDATES.fr.md).
 
 Quand l'app est déjà installée et que tu relances le setup (ou qu'il est ouvert via
 l'entrée ARP), BetterInstaller vérifie le manifest en arrière-plan. S'il annonce une
 version plus récente, le bouton **Mettre à jour** apparaît et télécharge + applique
 (en utilisant un delta depuis la version installée si proposé), avec **rollback
-automatique** en cas d'échec. Crée des deltas avec `bpkg delta old.bpkg new.bpkg patch`.
+automatique** en cas d'échec. Crée des deltas avec `bpkg delta --old old.bpkg --new new.bpkg --out patch`.
 
 Pour plusieurs sources (mirrors / serveur perso), ajoute `manifest_urls = ["…"]` : l'updater
 prend la version la plus récente parmi toutes les sources joignables. Voir
@@ -437,4 +433,5 @@ Les reçus sont par-utilisateur, comme les installations elles-mêmes : le manif
 3. Mets tes binaires buildés + `TOS.md`/`PRIVACY.md` (+ `bundle/` optionnel) dans le payload.
 4. Implémente le lecteur de handoff dans ton app (applique les réglages une fois, marque consommé).
 5. `pack → sign → build` (ou copie `build-installer.ps1`).
-6. Héberge un `update.json` si tu veux l'auto-update ; pose `[update].manifest_url`.
+6. Pour l'auto-update : pose `[update].manifest_url`, héberge le `update.json` écrit
+   par `bpkg update-manifest`, et renouvelle-le chaque semaine (`bpkg resign-manifest`).

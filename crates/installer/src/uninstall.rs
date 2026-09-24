@@ -86,6 +86,40 @@ fn recorded_files(info: &serde_json::Value) -> Option<Vec<String>> {
     })
 }
 
+/// Key every engine that verifies signed update manifests writes into
+/// `uninstall-info.json` (card C-1). Its absence from a record that exists means the install
+/// was made by an engine from before signed manifests: the one case the migration rule
+/// (`bpkg_core::update::MIGRATION_ACCEPTS_UNSIGNED`) lets an unsigned `update.json` through,
+/// once, with a warning. The update that follows writes the key, so it is once per install.
+pub const SIGNED_MANIFESTS_MARK: &str = "signed_update_manifests";
+
+/// The install in `dir` was recorded by an engine that predates signed manifests. No record
+/// at all is NOT that case (nothing says what made it), and gets the strict rule.
+pub fn installed_before_signed_manifests(dir: &Path) -> bool {
+    let info = read_info(dir);
+    info.is_object() && info.get(SIGNED_MANIFESTS_MARK).is_none()
+}
+
+/// After a REMOTE update: add the files it wrote to the record (card C-3). A local update
+/// goes through the full install path, which rewrites the record; a remote one only
+/// extracts the package, and a file the new version added was then unknown to uninstall —
+/// left behind in a folder the install does not own. Every other key is kept as it was.
+///
+/// Returns false, and writes nothing, when there is no record to add to: a partial record
+/// written here would lose the app id and the protocol that uninstall unregisters.
+pub fn record_update(dir: &Path, written: &[String]) -> bool {
+    let mut info = read_info(dir);
+    if !info.is_object() {
+        return false;
+    }
+    info["files"] = serde_json::json!(merged_files(&info, written));
+    info[SIGNED_MANIFESTS_MARK] = serde_json::json!(1);
+    match serde_json::to_vec_pretty(&info) {
+        Ok(bytes) => std::fs::write(dir.join(INFO_FILE), bytes).is_ok(),
+        Err(_) => false,
+    }
+}
+
 /// What one uninstall will do.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Plan {
@@ -284,6 +318,39 @@ mod tests {
         let p = plan(&games, &legacy, &["app.exe".into()]);
         assert!(!p.recursive);
         assert!(p.files.contains(&"app.exe".to_string()));
+    }
+
+    /// Card C-3 at the record level: what an update added is recorded, nothing else moves.
+    #[test]
+    fn an_update_adds_its_files_to_the_record_and_keeps_the_rest() {
+        let dir = scratch("record");
+        std::fs::write(
+            dir.join(INFO_FILE),
+            serde_json::to_vec(&json!({
+                "app_id": "app", "protocol": "app", "owns_dir": false, "files": ["app.exe"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(installed_before_signed_manifests(&dir));
+        assert!(record_update(&dir, &["app.exe".into(), "new.dll".into()]));
+        let info = read_info(&dir);
+        assert_eq!(info["files"], json!(["app.exe", "new.dll"]));
+        assert_eq!(
+            (info["app_id"].as_str(), info["protocol"].as_str()),
+            (Some("app"), Some("app"))
+        );
+        assert_eq!(info["owns_dir"], json!(false));
+        // Recorded by an engine that verifies manifests: the migration grace is spent.
+        assert!(!installed_before_signed_manifests(&dir));
+
+        // No record: nothing is invented, and the strict rule applies.
+        let bare = scratch("record-bare");
+        assert!(!record_update(&bare, &["x".into()]));
+        assert!(!bare.join(INFO_FILE).exists());
+        assert!(!installed_before_signed_manifests(&bare));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&bare);
     }
 
     #[test]
