@@ -48,6 +48,19 @@ deux nombres choisissant la plage vérifiée étaient hors de celle-ci. Voir
 | Signature valide contre `public_key` | **Signé & vérifié · `<éditeur>`** (vert) |
 | Pas de signature | **Paquet non signé · `<éditeur>`** (rouge si `require_signature`) |
 | Signature présente mais invalide | **Signature INVALIDE — ne pas faire confiance** (rouge, install bloquée) |
+| Signé, mais aucun `public_key` configuré | **Signé · `<éditeur>`** (PAS vert : rien n'a été vérifié) |
+
+`<éditeur>` vient de `installer.toml`, qui ne fait pas partie du paquet signé.
+
+## Ce que la signature du paquet ne couvre pas
+
+`installer.toml` — y compris `public_key` lui-même — est ajouté au setup **hors** du
+paquet signé. Un setup re-tamponné peut porter n'importe quelle config et n'importe
+quelle clé, et vérifie alors comme « Signé & vérifié » un paquet signé avec cette clé.
+Ce qui authentifie la config, c'est une **signature Authenticode du `*-Setup.exe` final**
+(signe-le après `bpkg build` ; le certificat couvre le moteur, la config et le paquet, et
+le moteur retrouve sa charge utile devant la table de certificats). Ed25519 protège les
+**mises à jour** : elles sont vérifiées contre la clé du build déjà installé.
 
 ## Rotation des clés
 

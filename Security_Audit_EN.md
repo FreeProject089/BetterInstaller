@@ -1,5 +1,7 @@
 # BetterInstaller — Security Audit
 
+> A later audit (2026-09-24) is in [docs/AUDIT-SEPT24.md](docs/AUDIT-SEPT24.md): uninstall scope, update identity and rollback, config validation, Authenticode-compatible setups, DLL-search hardening.
+
 **Date:** 2026-07-03 · **Scope:** the `bpkg-core` engine, `bpkg-cli`, and the `installer`
 GUI (Rust workspace). **Focus:** the trust boundaries that matter for an
 installer/updater — package authenticity (signing), untrusted-input parsing

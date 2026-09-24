@@ -15,11 +15,27 @@ use crate::manifest::Manifest;
 
 /// A parsed package. The header + manifest are read eagerly; the (compressed)
 /// payload is read on demand by [`Package::extract`] / [`Package::verify`].
+///
+/// Once [`Package::verify_signature`] succeeds, the bytes it verified are kept and every
+/// later read is served from them, not from the file (see `verified`).
 pub struct Package {
     file: std::fs::File,
     header: Header,
     pub manifest: Manifest,
     payload_offset: u64,
+    /// The header and manifest exactly as read by `open` — what `manifest` was parsed from.
+    head: [u8; HEADER_LEN],
+    manifest_raw: Vec<u8>,
+    /// Bytes `0 .. 24+N+M` as they were when the signature verified.
+    ///
+    /// The path used to be read three separate times: the manifest at `open`, the signed
+    /// range at `verify_signature`, the payload at extraction. Swap the file between those
+    /// reads — hostile manifest at open, the genuine package while it is verified, a
+    /// payload matching the hostile manifest for extraction — and a package nobody signed
+    /// installs as "verified" (CWE-367). Keeping the verified bytes, and refusing a
+    /// verification whose header and manifest are not the ones `open` parsed, makes the
+    /// signed bytes the only bytes the package can ever yield.
+    verified: Option<Vec<u8>>,
 }
 
 impl Package {
@@ -30,6 +46,18 @@ impl Package {
         let mut head = [0u8; HEADER_LEN];
         file.read_exact(&mut head).map_err(|e| Error::io(path, e))?;
         let header = Header::from_bytes(&head)?;
+
+        // The two lengths are read from the file and every later allocation is sized by
+        // them: bound them by what the file actually holds before trusting either (a
+        // 40-byte file claiming a 16 EiB payload is an allocation failure = abort, not
+        // an error).
+        let file_len = file.metadata().map_err(|e| Error::io(path, e))?.len();
+        let claimed = (HEADER_LEN as u64)
+            .checked_add(header.manifest_len as u64)
+            .and_then(|n| n.checked_add(header.payload_len));
+        if claimed.is_none_or(|n| n > file_len) {
+            return Err(Error::Corrupt("header lengths exceed the file size".into()));
+        }
 
         let mut manifest_buf = vec![0u8; header.manifest_len as usize];
         file.read_exact(&mut manifest_buf)
@@ -42,23 +70,34 @@ impl Package {
             header,
             manifest,
             payload_offset,
+            head,
+            manifest_raw: manifest_buf,
+            verified: None,
         })
     }
 
     /// Read and decompress the full inner archive into memory.
     fn read_archive(&mut self) -> Result<Vec<u8>> {
-        self.file
-            .seek(SeekFrom::Start(self.payload_offset))
-            .map_err(Error::IoBare)?;
-        let mut compressed = vec![0u8; self.header.payload_len as usize];
-        self.file
-            .read_exact(&mut compressed)
-            .map_err(Error::IoBare)?;
+        let from_file;
+        let compressed: &[u8] = match &self.verified {
+            // Verified: the payload is the one the signature covered, whatever the path
+            // holds now.
+            Some(signed) => &signed[self.payload_offset as usize..],
+            None => {
+                self.file
+                    .seek(SeekFrom::Start(self.payload_offset))
+                    .map_err(Error::IoBare)?;
+                let mut buf = vec![0u8; self.header.payload_len as usize];
+                self.file.read_exact(&mut buf).map_err(Error::IoBare)?;
+                from_file = buf;
+                &from_file
+            }
+        };
         // Bound decompression against a zip-bomb payload (a tiny compressed blob that
         // inflates to gigabytes and OOMs the installer): stream-decode with a ceiling.
         const MAX_ARCHIVE: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB decompressed
         let mut decoder =
-            zstd::Decoder::new(&compressed[..]).map_err(|e| Error::Compression(e.to_string()))?;
+            zstd::Decoder::new(compressed).map_err(|e| Error::Compression(e.to_string()))?;
         let mut out = Vec::new();
         decoder
             .by_ref()
@@ -150,7 +189,19 @@ impl Package {
         self.file.read_exact(&mut buf).map_err(Error::IoBare)?;
         let mut sig = [0u8; SIGNATURE_LEN];
         self.file.read_exact(&mut sig).map_err(Error::IoBare)?;
-        Ok(crate::sign::verify_message(vk, &buf, &sig))
+        // The signature has to be over the package THIS value holds — the header and
+        // manifest `open` parsed — not merely over whatever the path holds right now.
+        let n = self.manifest_raw.len();
+        if buf[..HEADER_LEN] != self.head
+            || buf[HEADER_LEN..HEADER_LEN + n] != self.manifest_raw[..]
+        {
+            return Ok(false);
+        }
+        if !crate::sign::verify_message(vk, &buf, &sig) {
+            return Ok(false);
+        }
+        self.verified = Some(buf);
+        Ok(true)
     }
 
     /// Whether a file's component is selected for install.
@@ -273,6 +324,13 @@ impl Package {
         })?;
         Ok(written)
     }
+}
+
+/// Whether `path` is a relative path that stays inside the directory it is joined to —
+/// the rule every archive entry is held to, exported for the other places that turn a
+/// recorded relative path back into a file to touch (the uninstaller's file list).
+pub fn is_safe_entry_path(path: &str) -> bool {
+    !unsafe_entry_path(path)
 }
 
 /// Reject any archive entry path that could escape the destination directory when
@@ -414,6 +472,94 @@ mod tests {
         assert!(!dest2.join("extra.dll").exists());
 
         // And a package whose manifest DOES describe everything still installs.
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn pkg_of(base: &std::path::Path, tag: &str, body: &[u8]) -> Vec<u8> {
+        let src = base.join(format!("src-{tag}"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("app.exe"), body).unwrap();
+        let out = base.join(format!("{tag}.bpkg"));
+        crate::package::create_from_dir(
+            &src,
+            crate::manifest::AppMeta {
+                id: "t".into(),
+                name: "T".into(),
+                version: "1".into(),
+                publisher: "P".into(),
+                homepage: None,
+                platforms: vec![],
+            },
+            vec![],
+            |_| None,
+            &out,
+        )
+        .unwrap();
+        std::fs::read(&out).unwrap()
+    }
+
+    /// The same path read three times — at open, at verification, at extraction — with
+    /// the file swapped in between. Local-attacker timing, done here deterministically.
+    #[test]
+    fn a_package_swapped_between_reads_never_installs_as_verified() {
+        let base = std::env::temp_dir().join(format!("bpkg-toctou-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let sk = crate::sign::generate();
+        let vk = sk.verifying_key();
+
+        let genuine_path = base.join("genuine.bpkg");
+        std::fs::write(&genuine_path, pkg_of(&base, "g", b"GENUINE")).unwrap();
+        crate::package::sign_package(&genuine_path, &sk).unwrap();
+        let genuine = std::fs::read(&genuine_path).unwrap();
+        let evil = pkg_of(&base, "e", b"EVIL"); // nobody signed this
+
+        let target = base.join("staged.bpkg");
+
+        // 1) hostile at open, genuine while verifying, hostile again for extraction.
+        std::fs::write(&target, &evil).unwrap();
+        let mut p = Package::open(&target).unwrap();
+        std::fs::write(&target, &genuine).unwrap();
+        let verified = p.verify_signature(&vk).unwrap_or(false);
+        std::fs::write(&target, &evil).unwrap();
+        let dest = base.join("d1");
+        if verified {
+            let _ = p.install_with_progress(&dest, None, |_, _, _| {});
+            assert_ne!(
+                std::fs::read(dest.join("app.exe")).ok().as_deref(),
+                Some(&b"EVIL"[..]),
+                "an unsigned payload installed after the signature check passed"
+            );
+        }
+        assert!(
+            !verified,
+            "verified a package other than the one that was opened"
+        );
+
+        // 2) genuine throughout open + verify, swapped only for extraction: what installs
+        //    is what was verified.
+        std::fs::write(&target, &genuine).unwrap();
+        let mut p = Package::open(&target).unwrap();
+        assert!(p.verify_signature(&vk).unwrap());
+        std::fs::write(&target, &evil).unwrap();
+        let dest = base.join("d2");
+        p.install_with_progress(&dest, None, |_, _, _| {})
+            .expect("the verified bytes are still in hand");
+        assert_eq!(std::fs::read(dest.join("app.exe")).unwrap(), b"GENUINE");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn header_lengths_larger_than_the_file_are_refused_before_allocating() {
+        let base = std::env::temp_dir().join(format!("bpkg-lens-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let mut bytes = pkg_of(&base, "l", b"x");
+        bytes[16..24].copy_from_slice(&(u64::MAX / 2).to_le_bytes()); // payload_len
+        let p = base.join("huge.bpkg");
+        std::fs::write(&p, &bytes).unwrap();
+        let err = Package::open(&p).err().expect("must not open");
+        assert!(format!("{err}").contains("exceed"), "{err}");
         let _ = std::fs::remove_dir_all(&base);
     }
 

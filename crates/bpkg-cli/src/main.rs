@@ -270,8 +270,9 @@ fn cmd_fetch_update(url: &str, dir: &Path, current: &str, key: Option<&Path>) ->
                      nothing about who made it. Pass --key <public.key> to verify the publisher."
                 );
             }
-            let n = bpkg_core::update::download_and_apply(&m, current, None, dir, vk.as_ref())
-                .context("update failed (rolled back)")?;
+            let n =
+                bpkg_core::update::download_and_apply(&m, current, None, dir, vk.as_ref(), None)
+                    .context("update failed (rolled back)")?;
             println!("Updated to {} ({n} files).", m.version);
         }
     }

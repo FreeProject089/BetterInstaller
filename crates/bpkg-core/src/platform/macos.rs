@@ -70,6 +70,10 @@ impl PlatformOps for MacOps {
     }
 
     fn remove_shortcuts(&self, name: &str, _desktop: bool, _start_menu: bool) -> Result<()> {
+        // `name` is read back from uninstall-info.json; `join` of a path is not a name.
+        if !crate::config::is_valid_file_name(name) {
+            return Ok(());
+        }
         let _ = std::fs::remove_file(Self::applications_dir().join(name));
         Ok(())
     }

@@ -1,5 +1,7 @@
 # BetterInstaller — Audit de sécurité
 
+> Un audit plus récent (2026-09-24, en anglais) est dans [docs/AUDIT-SEPT24.md](docs/AUDIT-SEPT24.md) : périmètre de la désinstallation, identité et rollback des mises à jour, validation de la config, setups compatibles Authenticode, durcissement de la recherche de DLL.
+
 **Date :** 2026-07-03 · **Périmètre :** le moteur `bpkg-core`, `bpkg-cli`, et l'installeur
 GUI `installer` (workspace Rust). **Focus :** les frontières de confiance qui comptent
 pour un installeur/updater — authenticité des paquets (signature), parsing d'entrées non

@@ -47,6 +47,19 @@ numbers choosing the verified range sat outside it. See
 | Signature valid against `public_key` | **Signed & verified · `<publisher>`** (green) |
 | No signature | **Unsigned package · `<publisher>`** (red if `require_signature`) |
 | Signature present but invalid | **Signature INVALID — do not trust** (red, install blocked) |
+| Signed, but no `public_key` configured | **Signed · `<publisher>`** (NOT green: nothing was checked) |
+
+`<publisher>` comes from `installer.toml`, which is not part of the signed package.
+
+## What the package signature does not cover
+
+`installer.toml` — including `public_key` itself — is appended to the setup **outside**
+the signed package. A re-stamped setup can carry any config and any key, and then
+verifies a package signed with that key as "Signed & verified". What authenticates the
+config is an **Authenticode signature over the finished `*-Setup.exe`** (sign it after
+`bpkg build`; the certificate covers the engine, the config and the package, and the
+engine finds its payload in front of the certificate table). Ed25519 is what protects
+**updates**: they are checked against the key of the build already installed.
 
 ## Rotating keys
 

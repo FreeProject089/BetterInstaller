@@ -112,6 +112,10 @@ impl PlatformOps for LinuxOps {
     }
 
     fn remove_shortcuts(&self, name: &str, desktop: bool, start_menu: bool) -> Result<()> {
+        // `name` is read back from uninstall-info.json.
+        if !crate::config::is_valid_file_name(name) {
+            return Ok(());
+        }
         if start_menu {
             let _ = std::fs::remove_file(Self::applications_dir().join(format!("{name}.desktop")));
         }
@@ -122,6 +126,9 @@ impl PlatformOps for LinuxOps {
     }
 
     fn unregister_protocol(&self, scheme: &str) -> Result<()> {
+        if !crate::config::is_valid_scheme(scheme) {
+            return Ok(());
+        }
         let id = format!("betterinstaller-{scheme}-handler");
         let _ = std::fs::remove_file(Self::applications_dir().join(format!("{id}.desktop")));
         Ok(())

@@ -12,6 +12,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+mod uninstall;
+
 use i_slint_backend_winit::WinitWindowAccessor;
 use slint::{
     Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak,
@@ -58,6 +60,8 @@ thread_local! {
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(windows)]
+    harden_dll_search();
     let args: Vec<String> = std::env::args().collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
     // `--lang=<tag>` opens in that language, whatever the OS says. For testing a
@@ -141,6 +145,30 @@ fn run_check_update(cfg: &InstallerConfig) -> anyhow::Result<()> {
         0
     };
     std::process::exit(code);
+}
+
+/// Load DLLs from System32 only — never from the folder the setup was started from.
+///
+/// A setup is run from Downloads, and Downloads is where a browser drops files without
+/// asking. Windows looks for a DLL in the executable's own folder first, so a
+/// `version.dll`, `dwmapi.dll` or `uxtheme.dll` that arrived there earlier is loaded into
+/// the setup and runs as the user, under the setup's name and signature (CWE-427).
+///
+/// Two halves. Statically imported DLLs are resolved by the loader before `main` runs;
+/// build.rs links with `/DEPENDENTLOADFLAG:0x800` (LOAD_LIBRARY_SEARCH_SYSTEM32) for those.
+/// Everything loaded later — the GPU / windowing stack, the folder picker — goes through
+/// LoadLibrary, which this call restricts the same way, as early as `main` can.
+#[cfg(windows)]
+fn harden_dll_search() {
+    extern "system" {
+        fn SetDefaultDllDirectories(directory_flags: u32) -> i32;
+    }
+    const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
+    // SAFETY: a documented kernel32 export (Windows 8+, KB2533623 on 7) taking a flag
+    // word; no pointers. A failure leaves the default search order, i.e. as before.
+    unsafe {
+        SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
+    }
 }
 
 /// GUI-subsystem app: attach to the caller's console so `println!` is visible when run
@@ -1052,6 +1080,7 @@ fn run_gui(
     let loc_repair = install_location.clone();
     let loc_update = install_location.clone();
     let loc_uninstall = install_location.clone();
+    let pkg_uninstall = package_path.clone();
     // The version to compare/patch from (what's installed, else the bundled one).
     let current_version = installed_version
         .clone()
@@ -1365,10 +1394,29 @@ fn run_gui(
                 let weak = ui.as_weak();
                 // Pin the publisher key so a tampered/unsigned update from a hostile
                 // mirror is refused before it's applied (fail closed).
-                let update_vk = integ
+                //
+                // A key that does not parse is NOT "no key": `.ok()` here turned a typo in
+                // `public_key` into `None`, and `None` means "apply unverified". Same for
+                // `require_signature` with no key, which the local install path refuses.
+                let update_vk = match integ
                     .public_key
-                    .as_ref()
-                    .and_then(|pk| bpkg_core::sign::parse_public(pk).ok());
+                    .as_deref()
+                    .map(bpkg_core::sign::parse_public)
+                {
+                    Some(Ok(vk)) => Some(vk),
+                    Some(Err(_)) | None
+                        if integ.require_signature || integ.public_key.is_some() =>
+                    {
+                        ui.set_success(false);
+                        ui.set_result_title(trs.t("done.update_failed_title").into());
+                        ui.set_result_message(trs.t("errors.signature_missing").into());
+                        ui.set_progress(1.0);
+                        ui.set_page(4);
+                        return;
+                    }
+                    _ => None,
+                };
+                let app_id = integ.app.id.clone();
                 std::thread::spawn(move || {
                     let res = bpkg_core::update::download_and_apply(
                         &m,
@@ -1376,6 +1424,7 @@ fn run_gui(
                         cur_bpkg.as_deref(),
                         &dir,
                         update_vk.as_ref(),
+                        Some(&app_id),
                     );
                     let _ = weak.upgrade_in_event_loop(move |ui| {
                         let v: &[(&str, &str)] = &[("new_version", &m.version)];
@@ -1438,6 +1487,7 @@ fn run_gui(
     {
         let w = ui.as_weak();
         let loc = loc_uninstall;
+        let pkg = pkg_uninstall;
         let tr = tr.clone();
         ui.on_uninstall_app(move || {
             let ui = match w.upgrade() {
@@ -1450,9 +1500,17 @@ fn run_gui(
             ui.set_progress(0.4);
             ui.set_progress_label(trs.t("progress.uninstalling").into());
             let dir = loc.clone();
+            let pkg = pkg.clone();
             let weak = ui.as_weak();
             std::thread::spawn(move || {
-                let result = do_uninstall_full(&dir);
+                // The file list of the package this uninstaller carries: what an install
+                // recorded before uninstall-info.json listed its files is taken to be.
+                let fallback: Vec<String> = pkg
+                    .as_deref()
+                    .and_then(|p| Package::open(p).ok())
+                    .map(|p| p.manifest.files.iter().map(|f| f.path.clone()).collect())
+                    .unwrap_or_default();
+                let result = do_uninstall_full(&dir, &fallback);
                 let _ = weak.upgrade_in_event_loop(move |ui| {
                     match result {
                         Ok(()) => {
@@ -1487,6 +1545,26 @@ fn run_real_install(
     integ: &SystemIntegration,
     tr: &Translator,
 ) -> Result<u64, String> {
+    // The package is opened and its signature checked FIRST — before a prerequisite is
+    // downloaded and run, and before a running copy of the app is killed for an install
+    // that is then refused.
+    let mut p = Package::open(pkg).map_err(|e| e.to_string())?;
+    if let Some(pk_hex) = integ.public_key.as_ref() {
+        let vk = bpkg_core::sign::parse_public(pk_hex).map_err(|e| e.to_string())?;
+        let valid = p.verify_signature(&vk).map_err(|e| e.to_string())?;
+        signature_verdict(valid, p.is_signed(), integ.require_signature).map_err(|k| tr.t(k))?;
+    } else if integ.require_signature {
+        // Config validation refuses this combination at load; kept so the rule holds for a
+        // SystemIntegration built any other way.
+        return Err(tr.t("errors.signature_missing"));
+    }
+    let package_files: Vec<String> = p.manifest.files.iter().map(|f| f.path.clone()).collect();
+
+    // Whether this install owns `dest`, decided while "was it empty?" is still answerable —
+    // before a zip prerequisite or the first file lands in it (see uninstall.rs).
+    let prior = uninstall::read_info(dest);
+    let owns_dir = uninstall::owns_dir_before_install(dest, &prior);
+
     // Prerequisites: auto-download/-install the missing required ones (those with a
     // download_url), error on any still missing. Done before touching the install.
     {
@@ -1518,7 +1596,7 @@ fn run_real_install(
         let _ = weak.upgrade_in_event_loop(move |ui| {
             ui.set_progress_label(label.into());
         });
-        kill_running_apps(dest);
+        kill_running_apps(dest, &package_files);
         std::thread::sleep(std::time::Duration::from_millis(400));
     }
 
@@ -1532,15 +1610,6 @@ fn run_real_install(
                 ("error", &e.to_string()),
             ],
         ));
-    }
-
-    let mut p = Package::open(pkg).map_err(|e| e.to_string())?;
-
-    // Verify the Ed25519 signature before writing anything, when a trust key is set.
-    if let Some(pk_hex) = integ.public_key.as_ref() {
-        let vk = bpkg_core::sign::parse_public(pk_hex).map_err(|e| e.to_string())?;
-        let valid = p.verify_signature(&vk).map_err(|e| e.to_string())?;
-        signature_verdict(valid, p.is_signed(), integ.require_signature).map_err(|k| tr.t(k))?;
     }
 
     // Package components only. A `prereq:` id here would match no files, and the empty
@@ -1558,8 +1627,10 @@ fn run_real_install(
         Some(&pkg_comps)
     };
     let mut last_pct = -1i32;
+    let mut written_files: Vec<String> = Vec::new();
     let written = p
         .install_with_progress(dest, comp, |done, total, file| {
+            written_files.push(file.to_string());
             let pct = (done * 100)
                 .checked_div(total)
                 .map(|p| p as i32)
@@ -1585,15 +1656,26 @@ fn run_real_install(
     let _ = weak.upgrade_in_event_loop(move |ui| {
         ui.set_progress_label(label.into());
     });
-    do_system_integration(dest, integ);
+    let record = InstallRecord {
+        owns_dir,
+        files: uninstall::merged_files(&prior, &written_files),
+    };
+    do_system_integration(dest, integ, &record);
     Ok(written)
+}
+
+/// What `uninstall-info.json` needs beyond the integration settings: whether the folder is
+/// the install's own, and the files it put there (uninstall.rs).
+struct InstallRecord {
+    owns_dir: bool,
+    files: Vec<String>,
 }
 
 /// Register the app with the OS: shortcuts, custom URL scheme, and the
 /// Add/Remove-Programs uninstaller. All steps are best-effort (a failed shortcut
 /// never fails the whole install). Also drops `uninstall-info.json` so a later
 /// `--uninstall` can reverse exactly what was done.
-fn do_system_integration(dest: &Path, integ: &SystemIntegration) {
+fn do_system_integration(dest: &Path, integ: &SystemIntegration, record: &InstallRecord) {
     let plat = platform::current();
 
     if let Some(exe_rel) = integ.main_exe.as_ref() {
@@ -1614,7 +1696,7 @@ fn do_system_integration(dest: &Path, integ: &SystemIntegration) {
 
     // Copy ourselves in as the uninstaller and register the ARP entry.
     if let Ok(self_exe) = std::env::current_exe() {
-        let uninstaller = dest.join("uninstall.exe");
+        let uninstaller = dest.join(uninstall::UNINSTALLER);
         let _ = std::fs::copy(&self_exe, &uninstaller);
         let _ = plat.register_uninstaller(&UninstallEntry {
             app: integ.app.clone(),
@@ -1632,23 +1714,23 @@ fn do_system_integration(dest: &Path, integ: &SystemIntegration) {
         "desktop": integ.create_shortcuts && integ.desktop,
         "start_menu": integ.create_shortcuts,
         "install_dir": dest.to_string_lossy(),
+        "owns_dir": record.owns_dir,
+        "files": record.files,
     });
     if let Ok(bytes) = serde_json::to_vec_pretty(&info) {
-        let _ = std::fs::write(dest.join("uninstall-info.json"), bytes);
+        let _ = std::fs::write(dest.join(uninstall::INFO_FILE), bytes);
     }
 }
 
-/// Reverse a previous install: remove shortcuts, unregister the protocol + ARP
-/// entry, and delete the install directory (except the running uninstaller).
-/// Reverse the system integration recorded in `dir/uninstall-info.json`, then
-/// remove the install directory. If we're running from *inside* `dir` (the ARP
-/// uninstaller, which Windows locks), keep the running exe and schedule a detached
-/// self-delete; otherwise remove everything immediately.
-fn do_uninstall_full(dir: &Path) -> Result<(), String> {
-    let info: serde_json::Value = std::fs::read(dir.join("uninstall-info.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or(serde_json::Value::Null);
+/// Reverse a previous install: remove shortcuts, unregister the protocol + ARP entry,
+/// then delete what the install put in `dir` — the whole folder only when the install
+/// created it (see uninstall.rs). If we're running from *inside* `dir` (the ARP
+/// uninstaller, which Windows locks), the running exe is left to a detached self-delete.
+///
+/// `fallback_files` is the embedded package's file list, for an install recorded before
+/// `uninstall-info.json` carried one.
+fn do_uninstall_full(dir: &Path, fallback_files: &[String]) -> Result<(), String> {
+    let info = uninstall::read_info(dir);
 
     let plat = platform::current();
     if let Some(name) = info["shortcut_name"].as_str() {
@@ -1665,70 +1747,93 @@ fn do_uninstall_full(dir: &Path) -> Result<(), String> {
         let _ = plat.unregister_uninstaller(id);
     }
 
+    let plan = uninstall::plan(dir, &info, fallback_files);
+
     // Close the app if it's running, so its files aren't locked and the uninstall
     // doesn't get blocked.
-    kill_running_apps(dir);
+    kill_running_apps(dir, &plan.files);
 
     let exe = std::env::current_exe().unwrap_or_default();
-    if exe.starts_with(dir) {
-        // Locked uninstaller: remove all but the running exe, then schedule a
-        // detached self-delete that also removes the uninstaller + the folder.
-        remove_dir_except(dir, &exe);
-        schedule_self_delete(&exe, dir);
-        Ok(())
-    } else {
+    let running_inside = exe.starts_with(dir);
+    if !running_inside {
         // Give the killed processes a moment to release their file handles.
         std::thread::sleep(std::time::Duration::from_millis(400));
-        std::fs::remove_dir_all(dir).map_err(|e| e.to_string())
+    }
+    if plan.recursive {
+        if running_inside {
+            // Locked uninstaller: remove all but the running exe, then schedule a
+            // detached self-delete that also removes the uninstaller + the folder.
+            remove_dir_except(dir, &exe);
+            schedule_self_delete(&exe, dir, true);
+            Ok(())
+        } else {
+            std::fs::remove_dir_all(dir).map_err(|e| e.to_string())
+        }
+    } else {
+        uninstall::remove_listed(dir, &plan.files, &exe);
+        if running_inside {
+            schedule_self_delete(&exe, dir, false);
+        }
+        Ok(())
     }
 }
 
-/// Force-close any app executable living in the install dir (e.g.
-/// better-mods-manager.exe, bmm-mcp-server.exe) before removing files. Never
-/// touches the running uninstaller itself.
+/// Force-close the app's own executables (e.g. better-mods-manager.exe,
+/// bmm-mcp-server.exe) before overwriting or removing files. Never touches the running
+/// uninstaller itself.
+///
+/// Only top-level `.exe` files the PACKAGE installs — `installed` is its file list. It
+/// used to be every `.exe` found in the folder, and `taskkill /IM` matches by image name
+/// system-wide: installing into a folder that already held other programs force-closed
+/// every running process that shared a name with any of them.
 #[cfg(windows)]
-fn kill_running_apps(dir: &Path) {
+fn kill_running_apps(dir: &Path, installed: &[String]) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let self_exe = std::env::current_exe().unwrap_or_default();
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let p = entry.path();
-            if p == self_exe {
-                continue;
-            }
-            let is_exe = p
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("exe"))
-                .unwrap_or(false);
-            if is_exe {
-                if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/F", "/IM", name])
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .output();
-                }
-            }
+    for name in top_level_exes(installed) {
+        let p = dir.join(&name);
+        if p == self_exe || !p.is_file() {
+            continue;
         }
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/IM", &name])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
     }
 }
 
 #[cfg(not(windows))]
-fn kill_running_apps(_dir: &Path) {}
+fn kill_running_apps(_dir: &Path, _installed: &[String]) {}
 
+/// The `.exe` entries at the top of a package file list (`app.exe`, not `tools/x.exe`).
+#[cfg(any(windows, test))]
+fn top_level_exes(files: &[String]) -> Vec<String> {
+    files
+        .iter()
+        .filter(|f| !f.contains(['/', '\\']))
+        .filter(|f| {
+            Path::new(f.as_str())
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+        })
+        .cloned()
+        .collect()
+}
+
+/// `whole_dir`: also `rmdir /S /Q` the folder — only for a folder the install owns.
 #[cfg(windows)]
-fn schedule_self_delete(exe: &Path, dir: &Path) {
+fn schedule_self_delete(exe: &Path, dir: &Path, whole_dir: bool) {
     use std::os::windows::process::CommandExt;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     // Wait ~1s (let us exit + release the lock), delete the exe, then force-remove
     // the whole folder (incl. the uninstaller + anything left behind).
-    let script = format!(
-        "ping 127.0.0.1 -n 2 >nul & del /F /Q \"{}\" & rmdir /S /Q \"{}\"",
-        exe.display(),
-        dir.display()
-    );
+    let mut script = format!("ping 127.0.0.1 -n 2 >nul & del /F /Q \"{}\"", exe.display());
+    if whole_dir {
+        script.push_str(&format!(" & rmdir /S /Q \"{}\"", dir.display()));
+    }
     let _ = std::process::Command::new("cmd")
         .args(["/C", &script])
         .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
@@ -1736,7 +1841,7 @@ fn schedule_self_delete(exe: &Path, dir: &Path) {
 }
 
 #[cfg(not(windows))]
-fn schedule_self_delete(exe: &Path, _dir: &Path) {
+fn schedule_self_delete(exe: &Path, _dir: &Path, _whole_dir: bool) {
     // Unix doesn't lock running executables — just remove it.
     let _ = std::fs::remove_file(exe);
 }
@@ -1773,8 +1878,14 @@ enum Trust {
 }
 
 impl Trust {
+    /// The green badge. Only for a signature CHECKED against the pinned key.
+    ///
+    /// `Signed` used to count: with no `public_key` configured nothing is verified — the
+    /// flag bit and 64 arbitrary bytes are enough to be "signed" — yet the Welcome page
+    /// showed the same green shield as a verified package, next to a publisher name that
+    /// comes from the unsigned config.
     fn is_trusted(&self) -> bool {
-        matches!(self, Trust::Verified | Trust::Signed)
+        matches!(self, Trust::Verified)
     }
 
     /// May text be read from this package before the install (product catalogues, legal
@@ -3014,6 +3125,37 @@ After the table.";
         );
         let err = signature_verdict(false, false, true).expect_err("required means required");
         assert_eq!(err, "errors.signature_missing");
+    }
+
+    /// `taskkill /IM` matches by name across the whole system, so the list it is fed must be
+    /// the app's own executables — not every `.exe` sitting in the chosen folder.
+    #[test]
+    fn only_the_packages_own_top_level_executables_are_closed() {
+        let files: Vec<String> = [
+            "app.exe",
+            "Helper.EXE",
+            "tools/x.exe",
+            "a\\b.exe",
+            "readme.txt",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(super::top_level_exes(&files), vec!["app.exe", "Helper.EXE"]);
+    }
+
+    #[test]
+    fn only_a_checked_signature_gets_the_green_badge() {
+        assert!(super::Trust::Verified.is_trusted());
+        for t in [
+            super::Trust::Signed,
+            super::Trust::Unsigned,
+            super::Trust::Invalid,
+            super::Trust::Unreadable,
+            super::Trust::Preview,
+        ] {
+            assert!(!t.is_trusted(), "{t:?} shown as trusted");
+        }
     }
 
     #[test]

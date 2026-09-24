@@ -58,14 +58,15 @@ fn receipt_path(app_id: &str) -> PathBuf {
 pub fn write(app: &AppMeta, install_dir: &Path) -> Result<()> {
     let dir = receipts_dir();
     std::fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
-    // Hand-rolled rather than pulling serde_json in here: three fields, and the values are
-    // escaped below, so there is nothing a path or a version string can do to the shape.
-    let body = format!(
-        "{{\n  \"id\": \"{}\",\n  \"version\": \"{}\",\n  \"install_dir\": \"{}\"\n}}\n",
-        esc(&app.id),
-        esc(&app.version),
-        esc(&install_dir.to_string_lossy())
-    );
+    // serde_json (already a dependency of this crate): the hand-rolled writer escaped `\`
+    // and `"` but not control characters, and a Linux path may contain a newline — the
+    // file then was not JSON, and was read back by a second hand-rolled parser that only
+    // agreed with the writer because both skipped the same cases.
+    let body = serde_json::to_string_pretty(&serde_json::json!({
+        "id": app.id,
+        "version": app.version,
+        "install_dir": install_dir.to_string_lossy(),
+    }))?;
     let p = receipt_path(&app.id);
     std::fs::write(&p, body).map_err(|e| Error::io(&p, e))
 }
@@ -92,27 +93,14 @@ pub fn installed_version(app_id: &str) -> Option<String> {
     field(app_id, "version")
 }
 
-/// Read one string field back. The file is ours and has a fixed shape, so this looks for
-/// `"key": "` and takes up to the next unescaped quote rather than carrying a JSON parser.
+/// Read one string field back.
 fn field(app_id: &str, key: &str) -> Option<String> {
-    let body = std::fs::read_to_string(receipt_path(app_id)).ok()?;
-    let needle = format!("\"{key}\": \"");
-    let start = body.find(&needle)? + needle.len();
-    let rest = &body[start..];
-    let mut out = String::new();
-    let mut chars = rest.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => out.push(chars.next()?),
-            '"' => return Some(out),
-            _ => out.push(c),
-        }
-    }
-    None
+    field_in(&std::fs::read_to_string(receipt_path(app_id)).ok()?, key)
 }
 
-fn esc(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+fn field_in(body: &str, key: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    v.get(key)?.as_str().map(str::to_string)
 }
 
 #[cfg(test)]
@@ -137,23 +125,27 @@ mod tests {
         }
     }
 
+    /// Through the REAL writer's encoding and the real reader — the previous version of this
+    /// test re-implemented the reader inline, so it checked a copy, not `field`.
     #[test]
-    fn a_windows_path_survives_the_round_trip() {
-        // Backslashes and quotes are escaped on the way in; the reader has to undo exactly
-        // that, or a Windows-style path comes back mangled and installed_dir() misses.
-        let raw = r#"C:\Users\a"b\Programs\App"#;
-        let json = format!("{{\n  \"install_dir\": \"{}\"\n}}\n", esc(raw));
-        let start = json.find("\"install_dir\": \"").unwrap() + "\"install_dir\": \"".len();
-        let rest = &json[start..];
-        let mut out = String::new();
-        let mut chars = rest.chars();
-        while let Some(c) = chars.next() {
-            match c {
-                '\\' => out.push(chars.next().unwrap()),
-                '"' => break,
-                _ => out.push(c),
-            }
+    fn awkward_paths_survive_the_round_trip() {
+        for raw in [
+            r#"C:\Users\a"b\Programs\App"#,
+            "/home/u/odd\nname/app",
+            "/home/u/tab\there",
+        ] {
+            let body =
+                serde_json::to_string_pretty(&serde_json::json!({ "install_dir": raw })).unwrap();
+            assert_eq!(
+                field_in(&body, "install_dir").as_deref(),
+                Some(raw),
+                "{raw:?}"
+            );
         }
-        assert_eq!(out, raw);
+        // A receipt written by the old hand-rolled writer (valid JSON for ordinary paths)
+        // still reads back.
+        let old = "{\n  \"id\": \"x\",\n  \"version\": \"1.0\",\n  \"install_dir\": \"C:\\\\A\\\"B\"\n}\n";
+        assert_eq!(field_in(old, "install_dir").as_deref(), Some("C:\\A\"B"));
+        assert_eq!(field_in(old, "version").as_deref(), Some("1.0"));
     }
 }

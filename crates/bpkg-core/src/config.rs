@@ -299,6 +299,38 @@ pub fn check_relative(id: &str, field: &str, value: &str) -> std::result::Result
     Ok(())
 }
 
+/// An app id usable as a registry key name and a folder name: `[A-Za-z0-9._-]`, at most
+/// 128 characters, not starting with '.'.
+pub fn is_valid_app_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && !id.starts_with('.')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
+/// A URL scheme per RFC 3986 §3.1: a letter, then letters, digits, `+`, `-`, `.`.
+pub fn is_valid_scheme(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
+        && s.len() <= 64
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// A single file-name component that is valid on Windows as well: no separators, none of
+/// `<>:"|?*`, no control characters, not `.`/`..`, no trailing dot or space.
+pub fn is_valid_file_name(s: &str) -> bool {
+    let t = s.trim();
+    !t.is_empty()
+        && t != "."
+        && t != ".."
+        && !s.ends_with(['.', ' '])
+        && !s.chars().any(|c| {
+            c.is_control() || matches!(c, '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*')
+        })
+}
+
 /// Trust anchor for verifying the `.bpkg` signature before installing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Security {
@@ -338,7 +370,72 @@ impl InstallerConfig {
         }
         self.validate_i18n().map_err(crate::error::Error::Other)?;
         self.validate_paths().map_err(crate::error::Error::Other)?;
+        self.validate_security()
+            .map_err(crate::error::Error::Other)?;
+        self.validate_identity()
+            .map_err(crate::error::Error::Other)?;
         Ok(())
+    }
+
+    /// The three strings the OS integration turns into names: `app.id` (the Apps & Features
+    /// registry key, the app-data folder, the receipt), `app.name` (the shortcut file, the
+    /// default install folder) and `install.protocol` (a key under HKCU\Software\Classes).
+    ///
+    /// None was checked. `protocol = ""` — a natural way to write "none" — registered the
+    /// handler on `HKCU\Software\Classes` itself, and uninstall then ran
+    /// `delete_subkey_all("Software\\Classes\\")`: every per-user file association and
+    /// COM registration on the machine, gone. `id = ""` did the same to every per-user
+    /// Apps & Features entry. A `name` with `..\` put the Start Menu shortcut anywhere,
+    /// the Startup folder included.
+    fn validate_identity(&self) -> std::result::Result<(), String> {
+        if !is_valid_app_id(&self.app.id) {
+            return Err(format!(
+                "app.id {:?}: use letters, digits, '.', '-' or '_' (e.g. com.example.app)",
+                self.app.id
+            ));
+        }
+        if !is_valid_file_name(&self.app.name) {
+            return Err(format!(
+                "app.name {:?} becomes a folder and a shortcut file name: no path \
+                 separators, no <>:\"|?* or control characters, no trailing dot or space",
+                self.app.name
+            ));
+        }
+        if let Some(p) = self.install.protocol.as_deref() {
+            if !is_valid_scheme(p) {
+                return Err(format!(
+                    "install.protocol {p:?} is not a URL scheme (a letter, then letters, \
+                     digits, '+', '-' or '.'); leave it out for none"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// `[security]` says what it means or the file does not load.
+    ///
+    /// Both failures used to be silent and both went the unsafe way:
+    /// - `require_signature = true` with no `public_key`: every check sat inside
+    ///   `if let Some(key)`, so the rule that reads as "refuse unsigned packages" refused
+    ///   nothing and installed whatever it was given;
+    /// - a `public_key` that is not a key (a typo, a truncated paste): the install path
+    ///   failed closed, but the update path mapped the parse error to "no key" and applied
+    ///   the download unverified.
+    fn validate_security(&self) -> std::result::Result<(), String> {
+        let Some(sec) = &self.security else {
+            return Ok(());
+        };
+        match sec.public_key.as_deref().map(str::trim) {
+            Some(pk) => crate::sign::parse_public(pk)
+                .map(|_| ())
+                .map_err(|e| format!("security.public_key: {e}")),
+            None if sec.require_signature => Err(
+                "security.require_signature = true needs a security.public_key to check \
+                 signatures against"
+                    .into(),
+            ),
+            None => Ok(()),
+        }
     }
 
     /// Every field of this file that the installer turns into a filesystem path.
@@ -951,6 +1048,87 @@ pub fn schema_json() -> Result<String> {
         "knownDead": KNOWN_DEAD,
     });
     Ok(serde_json::to_string_pretty(&doc)?)
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::{is_valid_app_id, is_valid_file_name, is_valid_scheme, InstallerConfig};
+
+    fn load(app_id: &str, name: &str, protocol: Option<&str>) -> Result<InstallerConfig, String> {
+        let mut t = format!(
+            "[app]\nid = {app_id:?}\nname = {name:?}\nversion = \"1.0.0\"\npublisher = \"P\"\n"
+        );
+        if let Some(p) = protocol {
+            t.push_str(&format!("[install]\nprotocol = {p:?}\n"));
+        }
+        InstallerConfig::from_toml(&t).map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn names_that_would_become_the_wrong_registry_key_or_path_do_not_load() {
+        // protocol = "" → HKCU\Software\Classes itself, deleted whole on uninstall.
+        assert!(load("com.x.app", "App", Some("")).is_err());
+        assert!(load("com.x.app", "App", Some("x\\..\\Microsoft")).is_err());
+        assert!(load("com.x.app", "App", Some("1bmm")).is_err());
+        // id = "" → the whole per-user Uninstall key.
+        assert!(load("", "App", None).is_err());
+        assert!(load("..\\..\\Run", "App", None).is_err());
+        // name → shortcut file and default install folder.
+        for bad in ["..\\..\\Startup\\x", "a/b", "C:\\x", "App.", ""] {
+            assert!(load("com.x.app", bad, None).is_err(), "name {bad:?} loaded");
+        }
+    }
+
+    #[test]
+    fn the_real_names_still_load() {
+        assert!(load("com.bettermm.desktop", "Better Mods Manager", Some("bmm")).is_ok());
+        assert!(load("my_app-2", "App (Beta) \u{e9}", Some("web+app")).is_ok());
+        assert!(
+            is_valid_scheme("ms-settings") && is_valid_app_id("a.b") && is_valid_file_name("A")
+        );
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::InstallerConfig;
+
+    const APP: &str = "[app]\nid = \"t\"\nname = \"T\"\nversion = \"1.0.0\"\npublisher = \"P\"\n";
+
+    fn load(security: &str) -> Result<InstallerConfig, String> {
+        InstallerConfig::from_toml(&format!("{APP}{security}")).map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn requiring_signatures_without_a_key_does_not_load() {
+        let err = load("[security]\nrequire_signature = true\n").unwrap_err();
+        assert!(err.contains("public_key"), "{err}");
+    }
+
+    #[test]
+    fn a_public_key_that_is_not_a_key_does_not_load() {
+        for bad in [
+            "8e06",
+            "zz",
+            "8e0647c277dd67158d34dd1c10d0a2d97191716dc4f92aebde6d349d1c0f168",
+        ] {
+            let err = load(&format!("[security]\npublic_key = \"{bad}\"\n")).unwrap_err();
+            assert!(err.contains("public_key"), "{bad:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn the_sound_combinations_still_load() {
+        let key = crate::sign::generate().verifying_key();
+        let hex: String = key.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        assert!(load("").is_ok());
+        assert!(load("[security]\n").is_ok());
+        assert!(load(&format!("[security]\npublic_key = \"{hex}\"\n")).is_ok());
+        assert!(load(&format!(
+            "[security]\npublic_key = \"{hex}\"\nrequire_signature = true\n"
+        ))
+        .is_ok());
+    }
 }
 
 #[cfg(test)]

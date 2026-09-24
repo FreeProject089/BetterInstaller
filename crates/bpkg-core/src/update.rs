@@ -124,12 +124,15 @@ pub fn check_remote_multi(
 
 /// Download the new package — using a binary delta from `current_version` when one
 /// is offered and `current_bpkg` is available — then apply it with rollback.
+///
+/// `app_id`: when `Some`, the package must be THAT app (see [`check_offered`]).
 pub fn download_and_apply(
     m: &UpdateManifest,
     current_version: &str,
     current_bpkg: Option<&Path>,
     install_dir: &Path,
     verify_key: Option<&VerifyingKey>,
+    app_id: Option<&str>,
 ) -> Result<u64> {
     let new_bytes = match (
         current_bpkg,
@@ -144,13 +147,78 @@ pub fn download_and_apply(
         _ => download_any(&m.url, &m.urls)?, // full download
     };
 
+    apply_downloaded(
+        &new_bytes,
+        m,
+        current_version,
+        install_dir,
+        verify_key,
+        app_id,
+    )
+}
+
+/// The half of [`download_and_apply`] after the bytes have arrived: stage, verify, check
+/// the package is the update that was offered, apply with rollback.
+pub fn apply_downloaded(
+    bytes: &[u8],
+    m: &UpdateManifest,
+    current_version: &str,
+    install_dir: &Path,
+    verify_key: Option<&VerifyingKey>,
+    app_id: Option<&str>,
+) -> Result<u64> {
     // Private scratch dir: `apply_package_update` verifies the signature of this path and
     // then reads it again to extract, so a path a local attacker can write is a package
     // that is verified and a package that is installed (crate::tmp).
-    let tmp = crate::tmp::stage("update.bpkg", &new_bytes)?;
-    let res = apply_package_update(&tmp, install_dir, None, verify_key);
+    let tmp = crate::tmp::stage("update.bpkg", bytes)?;
+    let res = apply_checked(&tmp, install_dir, None, verify_key, |app| {
+        check_offered(app, &m.version, current_version, app_id)
+    });
     crate::tmp::discard(&tmp);
     res
+}
+
+/// A signature says who MADE a package, not which package it is. Everything else that
+/// picks the file — the manifest's version, `url`, every mirror in `urls` — is unsigned, so
+/// "the signature verifies" alone let a mirror (or whoever controls the manifest's host)
+/// hand over ANY package that key ever signed:
+///
+/// - an older release, with the bugs that release was replaced for — a rollback, which
+///   SECURITY.md lists as in scope;
+/// - the release already installed, replayed forever so nothing newer is ever applied;
+/// - a different app by the same publisher, installed over this one.
+///
+/// So the package's own manifest — the part the signature covers — must name the app being
+/// updated and exactly the version that was offered, and that version must be newer than
+/// what is installed.
+pub fn check_offered(
+    app: &crate::manifest::AppMeta,
+    offered: &str,
+    current_version: &str,
+    app_id: Option<&str>,
+) -> Result<()> {
+    if let Some(id) = app_id {
+        if app.id != id {
+            return Err(Error::Other(format!(
+                "update rejected: the package is for {:?}, not {id:?}",
+                app.id
+            )));
+        }
+    }
+    let same = |a: &str, b: &str| !is_newer(a, b) && !is_newer(b, a);
+    if !same(&app.version, offered) {
+        return Err(Error::Other(format!(
+            "update rejected: version {} was offered but the package is {}",
+            offered, app.version
+        )));
+    }
+    if !is_newer(&app.version, current_version) {
+        return Err(Error::Other(format!(
+            "update rejected: the package ({}) is not newer than the installed version ({})",
+            app.version, current_version
+        )));
+    }
+    Ok(())
 }
 
 /// Download from the primary URL, falling back to each mirror in turn.
@@ -185,6 +253,19 @@ pub fn apply_package_update(
     components: Option<&[String]>,
     verify_key: Option<&VerifyingKey>,
 ) -> Result<u64> {
+    apply_checked(new_bpkg, install_dir, components, verify_key, |_| Ok(()))
+}
+
+/// [`apply_package_update`] with one more gate, `accept`, run on the package's own app
+/// metadata AFTER the signature check (so it reads signed bytes when a key is pinned) and
+/// before anything is snapshotted or written.
+fn apply_checked(
+    new_bpkg: &Path,
+    install_dir: &Path,
+    components: Option<&[String]>,
+    verify_key: Option<&VerifyingKey>,
+    accept: impl FnOnce(&crate::manifest::AppMeta) -> Result<()>,
+) -> Result<u64> {
     // Authenticity gate FIRST — refuse an unsigned/invalid package before we snapshot
     // or write anything.
     let mut pkg = Package::open(new_bpkg)?;
@@ -195,10 +276,25 @@ pub fn apply_package_update(
             ));
         }
     }
+    accept(&pkg.manifest.app)?;
 
+    // A snapshot already there is what an interrupted update leaves behind (power cut,
+    // killed process, or a rollback that could not finish — see below), and it may be the
+    // only intact copy of the install. This used to delete it and snapshot the half-written
+    // directory in its place.
     let backup = backup_path(install_dir);
-    let _ = remove_path(&backup);
-    copy_dir(install_dir, &backup)?; // snapshot
+    if backup.exists() {
+        return Err(Error::Other(format!(
+            "an earlier update did not finish: {} holds the install as it was before it. \
+             Restore it or delete it, then update again",
+            backup.display()
+        )));
+    }
+    if let Err(e) = copy_dir(install_dir, &backup) {
+        // Our own partial snapshot, from this call: nothing else is in it.
+        let _ = remove_path(&backup);
+        return Err(e);
+    }
 
     let outcome = pkg.install_with_progress(install_dir, components, |_, _, _| {});
 
@@ -209,10 +305,24 @@ pub fn apply_package_update(
         }
         Err(e) => {
             // Roll back: discard the half-applied dir, restore the snapshot.
+            //
+            // The snapshot is deleted ONLY when every file came back. The restore used to
+            // stop at its first failure and the snapshot was deleted regardless — and the
+            // commonest reason an update fails is the same thing that makes a restore fail:
+            // a file held open (the running app, an antivirus scan). The files after it
+            // were then gone from both places.
             let _ = wipe_dir_contents(install_dir);
-            let _ = copy_dir(&backup, install_dir);
-            let _ = remove_path(&backup);
-            Err(e)
+            let failed = restore_dir(&backup, install_dir);
+            if failed == 0 {
+                let _ = remove_path(&backup);
+                Err(e)
+            } else {
+                Err(Error::Other(format!(
+                    "{e}; the rollback could not restore {failed} file(s) — the previous \
+                     install is kept intact at {}",
+                    backup.display()
+                )))
+            }
         }
     }
 }
@@ -227,13 +337,24 @@ fn backup_path(dir: &Path) -> PathBuf {
         .join(format!("{name}.bak"))
 }
 
+/// Snapshot `src` into `dst`.
+///
+/// Symbolic links and junctions are neither followed nor copied: `wipe_dir_contents`
+/// leaves them in place, so they need no restoring. Following one (`is_dir()` does) copied
+/// whatever it pointed at — a mods library, a whole drive — into the snapshot, and a link
+/// back to an ancestor never finished.
 fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst).map_err(|e| Error::io(dst, e))?;
     for entry in std::fs::read_dir(src).map_err(|e| Error::io(src, e))? {
         let entry = entry.map_err(|e| Error::io(src, e))?;
         let from = entry.path();
         let to = dst.join(entry.file_name());
-        if from.is_dir() {
+        // DirEntry::file_type does not traverse links; a junction reports as one on Windows.
+        let kind = entry.file_type().map_err(|e| Error::io(&from, e))?;
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
             copy_dir(&from, &to)?;
         } else {
             std::fs::copy(&from, &to).map_err(|e| Error::io(&from, e))?;
@@ -242,13 +363,49 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Copy the snapshot back, CONTINUING past a file that cannot be written, and return how
+/// many could not be. A restore that stops at its first failure leaves every later file
+/// missing from the install directory, and they are then only in the snapshot.
+fn restore_dir(src: &Path, dst: &Path) -> usize {
+    let entries = match std::fs::create_dir_all(dst).and_then(|()| std::fs::read_dir(src)) {
+        Ok(rd) => rd,
+        Err(_) => return 1,
+    };
+    let mut failed = 0;
+    for entry in entries {
+        let Ok(entry) = entry else {
+            failed += 1;
+            continue;
+        };
+        let (from, to) = (entry.path(), dst.join(entry.file_name()));
+        match entry.file_type() {
+            Ok(t) if t.is_symlink() => {}
+            Ok(t) if t.is_dir() => failed += restore_dir(&from, &to),
+            Ok(_) => {
+                if std::fs::copy(&from, &to).is_err() {
+                    failed += 1;
+                }
+            }
+            Err(_) => failed += 1,
+        }
+    }
+    failed
+}
+
+/// Empty `dir` before a restore. Links and junctions stay: the snapshot did not copy them,
+/// and removing one would lose the link itself for good.
 fn wipe_dir_contents(dir: &Path) -> Result<()> {
     for entry in std::fs::read_dir(dir).map_err(|e| Error::io(dir, e))? {
-        let p = entry.map_err(|e| Error::io(dir, e))?.path();
-        if p.is_dir() {
-            let _ = std::fs::remove_dir_all(&p);
-        } else {
-            let _ = std::fs::remove_file(&p);
+        let entry = entry.map_err(|e| Error::io(dir, e))?;
+        let p = entry.path();
+        match entry.file_type() {
+            Ok(t) if t.is_symlink() => {}
+            Ok(t) if t.is_dir() => {
+                let _ = std::fs::remove_dir_all(&p);
+            }
+            _ => {
+                let _ = std::fs::remove_file(&p);
+            }
         }
     }
     Ok(())
@@ -381,6 +538,89 @@ mod tests {
         assert!(install.join("f.txt").exists());
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod offered_tests {
+    use super::*;
+    use crate::manifest::AppMeta;
+
+    fn meta(id: &str, version: &str) -> AppMeta {
+        AppMeta {
+            id: id.into(),
+            name: "App".into(),
+            version: version.into(),
+            publisher: "p".into(),
+            homepage: None,
+            platforms: vec![],
+        }
+    }
+
+    fn offer(version: &str) -> UpdateManifest {
+        UpdateManifest {
+            version: version.into(),
+            url: "https://example.invalid/app.bpkg".into(),
+            urls: vec![],
+            notes: None,
+            deltas: vec![],
+        }
+    }
+
+    /// A signed package built for `app`, and the key that signed it.
+    fn signed(base: &Path, app: AppMeta) -> (Vec<u8>, ed25519_dalek::SigningKey) {
+        let src = base.join(format!("src-{}", app.version));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("app.exe"), format!("build {}", app.version)).unwrap();
+        let out = base.join(format!("{}-{}.bpkg", app.id, app.version));
+        crate::package::create_from_dir(&src, app, vec![], |_| None, &out).unwrap();
+        let sk = crate::sign::generate();
+        crate::package::sign_package(&out, &sk).unwrap();
+        (std::fs::read(&out).unwrap(), sk)
+    }
+
+    /// The attack: the manifest offers 1.3.0, a mirror serves an OLD release the same
+    /// publisher genuinely signed. The signature verifies. It must still not install.
+    #[test]
+    fn a_genuinely_signed_older_release_is_not_an_update() {
+        let base = std::env::temp_dir().join(format!("bpkg-rollback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let install = base.join("install");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::write(install.join("app.exe"), b"build 1.2.0").unwrap();
+
+        let (old, sk) = signed(&base, meta("app", "1.0.0"));
+        let vk = sk.verifying_key();
+        let err = apply_downloaded(
+            &old,
+            &offer("1.3.0"),
+            "1.2.0",
+            &install,
+            Some(&vk),
+            Some("app"),
+        )
+        .expect_err("a downgrade to a signed 1.0.0 must be refused");
+        assert!(err.to_string().contains("1.3.0"), "{err}");
+        assert_eq!(
+            std::fs::read(install.join("app.exe")).unwrap(),
+            b"build 1.2.0"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_offered_version_of_this_app_and_only_that_is_accepted() {
+        assert!(check_offered(&meta("app", "1.3.0"), "1.3.0", "1.2.0", Some("app")).is_ok());
+        assert!(check_offered(&meta("app", "1.3"), "1.3.0", "1.2.0", Some("app")).is_ok());
+        // Offered 1.3.0, got 1.2.5: newer than installed, still not what was offered.
+        assert!(check_offered(&meta("app", "1.2.5"), "1.3.0", "1.2.0", Some("app")).is_err());
+        // The installed release replayed (manifest lying about its version too).
+        assert!(check_offered(&meta("app", "1.2.0"), "1.2.0", "1.2.0", Some("app")).is_err());
+        // Another app by the same publisher.
+        assert!(check_offered(&meta("other", "1.3.0"), "1.3.0", "1.2.0", Some("app")).is_err());
+        // No expected id (the CLI): the version rules still hold.
+        assert!(check_offered(&meta("other", "1.3.0"), "1.3.0", "1.2.0", None).is_ok());
+        assert!(check_offered(&meta("app", "1.0.0"), "1.0.0", "1.2.0", None).is_err());
     }
 }
 

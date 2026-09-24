@@ -50,13 +50,27 @@ cargo build --release -p bpkg-cli -p installer
 La signature Ed25519 couvre l'**intégrité du paquet** (le moteur la vérifie avant
 d'installer). Elle ne donne **pas** de réputation Windows — pour ça, signe le
 `*-Setup.exe` en Authenticode avec un certificat de signature de code (un cert EV passe
-SmartScreen le plus vite). C'est orthogonal à la signature de paquet `[security]`.
+SmartScreen le plus vite). Signe le setup **tamponné**, après `bpkg build` : le
+certificat est ajouté après la config et le paquet embarqués, le moteur les retrouve
+devant lui, et la signature authentifie alors aussi `installer.toml` — que la signature
+Ed25519 du paquet ne couvre pas (voir [SIGNING.md](SIGNING.md)).
+
+Le moteur ne charge les DLL que depuis System32 (`/DEPENDENTLOADFLAG:0x800` à l'édition
+de liens, `SetDefaultDllDirectories` au démarrage) : une DLL déposée par un navigateur à
+côté du setup dans Téléchargements n'y est pas chargée.
 
 ## Pièges
 
 - L'identifiant de bundle (`[app].id`) doit être égal à l'identifiant du dossier de
   données de l'app — le handoff est écrit dans `%APPDATA%\<id>` ; un décalage = l'app ne
   le lit jamais.
-- Le désinstalleur se supprime lui-même (`cmd` détaché + `rmdir /S /Q`) après avoir
-  retiré le dossier d'install, et tue d'abord l'app en cours pour que les fichiers ne
-  soient pas verrouillés.
+- La désinstallation supprime le dossier d'install entier **seulement si l'installation
+  l'a créé** (il n'existait pas, ou était vide). Installé dans un dossier qui contenait
+  déjà des fichiers — « Parcourir… » prend le dossier choisi tel quel, par ex.
+  `D:\Games` — elle supprime les fichiers installés et les dossiers qu'ils laissent vides,
+  rien d'autre. Les deux faits sont notés dans `uninstall-info.json` à l'installation.
+  Une racine de lecteur, un dossier juste en dessous, ou le dossier personnel ne sont
+  jamais supprimés entiers.
+- Le désinstalleur se supprime lui-même (`cmd` détaché) après avoir retiré les fichiers,
+  et ferme d'abord les exécutables de l'app (les `.exe` de premier niveau du paquet) pour
+  que les fichiers ne soient pas verrouillés.

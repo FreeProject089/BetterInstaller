@@ -68,6 +68,9 @@ impl PlatformOps for WindowsOps {
     }
 
     fn register_protocol(&self, scheme: &str, exe: &Path) -> Result<()> {
+        if !crate::config::is_valid_scheme(scheme) {
+            return Err(Error::Other(format!("not a URL scheme: {scheme:?}")));
+        }
         // HKCU\Software\Classes\<scheme> (per-user protocol handler)
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let base = format!("Software\\Classes\\{scheme}");
@@ -113,6 +116,9 @@ impl PlatformOps for WindowsOps {
     }
 
     fn remove_shortcuts(&self, name: &str, desktop: bool, start_menu: bool) -> Result<()> {
+        if !crate::config::is_valid_file_name(name) {
+            return Ok(());
+        }
         if start_menu {
             let _ = std::fs::remove_file(Self::start_menu_programs().join(format!("{name}.lnk")));
         }
@@ -123,12 +129,22 @@ impl PlatformOps for WindowsOps {
     }
 
     fn unregister_protocol(&self, scheme: &str) -> Result<()> {
+        // The scheme comes back from uninstall-info.json. An empty or odd one names
+        // `Software\Classes` itself (or something under it that is not ours), and this is a
+        // recursive delete — refuse rather than guess.
+        if !crate::config::is_valid_scheme(scheme) {
+            return Ok(());
+        }
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let _ = hkcu.delete_subkey_all(format!("Software\\Classes\\{scheme}"));
         Ok(())
     }
 
     fn unregister_uninstaller(&self, app_id: &str) -> Result<()> {
+        // Same: an empty id is the whole per-user Uninstall key.
+        if !crate::config::is_valid_app_id(app_id) {
+            return Ok(());
+        }
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let _ = hkcu.delete_subkey_all(format!(
             "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{app_id}"

@@ -14,6 +14,13 @@ fn main() {
         )
         .expect("unable to embed Windows manifest");
 
+        // Static imports resolve from System32 only, not from the folder the setup runs in
+        // (Downloads): see harden_dll_search in main.rs. MSVC linker only — the GNU
+        // toolchain has no equivalent switch.
+        if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
+        }
+
         // The Windows EXE icon, taken from BI_ICON when the packaging script sets it.
         //
         // It belongs here rather than in the stamping step because a self-extracting

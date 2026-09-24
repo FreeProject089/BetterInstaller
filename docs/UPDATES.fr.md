@@ -8,6 +8,19 @@ dossier vers un voisin `<nom>.bak`, extrait le nouveau paquet par-dessus, et en 
 d'**erreur** quelconque efface et restaure depuis le snapshot ; en cas de succès il
 supprime le snapshot.
 
+Ce que le rollback promet, et ce qu'il ne promet pas :
+
+- Le snapshot n'est supprimé que si **tous** les fichiers sont revenus. Si un fichier ne
+  peut pas être restauré (typiquement un fichier encore ouvert — l'app en cours, un scan
+  antivirus), la restauration continue avec les autres et l'erreur indique le dossier
+  `.bak`, conservé intact.
+- Un `.bak` déjà présent au début d'une mise à jour est ce que laisse une mise à jour
+  interrompue (coupure de courant, processus tué, rollback inachevé) et peut être la seule
+  copie saine. La mise à jour **refuse alors de démarrer** et l'indique ; restaure-le ou
+  supprime-le, puis relance.
+- Les liens symboliques et jonctions dans le dossier d'install ne sont ni suivis ni
+  copiés dans le snapshot, et un rollback les laisse en place.
+
 ## Configuration (`installer.toml`)
 
 ```toml
@@ -36,6 +49,16 @@ v<nouveau>`) et l'applique. Sans `[update]`, Update apparaît quand même si le 
 ```
 
 - `version` est comparée numériquement composante par composante (`is_newer`).
+- Avant de toucher au dossier d'install, le paquet téléchargé doit (1) porter une
+  signature Ed25519 valide pour la clé épinglée et (2) être, d'après son **propre**
+  manifeste signé, l'app mise à jour (`[app].id`) exactement dans la `version` proposée —
+  qui doit être plus récente que l'installée. Un miroir peut donc servir un fichier
+  corrompu, une ancienne release signée par la même clé, ou une autre app du même éditeur :
+  aucun n'est appliqué.
+- Ce que la signature ne peut pas empêcher : `update.json` lui-même n'est **pas** signé.
+  Qui contrôle l'hôte qui le sert (ou un miroir de `manifest_urls`) peut retenir les mises
+  à jour, ou proposer une vraie release plus récente que l'installée mais plus ancienne
+  que la dernière. HTTPS le protège en transit ; rien ne le protège sur l'hôte.
 - Si une entrée `deltas` correspond à la version installée **et** que le `.bpkg` actuel
   est disponible, un petit patch bsdiff est téléchargé et le nouveau paquet est
   reconstruit localement ; sinon le `url` complet est téléchargé.
@@ -53,8 +76,10 @@ bpkg delta App-1.1.0.bpkg App-1.2.0.bpkg 1.1.0-to-1.2.0.patch
 # héberge App-1.2.0.bpkg, le patch, et update.json à des URLs stables
 ```
 
-Le nouveau paquet doit être signé par la **même clé** que l'installé
-(`require_signature` est imposé avant d'appliquer).
+Le nouveau paquet doit être signé par la **même clé** que l'installé. Avec un
+`public_key` défini, la signature est toujours vérifiée avant d'appliquer ; un
+`public_key` illisible, ou `require_signature = true` sans `public_key`, empêche
+`installer.toml` de se charger au lieu de retomber sur une mise à jour non vérifiée.
 
 ## CLI (manuel / scripté)
 

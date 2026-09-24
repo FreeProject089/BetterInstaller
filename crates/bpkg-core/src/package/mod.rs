@@ -5,7 +5,7 @@ pub mod format;
 pub mod reader;
 pub mod writer;
 
-pub use reader::Package;
+pub use reader::{is_safe_entry_path, Package};
 pub use writer::create_from_dir;
 
 use std::path::Path;
@@ -15,8 +15,8 @@ use ed25519_dalek::SigningKey;
 use crate::error::{Error, Result};
 use format::{Header, FLAG_SIGNED, HEADER_LEN};
 
-/// Sign an existing `.bpkg` in place: sign the manifest+payload bytes, set the
-/// signed flag, and append the 64-byte Ed25519 signature after the payload.
+/// Sign an existing `.bpkg` in place: set the signed flag, sign bytes `0 .. 24+N+M`
+/// (header, manifest and payload), and append the 64-byte Ed25519 signature.
 pub fn sign_package(path: &Path, sk: &SigningKey) -> Result<()> {
     let mut data = std::fs::read(path).map_err(|e| Error::io(path, e))?;
     let header = Header::from_bytes(&data)?;

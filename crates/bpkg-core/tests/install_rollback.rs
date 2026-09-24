@@ -336,3 +336,190 @@ fn editing_the_header_breaks_the_signature() {
         "a header edit must break the signature — v1 signed only the manifest and payload,          so this one did not",
     );
 }
+
+/// A file that can be neither overwritten nor deleted, held for as long as the guard lives —
+/// the running app's own `.exe`, or a DLL an antivirus is scanning. `None` when this process
+/// could get past the lock anyway (root on Unix), in which case the caller skips.
+///
+/// Windows: a handle that shares reading and nothing else. Unix: a read-only file in a read-only
+/// directory (the file cannot be opened for writing, and the directory entry cannot be
+/// removed).
+struct HeldFile {
+    #[cfg(windows)]
+    _handle: std::fs::File,
+    #[cfg(unix)]
+    dir: std::path::PathBuf,
+}
+
+impl HeldFile {
+    fn hold(path: &std::path::Path) -> Option<HeldFile> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let h = std::fs::OpenOptions::new()
+                .read(true)
+                // FILE_SHARE_READ only: it can still be read (so it is snapshotted, like a
+                // running .exe), never written or deleted.
+                .share_mode(0x1)
+                .open(path)
+                .ok()?;
+            Some(HeldFile { _handle: h })
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = path.parent().unwrap().to_path_buf();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o444)).ok()?;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).ok()?;
+            let held = HeldFile { dir: dir.clone() };
+            // Proved, not assumed (see lock_file): root writes through both.
+            let probe = dir.join(".probe");
+            if std::fs::write(&probe, b"x").is_ok() {
+                let _ = std::fs::remove_file(&probe);
+                return None;
+            }
+            Some(held)
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for HeldFile {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.dir, std::fs::Permissions::from_mode(0o755));
+        if let Ok(rd) = std::fs::read_dir(&self.dir) {
+            for e in rd.flatten() {
+                let _ = std::fs::set_permissions(e.path(), std::fs::Permissions::from_mode(0o644));
+            }
+        }
+    }
+}
+
+/// The case rollback most often meets in practice: the update fails because a file is held
+/// open — and so does putting that file back.
+///
+/// The restore used to stop at its first failure and delete the snapshot anyway. Every file
+/// the restore had not reached yet was then gone from the install AND from the snapshot:
+/// the app half-deleted, with the only intact copy removed by the code meant to protect it.
+/// On NTFS (alphabetical listing) `sub/`, `y.txt` and `z.txt` come after `hold/`, so they are
+/// exactly the files that used to be lost.
+#[test]
+fn a_rollback_that_cannot_finish_keeps_the_snapshot_and_restores_the_rest() {
+    let base = scratch("held");
+    let (v1, v2) = (base.join("v1"), base.join("v2"));
+    for name in [
+        "a.txt",
+        "b.txt",
+        "hold/f.txt",
+        "sub/nested.txt",
+        "y.txt",
+        "z.txt",
+    ] {
+        write(&v1.join(name), b"VERSION ONE");
+        write(&v2.join(name), b"VERSION TWO");
+    }
+    let (p1, p2) = (base.join("v1.bpkg"), base.join("v2.bpkg"));
+    pack(&v1, &p1);
+    pack(&v2, &p2);
+    let dir = base.join("install");
+    install(&p1, &dir);
+
+    let Some(held) = HeldFile::hold(&dir.join("hold/f.txt")) else {
+        eprintln!("SKIP: this process writes through the lock (root?), nothing to provoke");
+        return;
+    };
+    let result = apply_package_update(&p2, &dir, None, None);
+    drop(held);
+
+    let err = result.expect_err("writing over a held file must fail the update");
+    let backup = backup_of(&dir);
+    assert!(
+        backup.join("hold/f.txt").exists() && backup.join("z.txt").exists(),
+        "the rollback could not finish, and the snapshot — the only intact copy — was deleted"
+    );
+    assert!(
+        err.to_string().contains(&backup.display().to_string()),
+        "the error must say where the previous install is: {err}"
+    );
+    for name in ["a.txt", "b.txt", "sub/nested.txt", "y.txt", "z.txt"] {
+        assert_eq!(
+            std::fs::read(dir.join(name)).ok().as_deref(),
+            Some(&b"VERSION ONE"[..]),
+            "{name} was not restored: the restore stopped at the held file"
+        );
+    }
+}
+
+/// A `.bak` already beside the install is what an interrupted update leaves — and after a
+/// crash mid-extraction it is the only intact copy. The next update used to delete it
+/// first thing and snapshot the half-written directory instead.
+#[test]
+fn an_unfinished_earlier_update_is_never_overwritten() {
+    let base = scratch("stalebak");
+    let (v1, v2) = (base.join("v1"), base.join("v2"));
+    write(&v1.join("app.exe"), b"VERSION ONE");
+    write(&v2.join("app.exe"), b"VERSION TWO");
+    let (p1, p2) = (base.join("v1.bpkg"), base.join("v2.bpkg"));
+    pack(&v1, &p1);
+    pack(&v2, &p2);
+    let dir = base.join("install");
+    install(&p1, &dir);
+
+    // What the crash left: the good copy in the snapshot, garbage in the install.
+    let backup = backup_of(&dir);
+    write(&backup.join("app.exe"), b"THE LAST GOOD INSTALL");
+    std::fs::write(dir.join("app.exe"), b"half-writ").unwrap();
+
+    let err = apply_package_update(&p2, &dir, None, None)
+        .expect_err("an update must not start over a snapshot it did not make");
+    assert!(err.to_string().contains("did not finish"), "{err}");
+    assert_eq!(
+        std::fs::read(backup.join("app.exe")).unwrap(),
+        b"THE LAST GOOD INSTALL",
+        "the only intact copy was destroyed"
+    );
+}
+
+/// A link or junction inside the install directory is not the install's content. The
+/// snapshot used to follow it (`is_dir()` does) and copy whatever it pointed at; a rollback
+/// then deleted it and put a COPY in its place.
+#[cfg(unix)]
+#[test]
+fn a_link_in_the_install_dir_is_neither_copied_nor_replaced() {
+    let base = scratch("link");
+    let (v1, v2) = (base.join("v1"), base.join("v2"));
+    for name in ["a.txt", "locked.txt"] {
+        write(&v1.join(name), b"VERSION ONE");
+        write(&v2.join(name), b"VERSION TWO");
+    }
+    let (p1, p2) = (base.join("v1.bpkg"), base.join("v2.bpkg"));
+    pack(&v1, &p1);
+    pack(&v2, &p2);
+    let dir = base.join("install");
+    install(&p1, &dir);
+
+    let library = base.join("library");
+    write(&library.join("big.mod"), b"user data elsewhere");
+    std::os::unix::fs::symlink(&library, dir.join("mods")).unwrap();
+
+    let locked = dir.join("locked.txt");
+    if !lock_file(&locked) {
+        unlock_file(&locked);
+        eprintln!("SKIP: running as root, no mid-extraction failure to provoke");
+        return;
+    }
+    let result = apply_package_update(&p2, &dir, None, None);
+    unlock_file(&locked);
+    assert!(result.is_err());
+
+    let meta = std::fs::symlink_metadata(dir.join("mods")).unwrap();
+    assert!(
+        meta.file_type().is_symlink(),
+        "the link was replaced by a copy"
+    );
+    assert_eq!(
+        std::fs::read(library.join("big.mod")).unwrap(),
+        b"user data elsewhere"
+    );
+}
