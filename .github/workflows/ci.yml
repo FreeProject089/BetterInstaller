@@ -10,7 +10,13 @@ env:
 
 # Least privilege for GITHUB_TOKEN. Without a block the token gets the repository's default,
 # which on an older repository is write-all, and this repository is PUBLIC — so a fork's
-# pull request runs these same third-party actions. Nothing here writes anything.
+# pull request runs these same third-party actions. Nothing here writes anything.#
+# Every action is pinned to a full commit SHA, the tag in the comment (SECURITY_SUMMARY §9 #3 in
+# BCW): a tag can be moved by whoever controls the action's repository, a SHA cannot. To bump:
+# `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>` (peel an annotated tag with
+# `^{}`), read the diff, change SHA and comment together.
+# `dtolnay/rust-toolchain` is pinned to the commit of v1, so the toolchain is named by
+# `toolchain: stable` rather than by the old `@stable` branch ref.
 permissions:
   contents: read
 
@@ -23,11 +29,12 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
+          toolchain: stable
           components: clippy, rustfmt
 
       # Slint's GUI backend + rfd's GTK3 file-dialog backend need these on Linux.
@@ -37,7 +44,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libfontconfig-dev libxcb-shape0-dev libxcb-xfixes0-dev libgtk-3-dev
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -50,3 +57,24 @@ jobs:
 
       - name: Build (release)
         run: cargo build --workspace --release
+
+  # Dependency advisories, blocking (SECURITY_SUMMARY §9 in BCW, "No dependency audit in CI").
+  # .github/scripts/dep-audit.mjs fails on any vulnerability not explained in
+  # .github/audit-ignore.json (empty today: quick-xml was fixed in BI-13). Unmaintained / unsound /
+  # yanked warnings are printed and do not fail, as with plain `cargo audit`.
+  # No npm audit: the docs site is mkdocs (Python), and nothing in this repository ships npm code.
+  cargo-audit:
+    name: cargo audit (workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
+      - name: install cargo-audit
+        run: cargo install cargo-audit --locked --version 0.22.2
+      - name: cargo audit (vulnerabilities fail)
+        run: node .github/scripts/dep-audit.mjs cargo .

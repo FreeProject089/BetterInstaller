@@ -6,7 +6,11 @@ name: Docs
 #
 # Separate from ci.yml on purpose: that one is the Rust workspace (fmt, clippy, tests) and
 # has nothing to do with the docs. Coupling them would mean a typo in a markdown file
-# blocking a code merge, and a Rust failure hiding a broken site.
+# blocking a code merge, and a Rust failure hiding a broken site.#
+# Every action is pinned to a full commit SHA, the tag in the comment (SECURITY_SUMMARY §9 #3 in
+# BCW): a tag can be moved by whoever controls the action's repository, a SHA cannot. To bump:
+# `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>` (peel an annotated tag with
+# `^{}`), read the diff, change SHA and comment together.
 
 on:
   push:
@@ -39,9 +43,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12'
           cache: pip
@@ -100,12 +104,12 @@ jobs:
       - name: The PDF is not truncated
         run: python tools/check_pdf.py site/pdf/betterinstaller.pdf --min-pages 25 --expect "BetterInstaller" --expect ".bpkg"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: betterinstaller-pdf
           path: site/pdf/betterinstaller.pdf
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         if: github.ref == 'refs/heads/master'
         with:
           path: site
@@ -123,4 +127,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

@@ -1,0 +1,4 @@
+{
+  "$comment": "Advisories judged unreachable, read by .github/scripts/dep-audit.mjs. One entry per advisory and folder; every entry needs a reason. Anything not listed here fails CI. Empty on purpose: the quick-xml advisory was fixed by the dependency bump in BI-13 (a52ce16), and on 2026-09-24 `cargo audit` reports no vulnerability in this workspace (only unmaintained/unsound/yanked warnings, which do not fail).",
+  "ignore": []
+}
