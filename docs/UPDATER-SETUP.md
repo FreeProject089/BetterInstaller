@@ -76,6 +76,28 @@ gh release upload <latest tag> update.json --clobber
 
 and re-uploads it to every other place it is served (`manifest_urls`).
 
+**The BMM example does this in CI.** BetterModsManager's
+[`.github/workflows/resign-manifests.yml`](https://github.com/FreeProject089/BetterModsManager/blob/master/.github/workflows/resign-manifests.yml)
+runs twice a week (Monday and Thursday, 04:17 UTC — twice, because GitHub delays and sometimes
+drops scheduled runs, and a weekly run against a 7-day signature has no slack) and on demand. It
+downloads `update.json` and BMM's own `update-manifest.json` from the latest release, renews them
+(`bpkg resign-manifest`, and `scripts/sign-update-manifest.mjs sign --require-signed`, which signs
+under BMM's own context line), verifies both against the pinned public key, then
+`gh release upload --clobber`. Neither tool will sign for the first time a manifest it did not
+already sign, so a job fed a tampered file fails instead of blessing it.
+
+- **Secrets:** `BMM_PRIVATE_KEY` (required — the `private.key` hex that signs the releases, the same
+  secret `release.yml` uses); `BCWEB_ASSETS_TOKEN` (optional — pushes the renewed files to the
+  BCWEB slots `bmm-update-json` and `bmm-update-manifest`; skipped when unset. BCWEB's asset routes
+  take a session with 2FA only today, so this needs a scoped key on the BCWEB side first).
+- **If it stops:** within 7 days `--check-update` answers with an error ("expired") and BMM's quick
+  update is refused; nothing wrong is installed, users simply stop being offered the update. GitHub
+  also pauses scheduled workflows in a repository with no activity for 60 days — re-enable it in the
+  Actions tab.
+- **By hand:** *Actions → Re-sign update manifests → Run workflow* (optionally a tag), or locally
+  the three commands above plus
+  `node scripts/sign-update-manifest.mjs sign update-manifest.json --key keys/private.key --require-signed`.
+
 > Automate it: a CI job (or your build script) runs `bpkg update-manifest` after
 > `bpkg sign`, then `gh release create … update.json App-*.bpkg`.
 

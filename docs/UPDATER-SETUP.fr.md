@@ -78,6 +78,30 @@ gh release upload <tag le plus récent> update.json --clobber
 
 et le re-publie partout ailleurs où il est servi (`manifest_urls`).
 
+**L'exemple BMM le fait en CI.** Le
+[`.github/workflows/resign-manifests.yml`](https://github.com/FreeProject089/BetterModsManager/blob/master/.github/workflows/resign-manifests.yml)
+de BetterModsManager tourne deux fois par semaine (lundi et jeudi, 04:17 UTC — deux fois, parce que
+GitHub retarde et parfois saute les exécutions planifiées, et qu'un passage hebdomadaire face à une
+signature de 7 jours n'a aucune marge) et à la demande. Il télécharge `update.json` et le
+`update-manifest.json` propre à BMM depuis la dernière release, les renouvelle (`bpkg resign-manifest`,
+et `scripts/sign-update-manifest.mjs sign --require-signed`, qui signe sous la ligne de contexte de
+BMM), vérifie les deux contre la clé publique épinglée, puis `gh release upload --clobber`. Aucun des
+deux outils ne signe pour la première fois un manifest qu'il n'avait pas déjà signé : un job à qui l'on
+sert un fichier altéré échoue au lieu de le bénir.
+
+- **Secrets :** `BMM_PRIVATE_KEY` (requis — l'hex de `private.key` qui signe les releases, le même
+  secret que `release.yml`) ; `BCWEB_ASSETS_TOKEN` (optionnel — pousse les fichiers renouvelés vers
+  les slots BCWEB `bmm-update-json` et `bmm-update-manifest` ; sauté s'il est absent. Les routes
+  d'assets de BCWEB n'acceptent aujourd'hui qu'une session avec 2FA : il faut d'abord une clé à portée
+  limitée côté BCWEB).
+- **S'il s'arrête :** en 7 jours au plus `--check-update` répond par une erreur (« expired ») et la
+  mise à jour rapide de BMM est refusée ; rien de faux n'est installé, on cesse simplement de proposer
+  la mise à jour. GitHub met aussi en pause les workflows planifiés d'un dépôt sans activité depuis
+  60 jours — réactive-le dans l'onglet Actions.
+- **À la main :** *Actions → Re-sign update manifests → Run workflow* (un tag en option), ou en local
+  les trois commandes ci-dessus plus
+  `node scripts/sign-update-manifest.mjs sign update-manifest.json --key keys/private.key --require-signed`.
+
 > Automatise-le : un job CI (ou ton script de build) exécute `bpkg update-manifest` après
 > `bpkg sign`, puis `gh release create … update.json App-*.bpkg`.
 
