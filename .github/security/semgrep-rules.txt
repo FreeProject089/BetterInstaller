@@ -1,0 +1,54 @@
+# Semgrep rules used by .github/workflows/security.yml (BetterInstaller: crates/, tools/, workflows).
+#
+# Source: https://github.com/semgrep/semgrep-rules at the commit pinned as SEMGREP_RULES_REF in
+# security.yml (a84ff9cc2453ca91d581380de4b8b3f272f6f4be, 2026-09-25). One rule file per line,
+# relative to that repository; lines starting with # are ignored.
+#
+# Selection: every rule file under the directories below whose rules are NOT tagged
+# `subcategory: audit`. Audit rules flag every use of a sink (each temp_dir, each innerHTML)
+# for a human to review; they are a manual-review aid, not something a CI gate can decide on.
+# To regenerate after bumping the pin, see "Semgrep rules" in the Security CI docs.
+#
+# Directories: rust/lang/security, python/lang/security, yaml/github-actions/security
+rust/lang/security/reqwest-accept-invalid.yml
+rust/lang/security/rustls-dangerous.yml
+rust/lang/security/ssl-verify-none.yml
+yaml/github-actions/security/allowed-unsecure-commands.yaml
+yaml/github-actions/security/detect-shai-hulud-backdoor.yaml
+yaml/github-actions/security/gha-curl-pipe-shell.yaml
+yaml/github-actions/security/github-actions-mutable-action-tag.yaml
+yaml/github-actions/security/github-script-injection.yaml
+yaml/github-actions/security/pull-request-target-code-checkout.yaml
+yaml/github-actions/security/run-shell-injection.yaml
+yaml/github-actions/security/secrets-inherit.yaml
+yaml/github-actions/security/workflow-run-target-code-checkout.yaml
+yaml/github-actions/security/audit/third-party-action-not-pinned-to-commit-sha.yml
+python/lang/security/dangerous-code-run.yaml
+python/lang/security/dangerous-os-exec.yaml
+python/lang/security/dangerous-spawn-process.yaml
+python/lang/security/dangerous-subinterpreters-run-string.yaml
+python/lang/security/dangerous-subprocess-use.yaml
+python/lang/security/dangerous-system-call.yaml
+python/lang/security/dangerous-testcapi-run-in-subinterp.yaml
+python/lang/security/insecure-hash-algorithms-md5.yaml
+python/lang/security/insecure-hash-algorithms.yaml
+python/lang/security/use-defused-xml-parse.yaml
+python/lang/security/audit/dangerous-asyncio-create-exec-tainted-env-args.yaml
+python/lang/security/audit/dangerous-asyncio-exec-tainted-env-args.yaml
+python/lang/security/audit/dangerous-asyncio-shell-tainted-env-args.yaml
+python/lang/security/audit/dangerous-code-run-tainted-env-args.yaml
+python/lang/security/audit/dangerous-os-exec-tainted-env-args.yaml
+python/lang/security/audit/dangerous-spawn-process-tainted-env-args.yaml
+python/lang/security/audit/dangerous-subinterpreters-run-string-tainted-env-args.yaml
+python/lang/security/audit/dangerous-subprocess-use-tainted-env-args.yaml
+python/lang/security/audit/dangerous-system-call-tainted-env-args.yaml
+python/lang/security/audit/dangerous-testcapi-run-in-subinterp-tainted-env-args.yaml
+python/lang/security/audit/insecure-file-permissions.yaml
+python/lang/security/audit/md5-used-as-password.yaml
+python/lang/security/audit/regex-dos.yaml
+python/lang/security/audit/sha224-hash.yaml
+python/lang/security/audit/ssl-wrap-socket-is-deprecated.yaml
+python/lang/security/audit/subprocess-shell-true.yaml
+python/lang/security/audit/logging/logger-credential-leak.yaml
+python/lang/security/audit/network/bind.yaml
+python/lang/security/audit/network/disabled-cert-validation.yaml

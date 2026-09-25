@@ -13,4 +13,6 @@ mkdocs-with-pdf==0.9.3
 weasyprint==69.0
 # Reads the built PDF back, so a render that silently drops most of the book fails the
 # build instead of shipping. See tools/check_pdf.py.
-pypdf==5.1.0
+# 5.1.0 -> 6.16.2 (2026-09-25, same as BMM Docs): two HIGH denial-of-service advisories.
+# check_pdf.py only uses PdfReader, .pages and extract_text(), unchanged in 6.x.
+pypdf==6.16.2
