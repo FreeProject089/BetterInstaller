@@ -41,7 +41,10 @@ docker compose run --rm shell    # interactive, with the toolchain and deps
 ```
 
 Named volumes cache the Cargo registry and the Linux target directory, so repeat runs are
-fast and Linux artifacts never touch your host `./target`.
+fast and Linux artifacts never touch your host `./target`. The container runs as the
+unprivileged user `dev`, not root. Volumes left by the older, root-run image are still
+root-owned: on "Permission denied" under `/usr/local/cargo` or `/tmp/target`, run
+`docker compose down --volumes` once.
 
 ## Making an installer
 

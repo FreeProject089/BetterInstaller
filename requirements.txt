@@ -2,7 +2,16 @@
 # same markdown conventions should not sit on two different renderers, or a fix made once
 # has to be found twice.
 mkdocs==1.6.1
-mkdocs-material==9.5.44
+# 9.5.44 -> 9.7.7 (2026-09-25, same as BMM Docs): CVE-2026-73295 (DOM XSS, MEDIUM), fixed in
+# 9.7.7. It also lifts 9.5's `pymdown-extensions~=10.2` cap, which held the line below on 10.x.
+# 9.7 prints a red "MkDocs 2.0" notice on stderr at every build: informational only (not a
+# log warning, --strict ignores it); 9.7 requires mkdocs<2 and mkdocs is pinned above.
+mkdocs-material==9.7.7
+# TRANSITIVE (mkdocs-material 9.7 only asks for >=10.2), pinned so an install does not jump to
+# whatever major is newest that day. 10.21.3 -> 11.0.2 (2026-09-25): CVE-2026-61632 and
+# CVE-2026-67422 (ReDoS, HIGH, fixed in 11.0.1). 11.0's only BREAK is B64 (not used here).
+# Not 12.x: 12.0 rewrites BetterEm / Tilde / Caret / Mark parsing, a separate change.
+pymdown-extensions==11.0.2
 mkdocs-static-i18n==1.2.3
 
 # The PDF edition.
@@ -10,7 +19,10 @@ mkdocs-with-pdf==0.9.3
 # WeasyPrint is a TRANSITIVE dependency of mkdocs-with-pdf and pinning it is not optional:
 # unpinned, the renderer changes under the build while everything else stays put, and the
 # apt list in .github/workflows/docs.yml has to match what THIS version dlopens.
-weasyprint==69.0
+# 69.0 -> 70.0 (2026-09-25, same as BMM Docs): CVE-2026-55073. 70 loads the same libraries plus
+# an OPTIONAL libharfbuzz-vector (HarfBuzz 13+, COLRv1 colour fonts only), so the apt list is
+# unchanged; mkdocs-with-pdf 0.9.3 uses only APIs 70 still has.
+weasyprint==70.0
 # Reads the built PDF back, so a render that silently drops most of the book fails the
 # build instead of shipping. See tools/check_pdf.py.
 # 5.1.0 -> 6.16.2 (2026-09-25, same as BMM Docs): two HIGH denial-of-service advisories.

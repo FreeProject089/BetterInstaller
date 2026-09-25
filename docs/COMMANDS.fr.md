@@ -41,7 +41,10 @@ docker compose run --rm shell    # interactif, avec la chaîne d'outils et les d
 ```
 
 Des volumes nommés mettent en cache le registre Cargo et le répertoire cible Linux : les
-relances sont rapides et les artefacts Linux ne touchent jamais ton `./target` local.
+relances sont rapides et les artefacts Linux ne touchent jamais ton `./target` local. Le
+conteneur tourne sous l'utilisateur non privilégié `dev`, pas en root. Les volumes laissés par
+l'ancienne image, lancée en root, restent à root : sur un « Permission denied » sous
+`/usr/local/cargo` ou `/tmp/target`, lance une fois `docker compose down --volumes`.
 
 ## Fabriquer un installeur
 

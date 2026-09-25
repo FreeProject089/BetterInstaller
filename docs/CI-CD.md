@@ -28,6 +28,15 @@ a fork's pull request runs the same workflows with a read-only token.
 - **Secrets / variables:** none. **Artifacts:** none.
 - **Run it locally:** `docker compose run --rm ci` runs the whole Linux gate in the dev image (see the
   `Dockerfile`); `cargo install cargo-audit --locked` then `node .github/scripts/dep-audit.mjs cargo .`.
+- **The dev image** is `FROM rust:<version>-trixie@sha256:<digest>`, pinned by version and digest
+  (1.98.1 today, the `stable` that `ci.yml` installs). Bump tag and digest together, to the version
+  CI's `stable` currently gives; the Dockerfile has the two commands. It runs as the unprivileged
+  user `dev` (uid/gid 1000 by default, `--build-arg UID=… GID=…` or `BI_UID` / `BI_GID` with compose
+  to match yours). The toolchain is left as the rust image ships it; the cargo registry and git caches
+  and the target directory are created in the image owned by `dev`, so the named volumes mounted
+  over them are too. Volumes created by the older, root-run image stay root-owned: on
+  "Permission denied" under `/usr/local/cargo` or `/tmp/target`, run `docker compose down --volumes`
+  once.
 
 ### Docs (`docs.yml`)
 
@@ -73,8 +82,8 @@ only at or above the threshold.
   with reasons in `.github/audit-ignore.json`. A second scanner would need every accepted advisory
   written in two ignore files that drift apart.
 - **No image scan.** No image is built or published. The `Dockerfile` is a local development image
-  built `FROM rust:latest`, a moving tag. Its configuration is scanned; a scan of a build of it would
-  give a different answer every week about a toolchain nobody ships.
+  (`FROM rust`, pinned by version and digest). Its configuration is scanned; its packages are Debian's
+  and the Rust toolchain's, in an image nobody ships.
 
 ## Reading the results
 
@@ -148,6 +157,7 @@ node .github/scripts/security-gate.mjs --tool semgrep --report reports/semgrep.j
 
 # Dependencies and the Dockerfile.
 docker run --rm -v "$PWD:/src" -w /src "$TRIVY" fs --scanners vuln,misconfig --show-suppressed \
+  --ignorefile .github/security/trivyignore.yaml \
   --skip-files Cargo.lock --format json --output reports/trivy.json --exit-code 0 .
 node .github/scripts/security-gate.mjs --tool trivy --report reports/trivy.json
 
@@ -188,7 +198,7 @@ at the next run.
 | Gitleaks, one finding | `.gitleaksignore` | the fingerprint from the log (`commit:file:rule:line`), under a comment saying why |
 | Gitleaks, a class of false positive | `.gitleaks.toml` with `[extend] useDefault = true` and `[[allowlists]]` | `targetRules` + a narrow `regexes`, with a comment proving it cannot match a real secret |
 | Semgrep | the source line | `// nosemgrep: <rule-id>` (`#` in Python), with the reason on the line above |
-| Trivy | `.trivyignore` | `CVE-XXXX-YYYY exp:2026-12-31` under a comment with the reason; the expiry brings it back for review |
+| Trivy | `.github/security/trivyignore.yaml` (the workflow passes `--ignorefile`; Trivy reads no YAML file on its own) | an entry under `vulnerabilities:` or `misconfigurations:` with `id`, `paths` (as narrow as possible), `statement` (the reason) and `expired_at`; the expiry makes the finding fail again, for review |
 | cargo audit (`ci.yml`) | `.github/audit-ignore.json` | id, tool, folder, reason, date |
 
 - **A real secret is never excluded.** Rotate it first. Only then, if it must stay in the history,
@@ -196,6 +206,10 @@ at the next run.
 - An exclusion names one finding or one provably harmless class, never a whole rule or folder "to make
   CI pass".
 - A change to any of these files is a security change: review it like one.
+
+**Current exclusions:** one. Trivy `DS-0026` (no `HEALTHCHECK`, LOW), scoped to `Dockerfile`, expires
+2027-03-25: the dev image is a one-shot container that runs the gate and exits, with no long-running
+service to probe. `--show-suppressed` keeps it listed as "ignored" in every run.
 
 A Security-tab dismissal (`False positive` / `Won't fix`) is still the place to record a decision
 the tool config cannot express. Write the justification in the comment, not just the reason code.

@@ -6,10 +6,21 @@
 #
 # Named volumes cache the Cargo registry + the Linux target dir, so repeat runs are fast
 # and Linux build artifacts never touch your host ./target.
+#
+# The image runs as the unprivileged user `dev` (see the Dockerfile), and each volume below is
+# mounted over a directory the image creates owned by dev. Volumes made by an older, root-run
+# image stay root-owned: on "Permission denied" under /usr/local/cargo or /tmp/target, run
+# `docker compose down --volumes` once. On a Linux host whose uid is not 1000, build with your
+# ids so files written into the bind mount are yours:
+#   BI_UID="$(id -u)" BI_GID="$(id -g)" docker compose build
 
 services:
   ci:
-    build: .
+    build:
+      context: .
+      args:
+        UID: ${BI_UID:-1000}
+        GID: ${BI_GID:-1000}
     image: betterinstaller-dev
     working_dir: /app
     environment:

@@ -15,7 +15,9 @@ name: Security
 #                  registry: the same commit gives the same rules next year). Scans the whole
 #                  checkout: crates/, tools/, workflows.
 #   deps-config    Trivy filesystem scan: vulnerabilities in requirements.txt (the docs and PDF
-#                  toolchain) and misconfigurations in the dev Dockerfile.
+#                  toolchain) and misconfigurations in the dev Dockerfile. Reviewed exclusions
+#                  (path-scoped, with a statement and an expiry) live in
+#                  .github/security/trivyignore.yaml.
 #   code-scanning  Sends every SARIF (gitleaks, semgrep, trivy) to the Security tab, one category
 #                  per tool, even when a gate failed. The ONLY job with security-events: write.
 #   pr-comment     On a pull request: ONE comment with the gate table, edited on every run
@@ -29,8 +31,8 @@ name: Security
 # every accepted advisory written in two ignore files that would drift apart.
 #
 # Why no image scan: no image is built or published here. The Dockerfile is a local dev image
-# FROM a moving tag (rust:latest); its config is scanned, a build of it would give a different
-# answer every week about a toolchain nobody ships.
+# (FROM rust, pinned by version and digest); its config is scanned. Its packages are Debian's
+# and the Rust toolchain's, in an image nobody ships.
 #
 # Threshold (repository variables, Settings > Secrets and variables > Actions > Variables):
 #   SECURITY_GATE_SEVERITY           critical | high | medium | low   (unset = high)
@@ -193,12 +195,16 @@ jobs:
         with:
           node-version: 22
       # --skip-files: the lockfile ci.yml's cargo-audit owns (see the header).
-      # --show-suppressed: whatever .trivyignore(.yaml) excludes stays listed, as "ignored".
+      # --ignorefile: Trivy only reads `.trivyignore` unless told otherwise; the YAML form is the
+      # one that carries a path scope, a statement and an expiry per entry.
+      # --show-suppressed: whatever that file excludes stays listed, as "ignored".
       - name: trivy fs
         run: |
           mkdir -p reports
+          test -f .github/security/trivyignore.yaml
           docker run --rm -v "$GITHUB_WORKSPACE:/src" -w /src "$TRIVY_IMAGE" fs \
             --scanners vuln,misconfig --show-suppressed \
+            --ignorefile .github/security/trivyignore.yaml \
             --skip-files Cargo.lock \
             --format json --output reports/trivy.json --exit-code 0 .
           docker run --rm -v "$GITHUB_WORKSPACE:/src" -w /src "$TRIVY_IMAGE" convert --format sarif --output reports/trivy.sarif reports/trivy.json

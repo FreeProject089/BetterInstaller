@@ -28,6 +28,15 @@ la pull request d'un fork lance les mêmes workflows avec un token en lecture se
 - **Secrets / variables :** aucun. **Artefacts :** aucun.
 - **En local :** `docker compose run --rm ci` lance tout le gate Linux dans l'image de dev (voir le
   `Dockerfile`) ; `cargo install cargo-audit --locked`, puis `node .github/scripts/dep-audit.mjs cargo .`.
+- **L'image de dev** est `FROM rust:<version>-trixie@sha256:<digest>`, épinglée par version et par
+  digest (1.98.1 aujourd'hui, le `stable` qu'installe `ci.yml`). On change le tag et le digest
+  ensemble, vers la version que donne le `stable` de la CI ; le Dockerfile donne les deux commandes.
+  Elle tourne sous l'utilisateur non privilégié `dev` (uid/gid 1000 par défaut ; `--build-arg UID=…
+  GID=…`, ou `BI_UID` / `BI_GID` avec compose, pour prendre les tiens). La chaîne d'outils reste telle
+  que l'image rust la livre ; les caches cargo (registry, git) et le dossier target sont créés dans
+  l'image au nom de `dev`, donc les volumes nommés montés dessus aussi. Les volumes créés par
+  l'ancienne image, lancée en root, restent à root : sur un « Permission denied » sous
+  `/usr/local/cargo` ou `/tmp/target`, lance une fois `docker compose down --volumes`.
 
 ### Docs (`docs.yml`)
 
@@ -75,9 +84,8 @@ tableau et ne fait échouer le job qu'au seuil ou au-dessus.
   bloquant, avec les raisons dans `.github/audit-ignore.json`. Un second scanner obligerait à écrire
   chaque alerte acceptée dans deux fichiers d'exclusion qui finiraient par diverger.
 - **Pas de scan d'image.** Aucune image n'est construite ni publiée. Le `Dockerfile` est une image de
-  développement locale, construite `FROM rust:latest`, un tag mouvant. Sa configuration est scannée ;
-  scanner une image construite donnerait chaque semaine une réponse différente sur un outillage que
-  personne ne livre.
+  développement locale (`FROM rust`, épinglée par version et par digest). Sa configuration est
+  scannée ; ses paquets sont ceux de Debian et de la chaîne Rust, dans une image que personne ne livre.
 
 ## Lire les résultats
 
@@ -154,6 +162,7 @@ node .github/scripts/security-gate.mjs --tool semgrep --report reports/semgrep.j
 
 # Dépendances et Dockerfile.
 docker run --rm -v "$PWD:/src" -w /src "$TRIVY" fs --scanners vuln,misconfig --show-suppressed \
+  --ignorefile .github/security/trivyignore.yaml \
   --skip-files Cargo.lock --format json --output reports/trivy.json --exit-code 0 .
 node .github/scripts/security-gate.mjs --tool trivy --report reports/trivy.json
 
@@ -196,7 +205,7 @@ encore au run suivant.
 | Gitleaks, un résultat | `.gitleaksignore` | l'empreinte du log (`commit:fichier:règle:ligne`), sous un commentaire qui dit pourquoi |
 | Gitleaks, une classe de faux positifs | `.gitleaks.toml` avec `[extend] useDefault = true` et `[[allowlists]]` | `targetRules` + une `regexes` étroite, avec un commentaire qui prouve qu'elle ne peut pas toucher un vrai secret |
 | Semgrep | la ligne de source | `// nosemgrep: <id-de-règle>` (`#` en Python), avec la raison sur la ligne au-dessus |
-| Trivy | `.trivyignore` | `CVE-XXXX-YYYY exp:2026-12-31` sous un commentaire avec la raison ; l'expiration refait passer l'exclusion en revue |
+| Trivy | `.github/security/trivyignore.yaml` (le workflow passe `--ignorefile` ; Trivy ne lit aucun fichier YAML de lui-même) | une entrée sous `vulnerabilities:` ou `misconfigurations:` avec `id`, `paths` (le plus étroit possible), `statement` (la raison) et `expired_at` ; à l'expiration le résultat échoue de nouveau, pour revue |
 | cargo audit (`ci.yml`) | `.github/audit-ignore.json` | id, outil, dossier, raison, date |
 
 - **Un vrai secret n'est jamais exclu.** Fais-le d'abord tourner (rotation). Seulement ensuite, s'il
@@ -204,6 +213,11 @@ encore au run suivant.
 - Une exclusion nomme un résultat, ou une classe prouvée inoffensive. Jamais une règle entière ou un
   dossier entier « pour que la CI passe ».
 - Une modification de l'un de ces fichiers est une modification de sécurité : relis-la comme telle.
+
+**Exclusions en vigueur :** une. Trivy `DS-0026` (pas de `HEALTHCHECK`, LOW), limitée au
+`Dockerfile`, expire le 2027-03-25 : l'image de dev est un conteneur éphémère qui lance le gate et
+s'arrête, sans service de longue durée à sonder. `--show-suppressed` la garde listée comme « ignored »
+à chaque run.
 
 Un rejet dans l'onglet Security (`False positive` / `Won't fix`) reste l'endroit pour consigner une
 décision que la config de l'outil ne sait pas exprimer. Écris la justification dans le commentaire,
