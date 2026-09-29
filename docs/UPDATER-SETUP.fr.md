@@ -91,9 +91,11 @@ sert un fichier altéré échoue au lieu de le bénir.
 
 - **Secrets :** `BMM_PRIVATE_KEY` (requis — l'hex de `private.key` qui signe les releases, le même
   secret que `release.yml`) ; `BCWEB_ASSETS_TOKEN` (optionnel — pousse les fichiers renouvelés vers
-  les slots BCWEB `bmm-update-json` et `bmm-update-manifest` ; sauté s'il est absent. Les routes
-  d'assets de BCWEB n'acceptent aujourd'hui qu'une session avec 2FA : il faut d'abord une clé à portée
-  limitée côté BCWEB).
+  les slots BCWEB `bmm-update-json` et `bmm-update-manifest` ; sauté s'il est absent. C'est une clé
+  de publication CI BCWEB : dans BCWEB, *Admin → Téléchargements et assets → Clé de publication CI*,
+  coche ces deux slots, choisis une expiration de 90 jours au plus, confirme avec la 2FA et colle la
+  clé, montrée une seule fois, comme secret. Elle ne peut remplacer que ces slots, et BCWEB garde
+  l'ancien fichier si l'envoi ne correspond pas à son SHA-256).
 - **S'il s'arrête :** en 7 jours au plus `--check-update` répond par une erreur (« expired ») et la
   mise à jour rapide de BMM est refusée ; rien de faux n'est installé, on cesse simplement de proposer
   la mise à jour. GitHub met aussi en pause les workflows planifiés d'un dépôt sans activité depuis

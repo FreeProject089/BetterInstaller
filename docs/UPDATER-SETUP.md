@@ -88,8 +88,10 @@ already sign, so a job fed a tampered file fails instead of blessing it.
 
 - **Secrets:** `BMM_PRIVATE_KEY` (required — the `private.key` hex that signs the releases, the same
   secret `release.yml` uses); `BCWEB_ASSETS_TOKEN` (optional — pushes the renewed files to the
-  BCWEB slots `bmm-update-json` and `bmm-update-manifest`; skipped when unset. BCWEB's asset routes
-  take a session with 2FA only today, so this needs a scoped key on the BCWEB side first).
+  BCWEB slots `bmm-update-json` and `bmm-update-manifest`; skipped when unset. It is a BCWEB CI
+  publish key: in BCWEB, *Admin → Downloads & assets → CI publish key*, tick those two slots, pick an
+  expiry of at most 90 days, confirm with 2FA and paste the key, shown once, as the secret. It can
+  replace only those slots, and BCWEB keeps the old file unless the upload matches its SHA-256).
 - **If it stops:** within 7 days `--check-update` answers with an error ("expired") and BMM's quick
   update is refused; nothing wrong is installed, users simply stop being offered the update. GitHub
   also pauses scheduled workflows in a repository with no activity for 60 days — re-enable it in the
