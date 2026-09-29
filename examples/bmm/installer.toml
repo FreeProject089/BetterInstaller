@@ -296,6 +296,21 @@ maps_to     = "settings.telemetry_bench"
 group       = "privacy"
 sends_data  = true
 
+# Optional AI (Laya). OFF by default like everything that can send data. Ticked only turns BMM's
+# master switch on (src-tauri/src/commands/installer_handoff.rs → ai-settings.json); no provider is
+# chosen, so nothing is sent until the user picks one in Settings → AI. Scripted:
+# `--set=ai_features=false`.
+[[setup_option]]
+id          = "ai_features"
+type        = "bool"
+label_key   = "setup.aiFeatures"
+label       = "Optional AI features (Laya)"
+description  = "Off by default. Lets BMM suggest a mod's details (from its own files, and tags ranked among yours by the Laya classifier) and check a bug report before it is sent. Ticking it only turns the feature on: nothing is sent until you choose a provider in Settings → AI (BetterCommunity, your own Laya server, or an external API), and then only when you click Suggest. BMM includes no AI model. Settings → AI turns it off at any time."
+default     = false
+maps_to     = "settings.ai_features"
+group       = "privacy"
+sends_data  = true
+
 # ─── Optional preferences pre-set at install (each maps to a real BMM setting) ───
 # Defaults MATCH BMM's own defaults, so leaving them alone changes nothing; the user
 # can flip any of them here to have BMM start already configured, or change them later

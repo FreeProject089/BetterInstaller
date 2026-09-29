@@ -155,3 +155,7 @@ name = "Python 3.12 (embarquable)"
 
 [prereqs.node]
 name = "Node.js 20 ou plus récent"
+
+[options.ai_features]
+label = "Fonctionnalités IA optionnelles (Laya)"
+description = "Désactivé par défaut. Permet à BMM de suggérer les infos d'un mod (tirées de ses propres fichiers, et des tags classés parmi les vôtres par le classifieur Laya) et de vérifier un rapport de bug avant son envoi. Cocher ne fait qu'activer la fonction : rien n'est envoyé tant que vous ne choisissez pas un fournisseur dans Paramètres → IA (BetterCommunity, votre propre serveur Laya ou une API externe), et alors seulement quand vous cliquez sur Suggérer. BMM n'inclut aucun modèle d'IA. Paramètres → IA la désactive à tout moment."

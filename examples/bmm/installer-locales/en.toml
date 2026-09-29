@@ -20,3 +20,7 @@ none = "Default"
 network = "Pin the network"
 strict = "Strict"
 custom = "Custom"
+
+[options.ai_features]
+label = "Optional AI features (Laya)"
+description = "Off by default. Lets BMM suggest a mod's details (from its own files, and tags ranked among yours by the Laya classifier) and check a bug report before it is sent. Ticking it only turns the feature on: nothing is sent until you choose a provider in Settings → AI (BetterCommunity, your own Laya server, or an external API), and then only when you click Suggest. BMM includes no AI model. Settings → AI turns it off at any time."

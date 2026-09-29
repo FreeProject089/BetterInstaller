@@ -523,8 +523,11 @@ fn run_gui(
     // Shared mutable state captured by callbacks.
     let setup_opts = Rc::new(cfg.setup_options.clone());
     let setup_groups: Rc<Vec<SetupGroup>> = Rc::new(cfg.setup_groups.clone());
+    // `--set=<option>=<value>` pre-fills answers (see `preset_choices`); the page still shows
+    // them and the user can change them before installing.
+    let cli_args: Vec<String> = std::env::args().collect();
     let chosen: Rc<RefCell<BTreeMap<String, serde_json::Value>>> =
-        Rc::new(RefCell::new(BTreeMap::new()));
+        Rc::new(RefCell::new(preset_choices(&cli_args, &cfg.setup_options)));
 
     // Post-install "launch now" items (opt-in checkboxes on the Done page).
     let launch_cfg: Rc<Vec<bpkg_core::config::LaunchItem>> = Rc::new(cfg.launch.clone());
@@ -2883,12 +2886,88 @@ fn parse_hex(s: &str) -> Option<Color> {
     }
 }
 
+/// `--set=<option id>=<value>` on the command line: the answer a Configuration-page option starts
+/// with, for a scripted or support-guided install (e.g. `--set=ai_features=false`). Generic —
+/// any project's `[[setup_option]]` id — and deliberately narrow:
+///
+/// * a `bool` takes true/false (1/0, yes/no, on/off); a `select`/`swatch` only one of its choices;
+/// * a `license` is NEVER pre-accepted from a command line — accepting terms is a person's click;
+/// * an unknown id or a malformed value is ignored (the declared default stands), so a typo can
+///   only fall back to the default, never to something unexpected.
+fn preset_choices(args: &[String], opts: &[SetupOption]) -> BTreeMap<String, serde_json::Value> {
+    let mut out = BTreeMap::new();
+    for a in args {
+        let Some(rest) = a.strip_prefix("--set=") else { continue };
+        let Some((id, raw)) = rest.split_once('=') else { continue };
+        let (id, raw) = (id.trim(), raw.trim());
+        let Some(opt) = opts.iter().find(|o| o.id == id) else { continue };
+        let value = match opt.kind {
+            SetupOptionKind::Bool => match raw.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Some(serde_json::json!(true)),
+                "false" | "0" | "no" | "off" => Some(serde_json::json!(false)),
+                _ => None,
+            },
+            SetupOptionKind::Select | SetupOptionKind::Swatch => {
+                opt.choices.iter().any(|c| c == raw).then(|| serde_json::json!(raw))
+            }
+            SetupOptionKind::License => None,
+        };
+        if let Some(v) = value {
+            out.insert(id.to_string(), v);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         doc_title, fallback_notice, is_web_url, legal_candidates, option_rows, order_by_group,
-        parse_md, signature_verdict,
+        parse_md, preset_choices, signature_verdict,
     };
+
+    #[test]
+    fn set_flag_prefills_only_valid_answers_and_never_a_license() {
+        let cfg = InstallerConfig::load("../../examples/bmm/installer.toml").unwrap();
+        let args: Vec<String> = [
+            "betterinstaller.exe",
+            "--set=ai_features=true",
+            "--set=telemetry=maybe",
+            "--set=tos=true",
+            "--set=nope=true",
+            "--set=discord_rpc=OFF",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let p = preset_choices(&args, &cfg.setup_options);
+        assert_eq!(p.get("ai_features"), Some(&serde_json::json!(true)));
+        assert_eq!(p.get("discord_rpc"), Some(&serde_json::json!(false)));
+        assert!(!p.contains_key("telemetry"), "a malformed bool keeps the default");
+        assert!(!p.contains_key("nope"));
+        let lic: Vec<&str> = cfg
+            .setup_options
+            .iter()
+            .filter(|o| matches!(o.kind, bpkg_core::config::SetupOptionKind::License))
+            .map(|o| o.id.as_str())
+            .collect();
+        for id in lic {
+            let a = vec![format!("--set={id}=true")];
+            assert!(preset_choices(&a, &cfg.setup_options).is_empty(), "{id} accepted from a CLI");
+        }
+    }
+
+    /// The optional-AI box exists, is off by default, sends data when on, and maps to the key
+    /// BMM reads (src-tauri/src/commands/installer_handoff.rs: `ai_features`).
+    #[test]
+    fn bmm_ai_option_is_opt_in() {
+        let cfg = InstallerConfig::load("../../examples/bmm/installer.toml").unwrap();
+        let o = cfg.setup_options.iter().find(|o| o.id == "ai_features").expect("ai_features option");
+        assert_eq!(o.default, serde_json::json!(false));
+        assert!(o.sends_data);
+        let doc = bpkg_core::handoff::build(&cfg.setup_options, &Default::default(), vec![], "1.0.0", "x");
+        assert_eq!(doc.settings.get("ai_features"), Some(&serde_json::json!(false)));
+    }
     use bpkg_core::config::InstallerConfig;
     use bpkg_core::i18n::Translator;
     use slint::Model;
