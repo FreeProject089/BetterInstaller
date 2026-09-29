@@ -22,5 +22,5 @@ strict = "Strict"
 custom = "Custom"
 
 [options.ai_features]
-label = "Optional AI features (Laya)"
-description = "Off by default. Lets BMM suggest a mod's details (from its own files, and tags ranked among yours by the Laya classifier) and check a bug report before it is sent. Ticking it only turns the feature on: nothing is sent until you choose a provider in Settings → AI (BetterCommunity, your own Laya server, or an external API), and then only when you click Suggest. BMM includes no AI model. Settings → AI turns it off at any time."
+label = "Laya offline (local AI, nothing sent)"
+description = "On by default: it is local — nothing leaves this PC. Installs the Laya classifier inside BMM (a 327 MB download during setup, 404 MB on disk, verified against its pinned SHA-256) so that, when you click Suggest, BMM can rank tags among yours, recognise a text's language and check a bug report before you send it — offline, without any server. Nothing runs in the background. Untick it to install no model: the AI features stay off, and Settings → AI can download the model later or use another provider."

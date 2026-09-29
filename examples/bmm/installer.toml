@@ -296,20 +296,24 @@ maps_to     = "settings.telemetry_bench"
 group       = "privacy"
 sends_data  = true
 
-# Optional AI (Laya). OFF by default like everything that can send data. Ticked only turns BMM's
-# master switch on (src-tauri/src/commands/installer_handoff.rs → ai-settings.json); no provider is
-# chosen, so nothing is sent until the user picks one in Settings → AI. Scripted:
-# `--set=ai_features=false`.
+# « Laya hors ligne »: the Laya classifier run INSIDE BMM (src-tauri/src/commands/ai_embedded.rs).
+# ON by default, and not a `sends_data` option: inference is local, no server, no request — the
+# only network use is downloading the pinned model pack during setup. Ticked = the pack below is
+# installed (`installs`) AND BMM's master switch is on with the embedded engine as the provider
+# (installer_handoff.rs → ai_core::apply_installer_choice); every feature still waits for a click.
+# Unticked = no model and the AI features off. The key stays `ai_features` so the handoff keeps
+# its meaning for BMM. Scripted: `--set=ai_features=false`.
 [[setup_option]]
 id          = "ai_features"
 type        = "bool"
 label_key   = "setup.aiFeatures"
-label       = "Optional AI features (Laya)"
-description  = "Off by default. Lets BMM suggest a mod's details (from its own files, and tags ranked among yours by the Laya classifier) and check a bug report before it is sent. Ticking it only turns the feature on: nothing is sent until you choose a provider in Settings → AI (BetterCommunity, your own Laya server, or an external API), and then only when you click Suggest. BMM includes no AI model. Settings → AI turns it off at any time."
-default     = false
+label       = "Laya offline (local AI, nothing sent)"
+description  = "On by default: it is local — nothing leaves this PC. Installs the Laya classifier inside BMM (a 327 MB download during setup, 404 MB on disk, verified against its pinned SHA-256) so that, when you click Suggest, BMM can rank tags among yours, recognise a text's language and check a bug report before you send it — offline, without any server. Nothing runs in the background. Untick it to install no model: the AI features stay off, and Settings → AI can download the model later or use another provider."
+default     = true
 maps_to     = "settings.ai_features"
 group       = "privacy"
-sends_data  = true
+sends_data  = false
+installs    = "laya-offline"
 
 # ─── Optional preferences pre-set at install (each maps to a real BMM setting) ───
 # Defaults MATCH BMM's own defaults, so leaving them alone changes nothing; the user
@@ -511,6 +515,30 @@ install_to   = "runtime/python"
 # remaining piece — making it required instead would force a 10 MB download on everyone
 # for a feature most people never use.
 required = false
+
+# The « Laya hors ligne » model pack: the quantized Laya multilingual model, its tokenizer and
+# config, and Microsoft's ONNX Runtime DLL — everything BMM needs to classify offline. Not a row
+# of its own: the `ai_features` option above installs it (`installs = "laya-offline"`).
+#
+# DOWNLOADED, not packed into bmm.bpkg: 327 MB of quantized weights compress badly (the pack is
+# 404 MB unzipped), and in the payload they would make every BMM-Setup.exe and every full update
+# package six times larger, including for everyone who unticks the box. The download streams to
+# disk, is refused unless it matches the SHA-256 below, and unpacks into <install>/models/laya,
+# which is where BMM looks first (then %LOCALAPPDATA%\com.bettermm.desktop\models\laya, where
+# Settings → AI puts a copy for users who skipped it here).
+#
+# Pinned three times, and a test fails when they disagree: here, laya-model.lock.json at the BMM
+# root, and src-tauri/src/commands/ai_embedded.rs (`installer_pins_match_the_lock_file`).
+# The pack is built by BMM's scripts/laya/build_pack.py and published as a release asset.
+[[prerequisite]]
+id   = "laya-offline"
+name = "Laya offline model"
+check_file   = "models/laya/laya.onnx"
+kind         = "zip"
+download_url = "https://github.com/FreeProject089/BetterModsManager/releases/download/laya-model-1/laya-offline-1.zip"
+sha256       = "e276b90f3e16de8273fa34cc202ea140b64cd08345072fcea19fc5df31de62b5"
+install_to   = "models/laya"
+required     = false
 
 # Node.js, for plugin authors and anything a scheduled task shells out to.
 #

@@ -82,6 +82,63 @@ pub fn download(url: &str) -> Result<Vec<u8>> {
     read_capped(resp, url)
 }
 
+/// GET a URL straight into `dest`, hashing while it streams: a several-hundred-megabyte
+/// download (a model, a runtime) never sits in memory whole. HTTPS-only, size-capped like
+/// [`download`]. Returns the body's SHA-256, lowercase hex — the caller compares it to its pin
+/// BEFORE using the file, and deletes the file when it does not match.
+pub fn download_to_file(url: &str, dest: &std::path::Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+    require_https(url)?;
+    let resp = client_long()?
+        .get(url)
+        .send()
+        .map_err(|e| Error::Other(format!("GET {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(Error::Other(format!("HTTP {} for {url}", resp.status())));
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest)
+        .map_err(|e| Error::io(dest, e))?;
+    let mut h = Sha256::new();
+    let mut body = resp.take(MAX_BODY + 1);
+    let mut buf = vec![0u8; 256 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        let n = body
+            .read(&mut buf)
+            .map_err(|e| Error::Other(format!("read body: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        if total > MAX_BODY {
+            drop(f);
+            let _ = std::fs::remove_file(dest);
+            return Err(Error::Other(format!("response body exceeds size limit: {url}")));
+        }
+        h.update(&buf[..n]);
+        f.write_all(&buf[..n]).map_err(|e| Error::io(dest, e))?;
+    }
+    f.flush().map_err(|e| Error::io(dest, e))?;
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The same client with a timeout sized for a large file: the 60 s of [`client`] is a whole-
+/// request limit, which a 300 MB body on an ordinary connection cannot meet.
+fn client_long() -> Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .user_agent(concat!("BetterInstaller/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(4 * 3600))
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| Error::Other(format!("http client: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::require_https;

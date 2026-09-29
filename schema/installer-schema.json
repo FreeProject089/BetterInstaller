@@ -68,6 +68,7 @@
     "setup_option[].documents",
     "setup_option[].group",
     "setup_option[].id",
+    "setup_option[].installs",
     "setup_option[].label",
     "setup_option[].label_key",
     "setup_option[].localized_documents",

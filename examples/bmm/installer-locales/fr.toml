@@ -156,6 +156,9 @@ name = "Python 3.12 (embarquable)"
 [prereqs.node]
 name = "Node.js 20 ou plus récent"
 
+[prereqs.laya-offline]
+name = "Modèle Laya hors ligne"
+
 [options.ai_features]
-label = "Fonctionnalités IA optionnelles (Laya)"
-description = "Désactivé par défaut. Permet à BMM de suggérer les infos d'un mod (tirées de ses propres fichiers, et des tags classés parmi les vôtres par le classifieur Laya) et de vérifier un rapport de bug avant son envoi. Cocher ne fait qu'activer la fonction : rien n'est envoyé tant que vous ne choisissez pas un fournisseur dans Paramètres → IA (BetterCommunity, votre propre serveur Laya ou une API externe), et alors seulement quand vous cliquez sur Suggérer. BMM n'inclut aucun modèle d'IA. Paramètres → IA la désactive à tout moment."
+label = "Laya hors ligne (IA locale, aucune donnée envoyée)"
+description = "Coché par défaut : c'est local — rien ne quitte ce PC. Installe le classifieur Laya dans BMM (327 Mo téléchargés pendant l'installation, 404 Mo sur le disque, vérifiés contre leur SHA-256 épinglé) pour que, quand vous cliquez sur Suggérer, BMM classe les tags parmi les vôtres, reconnaisse la langue d'un texte et vérifie un rapport de bug avant envoi — hors ligne, sans aucun serveur. Rien ne tourne en arrière-plan. Décochez pour n'installer aucun modèle : les fonctions IA restent désactivées, et Paramètres → IA peut télécharger le modèle plus tard ou utiliser un autre fournisseur."

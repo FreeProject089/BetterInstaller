@@ -165,7 +165,10 @@ pub struct Prerequisite {
     /// `HKLM\...` or `HKCU\...` key that exists when the prereq is installed.
     #[serde(default)]
     pub check_registry: Option<String>,
-    /// A file that exists when the prereq is installed.
+    /// A file that exists when the prereq is installed. An absolute path is checked as is; a
+    /// RELATIVE one names a file under the install directory — how a zip prerequisite that
+    /// unpacks there (a model, a portable runtime) says "already installed", so a repair or an
+    /// update does not download it again.
     #[serde(default)]
     pub check_file: Option<String>,
     /// A command that resolves on PATH when the prereq is installed.
@@ -242,6 +245,11 @@ impl Prerequisite {
     /// checks is that a bad config fails while it is still text, not once a download is
     /// already on disk.
     pub fn validate(&self) -> std::result::Result<(), String> {
+        if let Some(f) = self.check_file.as_deref() {
+            if !std::path::Path::new(f).is_absolute() && !f.starts_with(['/', '\\']) {
+                check_relative(&self.id, "check_file", f)?;
+            }
+        }
         let Some(url) = self.download_url.as_deref() else {
             // Check-only. Nothing is fetched, so there is nothing to verify.
             return Ok(());
@@ -374,7 +382,57 @@ impl InstallerConfig {
             .map_err(crate::error::Error::Other)?;
         self.validate_identity()
             .map_err(crate::error::Error::Other)?;
+        self.validate_option_links()
+            .map_err(crate::error::Error::Other)?;
         Ok(())
+    }
+
+    /// A `setup_option.installs` names an optional prerequisite that can be downloaded, from a
+    /// bool option — or the file does not load. A link to nothing would be a box that looks
+    /// like it installs something and installs nothing.
+    fn validate_option_links(&self) -> std::result::Result<(), String> {
+        for o in &self.setup_options {
+            let Some(pid) = o.installs.as_deref() else {
+                continue;
+            };
+            if o.kind != SetupOptionKind::Bool {
+                return Err(format!("setup_option {}: `installs` needs a bool option", o.id));
+            }
+            let p = self
+                .prerequisites
+                .iter()
+                .find(|p| p.id == pid)
+                .ok_or_else(|| format!("setup_option {}: installs = {pid:?} names no [[prerequisite]]", o.id))?;
+            if p.required || p.download_url.is_none() {
+                return Err(format!(
+                    "setup_option {}: prerequisite {pid:?} must be optional (required = false) and have a download_url",
+                    o.id
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Prerequisites that a `bool` option with `installs` turns on, given the user's answers
+    /// (an unanswered option counts at its default).
+    pub fn prereqs_chosen_by_options(
+        &self,
+        chosen: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Vec<String> {
+        self.setup_options
+            .iter()
+            .filter(|o| o.kind == SetupOptionKind::Bool)
+            .filter_map(|o| {
+                let pid = o.installs.as_ref()?;
+                let on = chosen.get(&o.id).unwrap_or(&o.default).as_bool().unwrap_or(false);
+                on.then(|| pid.clone())
+            })
+            .collect()
+    }
+
+    /// Prerequisite ids an option speaks for (never offered as their own row).
+    pub fn prereqs_linked_to_options(&self) -> Vec<String> {
+        self.setup_options.iter().filter_map(|o| o.installs.clone()).collect()
     }
 
     /// The three strings the OS integration turns into names: `app.id` (the Apps & Features
@@ -776,6 +834,12 @@ pub struct SetupOption {
     /// to the label, so nobody has to read the description to find out.
     #[serde(default)]
     pub sends_data: bool,
+    /// For `bool`: the id of an optional `[[prerequisite]]` this option also installs when it
+    /// is on (a feature and the files it needs are one choice, not two). The prerequisite is
+    /// then not offered as a separate row: this box IS its choice. Checked at load: the option
+    /// must be a bool and the prerequisite optional, with a download_url.
+    #[serde(default)]
+    pub installs: Option<String>,
     /// Which key(s) in handoff.settings this option writes to. A `license` option
     /// may map to several keys (e.g. privacy_accepted + tos_accepted).
     #[serde(default)]
@@ -971,6 +1035,7 @@ fn maximal() -> InstallerConfig {
             }],
             group: None,
             sends_data: false,
+            installs: None,
             maps_to: MapsTo::None,
         }],
         security: Some(Security {
@@ -1208,6 +1273,44 @@ mod tests {
         // highlighted.
         let default = theme.default.as_str().expect("a string default");
         assert!(theme.previews.iter().any(|p| p.value == default));
+    }
+
+    /// `setup_option.installs` must name an optional, downloadable prerequisite from a bool.
+    #[test]
+    fn an_option_can_only_install_an_optional_downloadable_prerequisite() {
+        let base = r#"
+[app]
+id = "com.example.app"
+name = "Example"
+version = "1.0.0"
+publisher = "Example"
+[install]
+[[prerequisite]]
+id = "model"
+name = "Model"
+kind = "zip"
+download_url = "https://example.com/m.zip"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+install_to = "models/m"
+check_file = "models/m/m.onnx"
+required = false
+[[setup_option]]
+id = "offline_ai"
+type = "bool"
+label_key = "x"
+default = true
+installs = "INSTALLS"
+"#;
+        let ok = InstallerConfig::from_toml(&base.replace("INSTALLS", "model")).expect("valid link");
+        assert_eq!(ok.prereqs_linked_to_options(), vec!["model".to_string()]);
+        assert_eq!(ok.prereqs_chosen_by_options(&Default::default()), vec!["model".to_string()]);
+        assert!(InstallerConfig::from_toml(&base.replace("INSTALLS", "nothing")).is_err(), "a link to nothing");
+        let required = base.replace("INSTALLS", "model").replace("required = false", "required = true");
+        assert!(InstallerConfig::from_toml(&required).is_err(), "a required prerequisite is not a choice");
+        let select = base.replace("INSTALLS", "model").replace("type = \"bool\"", "type = \"select\"");
+        assert!(InstallerConfig::from_toml(&select).is_err(), "only a bool can install something");
+        let escape = base.replace("INSTALLS", "model").replace("models/m/m.onnx", "../m.onnx");
+        assert!(InstallerConfig::from_toml(&escape).is_err(), "a relative check_file stays inside");
     }
 
     fn prereq(url: Option<&str>) -> Prerequisite {

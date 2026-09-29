@@ -991,12 +991,10 @@ fn run_gui(
     // Only the MISSING ones — offering to install a Python that is already there is
     // noise, and ticking it would download 10 MB to no effect. Detected once: the check
     // runs commands, and a language switch must not run them again.
-    let missing_prereqs: Rc<Vec<bpkg_core::config::Prerequisite>> = Rc::new(
-        bpkg_core::prereq::optional_missing(&cfg.prerequisites)
-            .into_iter()
-            .cloned()
-            .collect(),
-    );
+    //
+    // A prerequisite that a setup option `installs` is not listed here: that option's box is
+    // its choice (one decision, not the same one asked twice on two pages).
+    let missing_prereqs: Rc<Vec<bpkg_core::config::Prerequisite>> = Rc::new(offered_prereqs(&cfg));
     let label_components: Rc<dyn Fn(&MainWindow)> = Rc::new({
         let cfg = cfg_rc.clone();
         let missing = missing_prereqs.clone();
@@ -1183,6 +1181,7 @@ fn run_gui(
     let prog_timer: Rc<RefCell<Option<Timer>>> = Rc::new(RefCell::new(None));
     {
         let w = ui.as_weak();
+        let option_prereqs = cfg_rc.clone();
         let chosen = chosen.clone();
         let chosen_components = chosen_components.clone();
         let opts = setup_opts.clone();
@@ -1286,7 +1285,15 @@ fn run_gui(
                 // pushing progress back to the UI thread.
                 Some(pkg) => {
                     let dest = PathBuf::from(ui.get_install_dir().to_string());
-                    let comps = chosen_components.borrow().clone();
+                    let mut comps = chosen_components.borrow().clone();
+                    // Prerequisites a ticked option installs (`setup_option.installs`), e.g.
+                    // the offline model behind « Laya hors ligne ».
+                    for id in option_prereqs.prereqs_chosen_by_options(&chosen.borrow()) {
+                        let id = format!("prereq:{id}");
+                        if !comps.contains(&id) {
+                            comps.push(id);
+                        }
+                    }
                     let weak = ui.as_weak();
                     let handoff_msg = message.clone();
                     let handoff_ok = ok;
@@ -2765,6 +2772,16 @@ fn option_rows(
         .collect()
 }
 
+/// The optional prerequisites offered as rows: missing ones that no setup option speaks for.
+fn offered_prereqs(cfg: &InstallerConfig) -> Vec<bpkg_core::config::Prerequisite> {
+    let linked = cfg.prereqs_linked_to_options();
+    bpkg_core::prereq::optional_missing(&cfg.prerequisites)
+        .into_iter()
+        .filter(|p| !linked.contains(&p.id))
+        .cloned()
+        .collect()
+}
+
 /// Component rows for the Welcome page, then the optional prerequisites that are missing.
 fn component_rows(
     cfg: &InstallerConfig,
@@ -2957,16 +2974,33 @@ mod tests {
         }
     }
 
-    /// The optional-AI box exists, is off by default, sends data when on, and maps to the key
-    /// BMM reads (src-tauri/src/commands/installer_handoff.rs: `ai_features`).
+    /// « Laya hors ligne »: on by default (it is local), not a data-sending option, maps to the
+    /// key BMM reads (src-tauri/src/commands/installer_handoff.rs: `ai_features`), and installs
+    /// the pinned model pack — which is then not offered as a second row.
     #[test]
-    fn bmm_ai_option_is_opt_in() {
+    fn bmm_laya_offline_option_installs_the_pack() {
         let cfg = InstallerConfig::load("../../examples/bmm/installer.toml").unwrap();
         let o = cfg.setup_options.iter().find(|o| o.id == "ai_features").expect("ai_features option");
-        assert_eq!(o.default, serde_json::json!(false));
-        assert!(o.sends_data);
+        assert_eq!(o.default, serde_json::json!(true));
+        assert!(!o.sends_data, "inference is local: the option must not wear the sends-data badge");
+        assert_eq!(o.installs.as_deref(), Some("laya-offline"));
         let doc = bpkg_core::handoff::build(&cfg.setup_options, &Default::default(), vec![], "1.0.0", "x");
-        assert_eq!(doc.settings.get("ai_features"), Some(&serde_json::json!(false)));
+        assert_eq!(doc.settings.get("ai_features"), Some(&serde_json::json!(true)));
+
+        let p = cfg.prerequisites.iter().find(|p| p.id == "laya-offline").expect("laya-offline prerequisite");
+        assert!(!p.required);
+        assert_eq!(p.kind, bpkg_core::config::PrereqKind::Zip);
+        assert_eq!(p.install_to.as_deref(), Some("models/laya"));
+        assert!(p.download_url.as_deref().unwrap().starts_with("https://"));
+        assert_eq!(p.sha256.as_deref().map(str::len), Some(64));
+
+        // Default answers: the pack is fetched. Unticked: it is not.
+        let mut chosen = std::collections::BTreeMap::new();
+        assert_eq!(cfg.prereqs_chosen_by_options(&chosen), vec!["laya-offline".to_string()]);
+        chosen.insert("ai_features".to_string(), serde_json::json!(false));
+        assert!(cfg.prereqs_chosen_by_options(&chosen).is_empty());
+        // One decision, not two rows.
+        assert!(!super::offered_prereqs(&cfg).iter().any(|x| x.id == "laya-offline"));
     }
     use bpkg_core::config::InstallerConfig;
     use bpkg_core::i18n::Translator;

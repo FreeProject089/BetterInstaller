@@ -208,6 +208,13 @@ Also on every option: `group = "<id>"` lists it under a `[[setup_group]]` headin
 default ("Default: On") and a "Changed" mark once the user moves away from it; a
 "Restore defaults" button resets the page.
 
+A `bool` option can also say `installs = "<prerequisite id>"`: when it is on at Install, that
+optional `[[prerequisite]]` (which must have a `download_url` and `sha256`) is downloaded too,
+and it is not offered as a row of its own — the feature and the files it needs are one choice.
+A zip prerequisite's `check_file` may be RELATIVE (`models/x/model.onnx`): it is then looked
+for under the install directory, so a repair does not download it again. Zip prerequisites
+stream to disk and are hashed on the way, so a large one never sits in memory.
+
 `required = true` blocks **Next/Install** until satisfied. `maps_to` keys are written
 flat into `settings` after stripping a leading `settings.` prefix.
 

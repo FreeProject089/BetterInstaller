@@ -216,6 +216,14 @@ ligne affiche sa valeur par défaut (« Par défaut : Activé ») et une marque 
 que l'utilisateur s'en écarte ; un bouton « Rétablir les valeurs par défaut » remet la
 page à zéro.
 
+Une option `bool` peut aussi indiquer `installs = "<id de prérequis>"` : si elle est cochée à
+l'installation, ce `[[prerequisite]]` optionnel (qui doit avoir `download_url` et `sha256`) est
+téléchargé aussi, et il n'est pas proposé comme ligne à part — la fonction et les fichiers
+qu'elle demande sont un seul choix. Le `check_file` d'un prérequis zip peut être RELATIF
+(`models/x/model.onnx`) : il est alors cherché sous le dossier d'installation, pour qu'une
+réparation ne le retélécharge pas. Les prérequis zip sont écrits sur le disque au fil du
+téléchargement et hachés au passage : un gros fichier ne tient jamais entier en mémoire.
+
 `required = true` bloque **Suivant/Installer** tant que non satisfait. Les clés `maps_to`
 sont écrites à plat dans `settings` après retrait du préfixe `settings.`.
 

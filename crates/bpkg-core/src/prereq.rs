@@ -14,13 +14,31 @@ pub struct PrereqStatus {
     pub required: bool,
 }
 
-/// Check a single prerequisite.
+/// Check a single prerequisite, before an install directory is known.
+///
+/// A RELATIVE `check_file` names a file under the install directory (a zip prerequisite's
+/// own content): with no directory to look in yet it reads as missing, so the choice is
+/// offered; [`check_in`] answers for real once the directory is chosen.
 pub fn check(p: &Prerequisite) -> bool {
+    check_in(p, None)
+}
+
+/// [`check`], with a relative `check_file` resolved against `install_dir`.
+pub fn check_in(p: &Prerequisite, install_dir: Option<&std::path::Path>) -> bool {
     if let Some(key) = &p.check_registry {
         return registry_key_exists(key);
     }
     if let Some(file) = &p.check_file {
-        return std::path::Path::new(file).exists();
+        let path = std::path::Path::new(file);
+        if path.is_absolute() {
+            return path.exists();
+        }
+        return match install_dir {
+            Some(dir) if crate::config::check_relative(&p.id, "check_file", file).is_ok() => {
+                dir.join(path).exists()
+            }
+            _ => false,
+        };
     }
     if let Some(cmd) = &p.check_command {
         if !command_on_path(cmd) {
@@ -81,6 +99,33 @@ pub fn auto_install(p: &Prerequisite, install_dir: &std::path::Path) -> crate::e
     // not be downloaded at all, rather than downloaded and then rejected — and validate()
     // is what makes sha256 mandatory once download_url is set.
     p.validate().map_err(Error::Other)?;
+
+    // A zip streams to a file in this process's private scratch directory and is hashed on
+    // the way: a model or a runtime of several hundred megabytes never sits in memory whole.
+    if p.kind == crate::config::PrereqKind::Zip {
+        let rel = p.install_to.as_deref().ok_or_else(|| {
+            Error::Other(format!("{}: a zip prerequisite needs install_to", p.name))
+        })?;
+        let expected = p
+            .sha256
+            .as_deref()
+            .ok_or_else(|| Error::Other(format!("{}: no sha256", p.name)))?;
+        let path = crate::tmp::run_dir()?
+            .join(format!("bpkg-prereq-{}.zip", sanitise_id(&p.id)));
+        let _ = std::fs::remove_file(&path);
+        let outcome = crate::net::download_to_file(url, &path).and_then(|actual| {
+            if !actual.eq_ignore_ascii_case(expected) {
+                return Err(Error::Other(format!(
+                    "{}: downloaded file does not match its sha256 (expected {}, got {}) — refusing to use it",
+                    p.name, expected, actual
+                )));
+            }
+            let f = std::fs::File::open(&path).map_err(|e| Error::io(&path, e))?;
+            extract_zip_from(f, &install_dir.join(rel)).map(|_| ())
+        });
+        crate::tmp::discard(&path);
+        return outcome;
+    }
 
     let bytes = crate::net::download(url)?;
 
@@ -172,7 +217,7 @@ pub fn ensure_required(
 ) -> crate::error::Result<()> {
     for p in prereqs {
         let wanted = p.required || opted_in.contains(&p.id);
-        if !wanted || check(p) {
+        if !wanted || check_in(p, Some(install_dir)) {
             continue;
         }
         if p.download_url.is_none() {
@@ -186,7 +231,7 @@ pub fn ensure_required(
         }
         on_step(&p.name);
         let outcome = auto_install(p, install_dir).and_then(|()| {
-            if check(p) {
+            if check_in(p, Some(install_dir)) {
                 Ok(())
             } else {
                 Err(crate::error::Error::Other(format!(
@@ -303,10 +348,18 @@ fn sanitise_id(id: &str) -> String {
 /// stops the escape, and the final containment check is what catches a form of escape the
 /// filter did not anticipate.
 fn extract_zip(bytes: &[u8], dest: &std::path::Path) -> crate::error::Result<usize> {
-    use crate::error::Error;
-    use std::io::{Cursor, Read};
+    extract_zip_from(std::io::Cursor::new(bytes), dest)
+}
 
-    let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
+/// [`extract_zip`] over any seekable reader (a file on disk for a large download). Entries are
+/// streamed to disk, never read whole into memory.
+fn extract_zip_from<R: std::io::Read + std::io::Seek>(
+    reader: R,
+    dest: &std::path::Path,
+) -> crate::error::Result<usize> {
+    use crate::error::Error;
+
+    let mut zip = zip::ZipArchive::new(reader)
         .map_err(|e| Error::Other(format!("not a readable zip: {e}")))?;
     std::fs::create_dir_all(dest).map_err(|e| Error::io(dest, e))?;
     // Resolved once, so containment is compared between two real paths.
@@ -350,14 +403,40 @@ fn extract_zip(bytes: &[u8], dest: &std::path::Path) -> crate::error::Result<usi
             }
         }
 
-        let mut buf = Vec::with_capacity(entry.size() as usize);
-        entry
-            .read_to_end(&mut buf)
+        let mut file = std::fs::File::create(&out).map_err(|e| Error::io(&out, e))?;
+        std::io::copy(&mut entry, &mut file)
             .map_err(|e| Error::Other(format!("reading zip entry {:?}: {e}", entry.name())))?;
-        std::fs::write(&out, &buf).map_err(|e| Error::io(&out, e))?;
         written += 1;
     }
     Ok(written)
+}
+
+#[cfg(test)]
+mod check_in_tests {
+    use super::*;
+
+    /// A relative check_file is a file under the install directory: missing until a directory
+    /// is known, then answered there — so a repair does not download a model it already has.
+    #[test]
+    fn a_relative_check_file_is_resolved_against_the_install_dir() {
+        let dir = std::env::temp_dir().join(format!("bpkg-checkin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("models/m")).unwrap();
+        let p: Prerequisite = toml::from_str(
+            r#"
+id = "m"
+name = "M"
+check_file = "models/m/m.onnx"
+required = false
+"#,
+        )
+        .unwrap();
+        assert!(!check(&p), "no install dir yet: offered");
+        assert!(!check_in(&p, Some(&dir)));
+        std::fs::write(dir.join("models/m/m.onnx"), b"x").unwrap();
+        assert!(check_in(&p, Some(&dir)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]
@@ -387,6 +466,19 @@ mod zip_tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// The streaming path (a file on disk) extracts exactly what the in-memory one does.
+    #[test]
+    fn a_zip_on_disk_extracts_streaming() {
+        let dir = tmpdir("file");
+        let zpath = dir.join("p.zip");
+        std::fs::write(&zpath, zip_with(&["laya.onnx", "tokenizer.json"])).unwrap();
+        let dest = dir.join("models/laya");
+        let n = extract_zip_from(std::fs::File::open(&zpath).unwrap(), &dest).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(std::fs::read(dest.join("laya.onnx")).unwrap(), b"payload");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
