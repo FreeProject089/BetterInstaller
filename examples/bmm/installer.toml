@@ -296,6 +296,19 @@ maps_to     = "settings.telemetry_bench"
 group       = "privacy"
 sends_data  = true
 
+# Live error reports (BMM src-tauri/src/commands/live_issues.rs → AppSettings.live_errors).
+# Like the others: off here by default, and inert unless telemetry consent is given in BMM.
+[[setup_option]]
+id          = "telemetry_live_errors"
+type        = "bool"
+label_key   = "setup.telemetryLiveErrors"
+label       = "Send errors live"
+description  = "Off by default. Only does anything if you accept telemetry in BMM. When BMM hits an error (a crash, a failed deploy, install, backup or scheduled task), it sends a short report within seconds: the error message and where it happened in BMM's code, the BMM version and OS. Secrets, your user-folder name, e-mail addresses and IP addresses are removed on this PC before anything is sent. Settings → Privacy turns it off at any time."
+default     = false
+maps_to     = "settings.telemetry_live_errors"
+group       = "privacy"
+sends_data  = true
+
 # « Laya hors ligne »: the Laya classifier run INSIDE BMM (src-tauri/src/commands/ai_embedded.rs).
 # ON by default, and not a `sends_data` option: inference is local, no server, no request — the
 # only network use is downloading the pinned model pack during setup. Ticked = the pack below is

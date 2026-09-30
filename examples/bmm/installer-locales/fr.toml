@@ -74,6 +74,10 @@ description = "Désactivée par défaut : cochez pour proposer de la partager. C
 label = "Rapport matériel hebdomadaire et benchmark"
 description = "Désactivé par défaut. N'a d'effet que si vous acceptez la télémétrie dans BMM. Tous les 7 jours, BMM exécute un court benchmark et y ajoute un rapport matériel détaillé : modèle et numéro de série de la carte mère, version du BIOS, UUID de la machine, détails du processeur, modèles et numéros de série des disques, adresses MAC physiques, version du système, état du Secure Boot et du TPM. Ce sont des identifiants précis de cette machine. Paramètres → Confidentialité le désactive à tout moment."
 
+[options.telemetry_live_errors]
+label = "Envoyer les erreurs en direct"
+description = "Désactivé par défaut. N'a d'effet que si vous acceptez la télémétrie dans BMM. Quand BMM rencontre une erreur (plantage, déploiement, installation, sauvegarde ou tâche planifiée en échec), il envoie un court rapport en quelques secondes : le message d'erreur et l'endroit du code de BMM où elle s'est produite, la version de BMM et le système. Les secrets, le nom de votre dossier utilisateur, les adresses e-mail et les adresses IP sont retirés sur ce PC avant tout envoi. Paramètres → Confidentialité le désactive à tout moment."
+
 [options.session_recorder]
 label = "Replay de session dans la télémétrie"
 description = "Ne compte que si la télémétrie est activée. Désactivé par défaut : cochez pour l'activer. Ajoute à la télémétrie un enregistrement de la fenêtre de BMM (mise en page, clics, défilement, navigation), le texte des champs de saisie étant masqué. Aucune autre fenêtre ni votre écran ne sont jamais enregistrés. Laissez décoché pour garder la télémétrie sans le replay."
