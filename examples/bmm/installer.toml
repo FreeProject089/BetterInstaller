@@ -245,10 +245,11 @@ label_key   = "setup.telemetry"
 label       = "Usage & diagnostic telemetry"
 # Said as it is, checked against the sender (src-tauri/src/commands/analytics.rs,
 # frontend/src/core/analytics.ts). "Anonymous" was not true: every batch carries the
-# Creator ID, a stable identifier derived from this PC, and the public IP address.
-description  = "Off by default: tick it to offer to share. Ticking it here does NOT start collection — BMM asks again on its own consent screen, which lists everything, and collection starts only if you accept there. When on, BMM sends to BetterCommunity's telemetry server: your Creator ID (a stable identifier derived from this PC), your hardware and system profile including your public and local IP address, the pages and features you use, performance figures, warning and error logs (which can contain folder paths), and a masked recording of the BMM window. The weekly hardware report is a separate option below. Never the contents of your mods or files, never the text you type into fields. Full list in the Privacy Policy. Settings → Privacy turns it off at any time."
+# Creator ID, a stable identifier derived from this PC, and the public IP address. The long
+# per-category list now lives in the Privacy Policy and in the child rows below, one line each.
+description  = "Ticking it only pre-selects: BMM asks on its own consent screen before sending anything. Includes your Creator ID (a stable ID for this PC) and your IP address. Full list in the Privacy Policy."
 # OPT-IN. Unticked is the whole consent story here: nothing is collected, and BMM's own
-# consent dialog never has to nag. Ticked is only a PRE-SELECTION — BMM reads it as
+# consent dialog never has to nag. Ticked is only a PRE-SELECTION: BMM reads it as
 # "start my consent dialog with Yes filled in", never as consent itself
 # (src-tauri/src/commands/installer_handoff.rs).
 default     = false
@@ -256,57 +257,96 @@ maps_to     = "settings.telemetry"
 group       = "privacy"
 sends_data  = true
 
-# What this key REALLY controls, read from BMM: the handoff consumer turns
-# session_recorder=false into localStorage bmm_replay_enabled='0' (frontend/src/ui/app.ts),
-# and bmm_replay_enabled is the switch for the session replay UPLOADED WITH TELEMETRY
-# (frontend/src/core/analytics.ts, startSessionReplay). The local crash recorder is a
-# different setting (bmm_watcher_*) that this option never touched.
-#
-# It used to be labelled "Session recorder (local) … never sent unless you submit a
-# report", which described the other feature: unticking it did not stop a local
-# recording, and leaving it ticked let a recording be uploaded. The id and maps_to stay
-# (BMM reads that key); the words now say what it does.
+# ─── Telemetry categories (children of `telemetry`) ───────────────────────────────────
+# `parent = "telemetry"`: shown behind the « Choisir » link of the telemetry row, only while
+# it is ticked. While telemetry is OFF every one of them is off and written `false` in the
+# handoff, whatever `default` says. Ticking telemetry turns each on at its `default`: all ON
+# ("tick one box, share everything listed"), EXCEPT the weekly hardware report, which stays
+# opt-in because it sends precise hardware identifiers. BMM reads these keys only when
+# `telemetry` is true, and nothing is sent unless consent is given in BMM itself.
 [[setup_option]]
-id          = "session_recorder"
+id          = "telemetry_usage"
 type        = "bool"
-label_key   = "setup.sessionRecorder"
-label       = "Session replay in telemetry"
-description  = "Only matters while telemetry is on. Off by default: tick it to turn it on. Adds to telemetry a recording of the BMM window (layout, clicks, scrolling, navigation), with the text of input fields masked. Recordings of other windows or of your screen are never made. Leave it unticked to keep telemetry without the replay."
-# OFF by default (card C-8), like every other option that sends data: it only shapes what
-# telemetry contains, but a box nobody looked at should add nothing to what is sent.
-default     = false
-maps_to     = "settings.session_recorder"
+label_key   = "setup.telemetryUsage"
+label       = "Usage statistics"
+description  = "Pages and features used, clicks, session length. Never what you type."
+default     = true
+maps_to     = "settings.telemetry_usage"
 group       = "privacy"
+parent      = "telemetry"
 sends_data  = true
 
-# The weekly hardware report. It used to ride along with the telemetry box without ever
-# being asked about — BMM's own default was "on", so a ticked telemetry box also sent
-# motherboard and disk serial numbers, the machine UUID and MAC addresses every 7 days.
-# It is its own question now, off on both sides (BMM's default is the localStorage key
-# bmm_telemetry_bench, absent = off), and it does nothing at all unless telemetry consent
-# is actually given in BMM.
 [[setup_option]]
-id          = "telemetry_bench"
+id          = "telemetry_perf"
 type        = "bool"
-label_key   = "setup.telemetryBench"
-label       = "Weekly hardware report & benchmark"
-description  = "Off by default. Only does anything if you accept telemetry in BMM. Every 7 days BMM runs a short benchmark and adds a detailed hardware report: motherboard model and serial number, BIOS version, machine UUID, CPU details, disk models and serial numbers, physical MAC addresses, OS build, Secure Boot/TPM state. These are precise identifiers for this machine. Settings → Privacy turns it off at any time."
-default     = false
-maps_to     = "settings.telemetry_bench"
+label_key   = "setup.telemetryPerf"
+label       = "Performance"
+description  = "FPS, memory use and load times."
+default     = true
+maps_to     = "settings.telemetry_perf"
 group       = "privacy"
+parent      = "telemetry"
 sends_data  = true
 
 # Live error reports (BMM src-tauri/src/commands/live_issues.rs → AppSettings.live_errors).
-# Like the others: off here by default, and inert unless telemetry consent is given in BMM.
 [[setup_option]]
 id          = "telemetry_live_errors"
 type        = "bool"
 label_key   = "setup.telemetryLiveErrors"
-label       = "Send errors live"
-description  = "Off by default. Only does anything if you accept telemetry in BMM. When BMM hits an error (a crash, a failed deploy, install, backup or scheduled task), it sends a short report within seconds: the error message and where it happened in BMM's code, the BMM version and OS. Secrets, your user-folder name, e-mail addresses and IP addresses are removed on this PC before anything is sent. Settings → Privacy turns it off at any time."
-default     = false
+label       = "Errors & crashes, live"
+description  = "Error message, where it happened, BMM version and OS, sent within seconds. Secrets and personal paths are removed first."
+default     = true
 maps_to     = "settings.telemetry_live_errors"
 group       = "privacy"
+parent      = "telemetry"
+sends_data  = true
+
+[[setup_option]]
+id          = "telemetry_laya"
+type        = "bool"
+label_key   = "setup.telemetryLaya"
+label       = "Laya usage statistics"
+description  = "Which Laya feature, provider and speed, suggestions accepted or rejected per field. Never text, queries or file names."
+default     = true
+maps_to     = "settings.telemetry_laya"
+group       = "privacy"
+parent      = "telemetry"
+sends_data  = true
+
+# What this key REALLY controls, read from BMM: the handoff consumer turns
+# session_recorder=false into localStorage bmm_replay_enabled='0' (frontend/src/ui/app.ts),
+# and bmm_replay_enabled is the switch for the session replay UPLOADED WITH TELEMETRY
+# (frontend/src/core/analytics.ts, startSessionReplay). The local crash recorder is a
+# different setting (bmm_watcher_*) that this option never touched. The id and maps_to
+# stay (BMM reads that key); the words say what it does.
+[[setup_option]]
+id          = "session_recorder"
+type        = "bool"
+label_key   = "setup.sessionRecorder"
+label       = "Session replay (masked)"
+description  = "A recording of the BMM window only (clicks, scrolling, navigation), with input text masked."
+default     = true
+maps_to     = "settings.session_recorder"
+group       = "privacy"
+parent      = "telemetry"
+sends_data  = true
+
+# The weekly hardware report. It used to ride along with the telemetry box without ever
+# being asked about: BMM's own default was "on", so a ticked telemetry box also sent
+# motherboard and disk serial numbers, the machine UUID and MAC addresses every 7 days.
+# It stays its own question: a child of telemetry, but OFF even when telemetry is ticked
+# (not part of "all on"), and off on BMM's side too (localStorage bmm_telemetry_bench,
+# absent = off).
+[[setup_option]]
+id          = "telemetry_bench"
+type        = "bool"
+label_key   = "setup.telemetryBench"
+label       = "Weekly hardware report"
+description  = "A weekly benchmark plus precise hardware IDs (serial numbers, machine UUID, MAC addresses). Off unless you tick it."
+default     = false
+maps_to     = "settings.telemetry_bench"
+group       = "privacy"
+parent      = "telemetry"
 sends_data  = true
 
 # « Laya hors ligne »: the Laya classifier run INSIDE BMM (src-tauri/src/commands/ai_embedded.rs).

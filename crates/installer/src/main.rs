@@ -7,7 +7,7 @@
 //! progress is simulated so the end-to-end flow + handoff are demonstrable.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
@@ -20,7 +20,7 @@ use slint::{
     Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak,
 };
 
-use bpkg_core::config::{InstallerConfig, SetupGroup, SetupOption, SetupOptionKind};
+use bpkg_core::config::{effective_value, InstallerConfig, SetupGroup, SetupOption, SetupOptionKind};
 use bpkg_core::handoff;
 use bpkg_core::i18n::{Catalog, Direction, Translator};
 use bpkg_core::manifest::AppMeta;
@@ -573,10 +573,13 @@ fn run_gui(
             .collect(),
         &cfg.setup_groups,
     ));
+    // Parents whose "Choose" expander is open (their child options are listed).
+    let expanded: Rc<RefCell<BTreeSet<String>>> = Rc::new(RefCell::new(BTreeSet::new()));
     let model = Rc::new(VecModel::from(option_rows(
         &visible_opts,
         &setup_groups,
         &chosen.borrow(),
+        &expanded.borrow(),
         &tr.borrow(),
     )));
     ui.set_options(ModelRc::from(model.clone()));
@@ -589,9 +592,10 @@ fn run_gui(
         let visible = visible_opts.clone();
         let groups = setup_groups.clone();
         let chosen = chosen.clone();
+        let expanded = expanded.clone();
         let tr = tr.clone();
         move || {
-            let rows = option_rows(&visible, &groups, &chosen.borrow(), &tr.borrow());
+            let rows = option_rows(&visible, &groups, &chosen.borrow(), &expanded.borrow(), &tr.borrow());
             for (i, r) in rows.into_iter().enumerate() {
                 model.set_row_data(i, r);
             }
@@ -817,14 +821,26 @@ fn run_gui(
         let chosen = chosen.clone();
         let opts = visible_opts.clone();
         let refresh = refresh_rows.clone();
+        let expanded = expanded.clone();
         ui.on_option_bool_changed(move |id, v| {
-            chosen
-                .borrow_mut()
-                .insert(id.to_string(), serde_json::json!(v));
+            set_bool_option(&opts, &mut chosen.borrow_mut(), &mut expanded.borrow_mut(), &id, v);
             refresh();
             if let Some(ui) = w.upgrade() {
                 ui.set_can_proceed(compute_can_proceed(&opts, &chosen.borrow()));
             }
+        });
+    }
+    {
+        let expanded = expanded.clone();
+        let refresh = refresh_rows.clone();
+        ui.on_option_expand_toggled(move |id| {
+            let id = id.to_string();
+            let mut e = expanded.borrow_mut();
+            if !e.remove(&id) {
+                e.insert(id);
+            }
+            drop(e);
+            refresh();
         });
     }
     {
@@ -2644,7 +2660,18 @@ fn order_by_group(mut opts: Vec<SetupOption>, groups: &[SetupGroup]) -> Vec<Setu
             .unwrap_or(0)
     };
     opts.sort_by_key(|o| rank(o));
-    opts
+    // A child (`parent`) goes right after its parent, in config order, whatever its group:
+    // it is drawn indented under that row.
+    let (children, tops): (Vec<SetupOption>, Vec<SetupOption>) = opts
+        .into_iter()
+        .partition(|o| o.parent.as_ref().is_some_and(|p| p != &o.id));
+    let mut out = Vec::with_capacity(tops.len() + children.len());
+    for t in tops {
+        let id = t.id.clone();
+        out.push(t);
+        out.extend(children.iter().filter(|c| c.parent.as_deref() == Some(id.as_str())).cloned());
+    }
+    out
 }
 
 /// A product string: its catalogue key along the language chain, else the config's
@@ -2683,13 +2710,25 @@ fn choice_label(o: &SetupOption, value: &str, tr: &Translator) -> String {
 
 /// Build the Setup page rows: labels in the current language, current values, the
 /// default spelled out, and a heading on the first row of each group.
+///
+/// A child option (`parent`) is always in the list, so the row count never changes, but it is
+/// `shown` only while its parent is ticked AND the parent's "Choose" expander (`expanded`) is
+/// open. Its value is the effective one (off while the parent is off), and it counts as
+/// unchanged when it matches what ticking the parent gives it.
 fn option_rows(
     opts: &[SetupOption],
     groups: &[SetupGroup],
     chosen: &BTreeMap<String, serde_json::Value>,
+    expanded: &BTreeSet<String>,
     tr: &Translator,
 ) -> Vec<OptionRow> {
     let mut prev_group: Option<&str> = None;
+    let is_on = |id: &str| {
+        opts.iter()
+            .find(|p| p.id == id)
+            .map(|p| effective_value(opts, p, chosen).as_bool().unwrap_or(false))
+            .unwrap_or(false)
+    };
     opts.iter()
         .map(|o| {
             let kind = match o.kind {
@@ -2698,11 +2737,21 @@ fn option_rows(
                 SetupOptionKind::License => "license",
                 SetupOptionKind::Swatch => "swatch",
             };
-            let current = chosen
-                .get(&o.id)
-                .cloned()
-                .unwrap_or_else(|| o.default.clone());
-            let is_default = current == o.default;
+            let current = effective_value(opts, o, chosen);
+            let (is_default, shown) = match o.parent.as_deref() {
+                Some(pid) => {
+                    let parent_on = is_on(pid);
+                    let expected = if parent_on { o.default.clone() } else { serde_json::json!(false) };
+                    (current == expected, parent_on && expanded.contains(pid))
+                }
+                None => (current == o.default, true),
+            };
+            let has_children = opts.iter().any(|c| c.parent.as_deref() == Some(o.id.as_str()));
+            let expander = if has_children && is_on(&o.id) {
+                tr.t(if expanded.contains(&o.id) { "setup.hide" } else { "setup.choose" })
+            } else {
+                String::new()
+            };
             let default_text = match o.kind {
                 SetupOptionKind::Bool => tr.t(if o.default.as_bool().unwrap_or(false) {
                     "setup.on"
@@ -2730,6 +2779,8 @@ fn option_rows(
 
             let group = o.group.as_deref();
             let (header, header_description) = match group {
+                // A child sits under its parent: it never opens a group of its own.
+                _ if o.parent.is_some() => (String::new(), String::new()),
                 Some(g) if prev_group != Some(g) => {
                     let sg = groups.iter().find(|sg| sg.id == g);
                     (
@@ -2749,7 +2800,9 @@ fn option_rows(
                 }
                 _ => (String::new(), String::new()),
             };
-            prev_group = group;
+            if o.parent.is_none() {
+                prev_group = group;
+            }
 
             OptionRow {
                 id: o.id.clone().into(),
@@ -2767,6 +2820,9 @@ fn option_rows(
                 sends_data: o.sends_data,
                 header: header.into(),
                 header_description: header_description.into(),
+                shown,
+                child: o.parent.is_some(),
+                expander: expander.into(),
             }
         })
         .collect()
@@ -2860,6 +2916,25 @@ fn swatch_rows(o: &SetupOption, tr: &Translator) -> Vec<SwatchRow> {
             }
         })
         .collect()
+}
+
+/// A `bool` answer. Ticking or unticking a parent drops its children's answers, so they
+/// take their declared default when it is ticked and are off while it is not (see
+/// `effective_value`); unticking also closes its expander.
+fn set_bool_option(
+    opts: &[SetupOption],
+    chosen: &mut BTreeMap<String, serde_json::Value>,
+    expanded: &mut BTreeSet<String>,
+    id: &str,
+    v: bool,
+) {
+    chosen.insert(id.to_string(), serde_json::json!(v));
+    for c in opts.iter().filter(|c| c.parent.as_deref() == Some(id)) {
+        chosen.remove(&c.id);
+    }
+    if !v {
+        expanded.remove(id);
+    }
 }
 
 /// "Next" is gated on every required `license` option being accepted.
@@ -3236,7 +3311,7 @@ After the table.";
             let text = std::fs::read_to_string(format!("{dir}/{code}.toml")).unwrap();
             t.add_catalog(bpkg_core::i18n::Catalog::parse(code, &text).unwrap());
         }
-        let rows = option_rows(&opts, &cfg.setup_groups, &Default::default(), &t);
+        let rows = option_rows(&opts, &cfg.setup_groups, &Default::default(), &Default::default(), &t);
 
         // One heading per group, on the first row of it, and every grouped row has one
         // above it somewhere.
@@ -3268,22 +3343,41 @@ After the table.";
         // looked at is a box that sent nothing — that is what makes "opt-in" true rather
         // than a word in a description.
         //
-        // No exception (card C-8). `session_recorder` used to be one, on the ground that it
-        // only shapes WHAT telemetry contains; it was still a pre-ticked box that adds a
-        // recording of the window to what is sent. Every `sends_data` option starts off;
-        // add one with `default = true` and this fails.
+        // No exception (card C-8). Every `sends_data` option starts OFF: either its own
+        // default is off, or it is a child (`parent`) of an option whose default is off, so
+        // it is off, and hidden, until that parent is ticked. A child's `default = true` only
+        // means "on once the parent is ticked". Add a top-level one with `default = true`, or
+        // a child under a pre-ticked parent, and this fails.
         for r in rows.iter().filter(|r| r.sends_data) {
-            assert!(
-                r.default_label.contains("Désactiv"),
-                "{} sends data and is pre-ticked: {}",
-                r.id,
-                r.default_label
-            );
+            let o = opts.iter().find(|o| o.id == r.id.as_str()).unwrap();
+            assert!(!r.bool_value, "{} sends data and starts ticked", r.id);
+            match o.parent.as_deref() {
+                None => assert!(
+                    r.default_label.contains("Désactiv"),
+                    "{} sends data and is pre-ticked: {}",
+                    r.id,
+                    r.default_label
+                ),
+                Some(pid) => {
+                    let p = opts.iter().find(|p| p.id == pid).unwrap();
+                    assert_eq!(p.default, serde_json::json!(false), "{} rides a pre-ticked parent", r.id);
+                    assert!(!r.shown, "{} is shown before its parent is ticked", r.id);
+                }
+            }
         }
         // And the three the owner decided on are each their own question, asked out loud
         // and marked as sending data — the weekly hardware report used to ride along with
         // the telemetry box without ever being asked about.
-        for must in ["telemetry", "telemetry_bench", "discord_rpc"] {
+        for must in [
+            "telemetry",
+            "telemetry_usage",
+            "telemetry_perf",
+            "telemetry_live_errors",
+            "telemetry_laya",
+            "session_recorder",
+            "telemetry_bench",
+            "discord_rpc",
+        ] {
             let r = rows
                 .iter()
                 .find(|r| r.id == must)
@@ -3298,6 +3392,92 @@ After the table.";
         assert_eq!(lang.choices.row_data(0).unwrap(), "auto");
         assert_ne!(lang.choice_labels.row_data(0).unwrap(), "auto");
         assert_eq!(lang.choice_index, 0);
+    }
+
+    /// The telemetry box and its categories (`parent = "telemetry"`): hidden and off while it
+    /// is unticked; ticking turns each on at its default (all but the hardware report); the
+    /// « Choisir » link lists them; unticking clears them again; the handoff follows.
+    #[test]
+    fn telemetry_children_follow_their_parent() {
+        use super::set_bool_option;
+        use std::collections::{BTreeMap, BTreeSet};
+        let cfg = InstallerConfig::load(BMM).unwrap();
+        let opts = order_by_group(
+            cfg.setup_options.iter().filter(|o| o.id != "legal").cloned().collect(),
+            &cfg.setup_groups,
+        );
+        let t = tr("fr");
+        let children = [
+            ("telemetry_usage", true),
+            ("telemetry_perf", true),
+            ("telemetry_live_errors", true),
+            ("telemetry_laya", true),
+            ("session_recorder", true),
+            ("telemetry_bench", false),
+        ];
+        // Listed right after their parent, in that order.
+        let pos = |id: &str| opts.iter().position(|o| o.id == id).unwrap();
+        for (i, (c, _)) in children.iter().enumerate() {
+            assert_eq!(pos(c), pos("telemetry") + 1 + i, "{c} is not under telemetry");
+        }
+        let row = |rows: &[super::OptionRow], id: &str| rows.iter().find(|r| r.id == id).unwrap().clone();
+        let key = |id: &str| {
+            let o = cfg.setup_options.iter().find(|o| o.id == id).unwrap();
+            o.maps_to.keys()[0].trim_start_matches("settings.").to_string()
+        };
+
+        let mut chosen: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        let mut expanded: BTreeSet<String> = BTreeSet::new();
+        let rows = option_rows(&opts, &cfg.setup_groups, &chosen, &expanded, &t);
+        assert_eq!(row(&rows, "telemetry").expander, "", "no link while telemetry is off");
+        for (c, _) in children {
+            let r = row(&rows, c);
+            assert!(r.child && !r.shown && !r.bool_value && r.header.is_empty(), "{c}");
+        }
+        let doc = bpkg_core::handoff::build(&cfg.setup_options, &chosen, vec![], "1", "x");
+        for (c, _) in children {
+            assert_eq!(doc.settings.get(&key(c)), Some(&serde_json::json!(false)), "{c}");
+        }
+
+        // Tick telemetry: every child takes its default, still folded away.
+        set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry", true);
+        let rows = option_rows(&opts, &cfg.setup_groups, &chosen, &expanded, &t);
+        assert_eq!(row(&rows, "telemetry").expander, "Choisir ▾");
+        for (c, on) in children {
+            let r = row(&rows, c);
+            assert_eq!(r.bool_value, on, "{c}");
+            assert!(r.is_default, "{c} shows as changed right after ticking its parent");
+            assert!(!r.shown, "{c} shown before « Choisir »");
+        }
+        // Open the expander: the children are listed.
+        expanded.insert("telemetry".into());
+        let rows = option_rows(&opts, &cfg.setup_groups, &chosen, &expanded, &t);
+        assert_eq!(row(&rows, "telemetry").expander, "Masquer ▴");
+        for (c, _) in children {
+            assert!(row(&rows, c).shown, "{c} hidden with the expander open");
+        }
+        // A granular choice sticks, and reaches the handoff.
+        set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry_laya", false);
+        let doc = bpkg_core::handoff::build(&cfg.setup_options, &chosen, vec![], "1", "x");
+        assert_eq!(doc.settings.get("telemetry"), Some(&serde_json::json!(true)));
+        for (c, on) in children {
+            let want = on && c != "telemetry_laya";
+            assert_eq!(doc.settings.get(&key(c)), Some(&serde_json::json!(want)), "{c}");
+        }
+
+        // Untick telemetry: everything off, the expander closes, the answers are gone.
+        set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry", false);
+        assert!(expanded.is_empty());
+        let rows = option_rows(&opts, &cfg.setup_groups, &chosen, &expanded, &t);
+        for (c, _) in children {
+            let r = row(&rows, c);
+            assert!(!r.bool_value && !r.shown && r.is_default, "{c}");
+        }
+        // Ticked again: back to the defaults, not to the earlier granular choice.
+        set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry", true);
+        let doc = bpkg_core::handoff::build(&cfg.setup_options, &chosen, vec![], "1", "x");
+        assert_eq!(doc.settings.get("telemetry_laya"), Some(&serde_json::json!(true)));
+        assert_eq!(doc.settings.get("telemetry_bench"), Some(&serde_json::json!(false)));
     }
 
     #[test]

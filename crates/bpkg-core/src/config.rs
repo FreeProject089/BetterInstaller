@@ -410,6 +410,38 @@ impl InstallerConfig {
                 ));
             }
         }
+        self.validate_option_parents()
+    }
+
+    /// `setup_option.parent`: one level, bool under bool, pointing at an option that exists.
+    /// A child of a missing or non-bool parent would be a box that can never be shown, or
+    /// one whose "off while the parent is off" rule has nothing to read.
+    fn validate_option_parents(&self) -> std::result::Result<(), String> {
+        for o in &self.setup_options {
+            let Some(pid) = o.parent.as_deref() else {
+                continue;
+            };
+            if o.kind != SetupOptionKind::Bool {
+                return Err(format!("setup_option {}: `parent` needs a bool option", o.id));
+            }
+            if pid == o.id {
+                return Err(format!("setup_option {}: an option cannot be its own parent", o.id));
+            }
+            let p = self
+                .setup_options
+                .iter()
+                .find(|p| p.id == pid)
+                .ok_or_else(|| format!("setup_option {}: parent = {pid:?} names no [[setup_option]]", o.id))?;
+            if p.kind != SetupOptionKind::Bool {
+                return Err(format!("setup_option {}: parent {pid:?} must be a bool option", o.id));
+            }
+            if p.parent.is_some() {
+                return Err(format!(
+                    "setup_option {}: parent {pid:?} is itself a child (one level only)",
+                    o.id
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -424,7 +456,9 @@ impl InstallerConfig {
             .filter(|o| o.kind == SetupOptionKind::Bool)
             .filter_map(|o| {
                 let pid = o.installs.as_ref()?;
-                let on = chosen.get(&o.id).unwrap_or(&o.default).as_bool().unwrap_or(false);
+                let on = effective_value(&self.setup_options, o, chosen)
+                    .as_bool()
+                    .unwrap_or(false);
                 on.then(|| pid.clone())
             })
             .collect()
@@ -840,10 +874,41 @@ pub struct SetupOption {
     /// must be a bool and the prerequisite optional, with a download_url.
     #[serde(default)]
     pub installs: Option<String>,
+    /// For `bool`: the id of another `bool` option this one refines (one level only). A child
+    /// is shown under its parent, behind a "Choose" expander, and only while the parent is
+    /// ticked. While the parent is off the child is off, whatever its `default` says, and the
+    /// handoff writes it `false`. Its `default` is the value it takes when the parent is
+    /// ticked. Checked at load: the parent exists, both are bool, the parent has no parent.
+    #[serde(default)]
+    pub parent: Option<String>,
     /// Which key(s) in handoff.settings this option writes to. A `license` option
     /// may map to several keys (e.g. privacy_accepted + tos_accepted).
     #[serde(default)]
     pub maps_to: MapsTo,
+}
+
+/// The value an option actually has, given the user's answers: the answer, else the default,
+/// except that a child (`parent`) of a parent that is off is `false`. The one place that rule
+/// lives, so the page, the handoff and the prerequisites cannot disagree about it.
+pub fn effective_value(
+    options: &[SetupOption],
+    o: &SetupOption,
+    chosen: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> serde_json::Value {
+    let own = || chosen.get(&o.id).cloned().unwrap_or_else(|| o.default.clone());
+    let Some(pid) = o.parent.as_deref() else {
+        return own();
+    };
+    let parent_on = options
+        .iter()
+        .find(|p| p.id == pid)
+        .map(|p| chosen.get(&p.id).unwrap_or(&p.default).as_bool().unwrap_or(false))
+        .unwrap_or(false);
+    if parent_on {
+        own()
+    } else {
+        serde_json::Value::Bool(false)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1036,6 +1101,7 @@ fn maximal() -> InstallerConfig {
             group: None,
             sends_data: false,
             installs: None,
+            parent: None,
             maps_to: MapsTo::None,
         }],
         security: Some(Security {
@@ -1311,6 +1377,55 @@ installs = "INSTALLS"
         assert!(InstallerConfig::from_toml(&select).is_err(), "only a bool can install something");
         let escape = base.replace("INSTALLS", "model").replace("models/m/m.onnx", "../m.onnx");
         assert!(InstallerConfig::from_toml(&escape).is_err(), "a relative check_file stays inside");
+    }
+
+    #[test]
+    fn a_child_option_is_a_bool_under_an_existing_top_level_bool() {
+        let base = r#"
+[app]
+id = "com.example.app"
+name = "Example"
+version = "1.0.0"
+publisher = "Example"
+[install]
+[[setup_option]]
+id = "telemetry"
+type = "PARENT_KIND"
+label_key = "x"
+choices = ["a"]
+default = false
+PARENT_PARENT
+[[setup_option]]
+id = "usage"
+type = "CHILD_KIND"
+label_key = "y"
+choices = ["a"]
+default = true
+parent = "PARENT"
+"#;
+        let make = |pk: &str, pp: &str, ck: &str, p: &str| {
+            base.replace("PARENT_KIND", pk)
+                .replace("PARENT_PARENT", pp)
+                .replace("CHILD_KIND", ck)
+                .replace("\"PARENT\"", &format!("{p:?}"))
+        };
+        let ok = InstallerConfig::from_toml(&make("bool", "", "bool", "telemetry")).expect("valid child");
+        // Parent off (its default): the child is off whatever its own default says.
+        let usage = ok.setup_options.iter().find(|o| o.id == "usage").unwrap();
+        let mut chosen = std::collections::BTreeMap::new();
+        assert_eq!(effective_value(&ok.setup_options, usage, &chosen), serde_json::json!(false));
+        chosen.insert("telemetry".to_string(), serde_json::json!(true));
+        assert_eq!(effective_value(&ok.setup_options, usage, &chosen), serde_json::json!(true));
+
+        let err = |t: String| InstallerConfig::from_toml(&t).unwrap_err().to_string();
+        assert!(err(make("bool", "", "bool", "nope")).contains("names no"), "a parent that does not exist");
+        assert!(err(make("select", "", "bool", "telemetry")).contains("must be a bool"), "a non-bool parent");
+        assert!(err(make("bool", "", "select", "telemetry")).contains("needs a bool"), "a non-bool child");
+        assert!(err(make("bool", "", "bool", "usage")).contains("own parent"), "a self-parent");
+        assert!(
+            err(make("bool", "parent = \"usage\"", "bool", "telemetry")).contains("one level"),
+            "a parent that is itself a child"
+        );
     }
 
     fn prereq(url: Option<&str>) -> Prerequisite {

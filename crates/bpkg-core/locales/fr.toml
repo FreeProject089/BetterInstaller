@@ -67,6 +67,8 @@ default = "Par défaut : {value}"
 changed = "Modifié"
 reset = "Rétablir les valeurs par défaut"
 sends_data = "Envoie des données"
+choose = "Choisir ▾"
+hide = "Masquer ▴"
 general = "Général"
 
 [progress]

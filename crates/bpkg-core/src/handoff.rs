@@ -90,11 +90,9 @@ pub fn build(
     doc.components = components;
 
     for opt in options {
-        // Resolve the value: explicit choice, else the declared default.
-        let value = chosen
-            .get(&opt.id)
-            .cloned()
-            .unwrap_or_else(|| opt.default.clone());
+        // Resolve the value: explicit choice, else the declared default; a child of a
+        // parent that is off is written `false`.
+        let value = crate::config::effective_value(options, opt, chosen);
         for key in opt.maps_to.keys() {
             let flat = key.strip_prefix("settings.").unwrap_or(key);
             doc.set(flat, value.clone());

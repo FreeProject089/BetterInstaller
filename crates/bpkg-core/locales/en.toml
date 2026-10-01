@@ -79,6 +79,9 @@ default = "Default: {value}"
 changed = "Changed"
 reset = "Restore defaults"
 sends_data = "Sends data"
+# The link on a ticked option that opens (and closes) its finer choices
+choose = "Choose ▾"
+hide = "Hide ▴"
 general = "General"
 
 [progress]

@@ -65,6 +65,12 @@ export struct OptionRow {
     // Non-empty on the first row of a group: the heading drawn above that row.
     header: string,
     header-description: string,
+    // A child option (`parent` in installer.toml): drawn indented under its parent, and
+    // only while `shown` (parent ticked AND its expander open). Top-level rows are always shown.
+    shown: bool,
+    child: bool,
+    // Non-empty on a ticked parent that has children: the text of its "Choose" / "Hide" link.
+    expander: string,
 }
 
 export struct CompRow {
@@ -565,6 +571,7 @@ component SetupPage inherits VerticalLayout {
     callback option-bool-changed(string, bool);
     callback option-select-changed(string, string);
     callback option-choice-picked(string, int);
+    callback option-expand-toggled(string);
     callback reset();
     spacing: 8px;
     HorizontalLayout {
@@ -594,11 +601,16 @@ component SetupPage inherits VerticalLayout {
     ScrollView {
         vertical-stretch: 1;
         VerticalLayout {
-            spacing: 10px;
+            // No spacing here: a hidden child row must take no room at all, so each shown row
+            // brings its own gap (padding-top) instead.
+            spacing: 0px;
             padding-right: 12px;
             padding-bottom: 6px;
-            for opt in options : VerticalLayout {
+            for opt[i] in options : VerticalLayout {
+              if opt.shown : VerticalLayout {
                 spacing: 8px;
+                padding-top: i == 0 ? 0px : (opt.child ? 6px : 10px);
+                padding-left: opt.child ? 28px : 0px;
                 // Group heading, drawn above the first option of each group. Part of the
                 // row rather than a row of its own so the model stays one entry per option
                 // and every callback keeps addressing options by id.
@@ -626,8 +638,8 @@ component SetupPage inherits VerticalLayout {
                     border-radius: 7px;
                     border-width: 2px;
                     border-color: opt.is-default ? Pal.border : Pal.accent-dark;
-                    drop-shadow-offset-x: 3px;
-                    drop-shadow-offset-y: 3px;
+                    drop-shadow-offset-x: opt.child ? 0px : 3px;
+                    drop-shadow-offset-y: opt.child ? 0px : 3px;
                     drop-shadow-blur: 0px;
                     drop-shadow-color: Pal.shadow;
                     HorizontalLayout {
@@ -639,11 +651,11 @@ component SetupPage inherits VerticalLayout {
                             border-bottom-left-radius: 5px;
                         }
                         HorizontalLayout {
-                            padding: 13px;
+                            padding: opt.child ? 9px : 13px;
                             spacing: 14px;
                             VerticalLayout {
                                 horizontal-stretch: 1;
-                                spacing: 5px;
+                                spacing: opt.child ? 3px : 5px;
                                 alignment: start;
                                 HorizontalLayout {
                                     spacing: 8px;
@@ -651,7 +663,7 @@ component SetupPage inherits VerticalLayout {
                                     // language.
                                     Text {
                                         text: opt.label;
-                                        font-size: 14px; font-weight: 800; color: white;
+                                        font-size: opt.child ? 13px : 14px; font-weight: 800; color: white;
                                         wrap: word-wrap;
                                         horizontal-stretch: 1;
                                         horizontal-alignment: I18n.rtl ? right : left;
@@ -676,6 +688,25 @@ component SetupPage inherits VerticalLayout {
                                     }
                                     if !opt.is-default : Tag { text: I18n.tr("setup.changed", I18n.rev); }
                                     Rectangle { horizontal-stretch: 1; }
+                                    // "Choose" / "Hide": opens the child options of a ticked parent.
+                                    if opt.expander != "" : Rectangle {
+                                        min-width: expander-text.preferred-width + 8px;
+                                        Rectangle {
+                                            border-radius: 4px;
+                                            background: expander-ta.has-hover ? Pal.panel2 : transparent;
+                                        }
+                                        expander-text := Text {
+                                            text: opt.expander;
+                                            font-size: 11px; font-weight: 800;
+                                            color: Pal.accent;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: center;
+                                        }
+                                        expander-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { option-expand-toggled(opt.id); }
+                                        }
+                                    }
                                 }
                                 // A swatch is too wide to sit beside its label, so it
                                 // goes under it and spans the card.
@@ -708,6 +739,7 @@ component SetupPage inherits VerticalLayout {
                         }
                     }
                 }
+              }
             }
         }
     }
@@ -1112,6 +1144,7 @@ export component MainWindow inherits Window {
     callback option-bool-changed(string, bool);
     callback option-select-changed(string, string);
     callback option-choice-picked(string, int);
+    callback option-expand-toggled(string);
     callback reset-options();
     callback component-toggled(string, bool);
     callback legal-accept-toggled(bool);
@@ -1266,6 +1299,7 @@ export component MainWindow inherits Window {
                             option-bool-changed(id, v) => { root.option-bool-changed(id, v); }
                             option-select-changed(id, v) => { root.option-select-changed(id, v); }
                             option-choice-picked(id, i) => { root.option-choice-picked(id, i); }
+                            option-expand-toggled(id) => { root.option-expand-toggled(id); }
                             reset => { root.reset-options(); }
                         }
                         if root.page == 3 : ProgressPage {

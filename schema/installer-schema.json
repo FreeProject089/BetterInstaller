@@ -75,6 +75,7 @@
     "setup_option[].localized_documents[].documents",
     "setup_option[].localized_documents[].lang",
     "setup_option[].maps_to",
+    "setup_option[].parent",
     "setup_option[].previews",
     "setup_option[].previews[].colors",
     "setup_option[].previews[].label",
