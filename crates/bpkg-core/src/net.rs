@@ -117,7 +117,9 @@ pub fn download_to_file(url: &str, dest: &std::path::Path) -> Result<String> {
         if total > MAX_BODY {
             drop(f);
             let _ = std::fs::remove_file(dest);
-            return Err(Error::Other(format!("response body exceeds size limit: {url}")));
+            return Err(Error::Other(format!(
+                "response body exceeds size limit: {url}"
+            )));
         }
         h.update(&buf[..n]);
         f.write_all(&buf[..n]).map_err(|e| Error::io(dest, e))?;

@@ -27,4 +27,6 @@ weasyprint==70.0
 # build instead of shipping. See tools/check_pdf.py.
 # 5.1.0 -> 6.16.2 (2026-09-25, same as BMM Docs): two HIGH denial-of-service advisories.
 # check_pdf.py only uses PdfReader, .pages and extract_text(), unchanged in 6.x.
-pypdf==6.16.2
+# 6.16.2 -> 6.19.0 (2026-10-06): Trivy (Security run 37304179136) reported 6.16.2, fixed in 6.19.0.
+# Same three APIs; tools/check_pdf.py re-run against a built PDF with 6.19.0.
+pypdf==6.19.0

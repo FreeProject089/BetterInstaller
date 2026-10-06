@@ -110,8 +110,7 @@ pub fn auto_install(p: &Prerequisite, install_dir: &std::path::Path) -> crate::e
             .sha256
             .as_deref()
             .ok_or_else(|| Error::Other(format!("{}: no sha256", p.name)))?;
-        let path = crate::tmp::run_dir()?
-            .join(format!("bpkg-prereq-{}.zip", sanitise_id(&p.id)));
+        let path = crate::tmp::run_dir()?.join(format!("bpkg-prereq-{}.zip", sanitise_id(&p.id)));
         let _ = std::fs::remove_file(&path);
         let outcome = crate::net::download_to_file(url, &path).and_then(|actual| {
             if !actual.eq_ignore_ascii_case(expected) {

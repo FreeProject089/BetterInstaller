@@ -20,7 +20,9 @@ use slint::{
     Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak,
 };
 
-use bpkg_core::config::{effective_value, InstallerConfig, SetupGroup, SetupOption, SetupOptionKind};
+use bpkg_core::config::{
+    effective_value, InstallerConfig, SetupGroup, SetupOption, SetupOptionKind,
+};
 use bpkg_core::handoff;
 use bpkg_core::i18n::{Catalog, Direction, Translator};
 use bpkg_core::manifest::AppMeta;
@@ -595,7 +597,13 @@ fn run_gui(
         let expanded = expanded.clone();
         let tr = tr.clone();
         move || {
-            let rows = option_rows(&visible, &groups, &chosen.borrow(), &expanded.borrow(), &tr.borrow());
+            let rows = option_rows(
+                &visible,
+                &groups,
+                &chosen.borrow(),
+                &expanded.borrow(),
+                &tr.borrow(),
+            );
             for (i, r) in rows.into_iter().enumerate() {
                 model.set_row_data(i, r);
             }
@@ -823,7 +831,13 @@ fn run_gui(
         let refresh = refresh_rows.clone();
         let expanded = expanded.clone();
         ui.on_option_bool_changed(move |id, v| {
-            set_bool_option(&opts, &mut chosen.borrow_mut(), &mut expanded.borrow_mut(), &id, v);
+            set_bool_option(
+                &opts,
+                &mut chosen.borrow_mut(),
+                &mut expanded.borrow_mut(),
+                &id,
+                v,
+            );
             refresh();
             if let Some(ui) = w.upgrade() {
                 ui.set_can_proceed(compute_can_proceed(&opts, &chosen.borrow()));
@@ -2669,7 +2683,12 @@ fn order_by_group(mut opts: Vec<SetupOption>, groups: &[SetupGroup]) -> Vec<Setu
     for t in tops {
         let id = t.id.clone();
         out.push(t);
-        out.extend(children.iter().filter(|c| c.parent.as_deref() == Some(id.as_str())).cloned());
+        out.extend(
+            children
+                .iter()
+                .filter(|c| c.parent.as_deref() == Some(id.as_str()))
+                .cloned(),
+        );
     }
     out
 }
@@ -2741,14 +2760,24 @@ fn option_rows(
             let (is_default, shown) = match o.parent.as_deref() {
                 Some(pid) => {
                     let parent_on = is_on(pid);
-                    let expected = if parent_on { o.default.clone() } else { serde_json::json!(false) };
+                    let expected = if parent_on {
+                        o.default.clone()
+                    } else {
+                        serde_json::json!(false)
+                    };
                     (current == expected, parent_on && expanded.contains(pid))
                 }
                 None => (current == o.default, true),
             };
-            let has_children = opts.iter().any(|c| c.parent.as_deref() == Some(o.id.as_str()));
+            let has_children = opts
+                .iter()
+                .any(|c| c.parent.as_deref() == Some(o.id.as_str()));
             let expander = if has_children && is_on(&o.id) {
-                tr.t(if expanded.contains(&o.id) { "setup.hide" } else { "setup.choose" })
+                tr.t(if expanded.contains(&o.id) {
+                    "setup.hide"
+                } else {
+                    "setup.choose"
+                })
             } else {
                 String::new()
             };
@@ -2989,19 +3018,27 @@ fn parse_hex(s: &str) -> Option<Color> {
 fn preset_choices(args: &[String], opts: &[SetupOption]) -> BTreeMap<String, serde_json::Value> {
     let mut out = BTreeMap::new();
     for a in args {
-        let Some(rest) = a.strip_prefix("--set=") else { continue };
-        let Some((id, raw)) = rest.split_once('=') else { continue };
+        let Some(rest) = a.strip_prefix("--set=") else {
+            continue;
+        };
+        let Some((id, raw)) = rest.split_once('=') else {
+            continue;
+        };
         let (id, raw) = (id.trim(), raw.trim());
-        let Some(opt) = opts.iter().find(|o| o.id == id) else { continue };
+        let Some(opt) = opts.iter().find(|o| o.id == id) else {
+            continue;
+        };
         let value = match opt.kind {
             SetupOptionKind::Bool => match raw.to_ascii_lowercase().as_str() {
                 "true" | "1" | "yes" | "on" => Some(serde_json::json!(true)),
                 "false" | "0" | "no" | "off" => Some(serde_json::json!(false)),
                 _ => None,
             },
-            SetupOptionKind::Select | SetupOptionKind::Swatch => {
-                opt.choices.iter().any(|c| c == raw).then(|| serde_json::json!(raw))
-            }
+            SetupOptionKind::Select | SetupOptionKind::Swatch => opt
+                .choices
+                .iter()
+                .any(|c| c == raw)
+                .then(|| serde_json::json!(raw)),
             SetupOptionKind::License => None,
         };
         if let Some(v) = value {
@@ -3035,7 +3072,10 @@ mod tests {
         let p = preset_choices(&args, &cfg.setup_options);
         assert_eq!(p.get("ai_features"), Some(&serde_json::json!(true)));
         assert_eq!(p.get("discord_rpc"), Some(&serde_json::json!(false)));
-        assert!(!p.contains_key("telemetry"), "a malformed bool keeps the default");
+        assert!(
+            !p.contains_key("telemetry"),
+            "a malformed bool keeps the default"
+        );
         assert!(!p.contains_key("nope"));
         let lic: Vec<&str> = cfg
             .setup_options
@@ -3045,7 +3085,10 @@ mod tests {
             .collect();
         for id in lic {
             let a = vec![format!("--set={id}=true")];
-            assert!(preset_choices(&a, &cfg.setup_options).is_empty(), "{id} accepted from a CLI");
+            assert!(
+                preset_choices(&a, &cfg.setup_options).is_empty(),
+                "{id} accepted from a CLI"
+            );
         }
     }
 
@@ -3055,14 +3098,34 @@ mod tests {
     #[test]
     fn bmm_laya_offline_option_installs_the_pack() {
         let cfg = InstallerConfig::load("../../examples/bmm/installer.toml").unwrap();
-        let o = cfg.setup_options.iter().find(|o| o.id == "ai_features").expect("ai_features option");
+        let o = cfg
+            .setup_options
+            .iter()
+            .find(|o| o.id == "ai_features")
+            .expect("ai_features option");
         assert_eq!(o.default, serde_json::json!(true));
-        assert!(!o.sends_data, "inference is local: the option must not wear the sends-data badge");
+        assert!(
+            !o.sends_data,
+            "inference is local: the option must not wear the sends-data badge"
+        );
         assert_eq!(o.installs.as_deref(), Some("laya-offline"));
-        let doc = bpkg_core::handoff::build(&cfg.setup_options, &Default::default(), vec![], "1.0.0", "x");
-        assert_eq!(doc.settings.get("ai_features"), Some(&serde_json::json!(true)));
+        let doc = bpkg_core::handoff::build(
+            &cfg.setup_options,
+            &Default::default(),
+            vec![],
+            "1.0.0",
+            "x",
+        );
+        assert_eq!(
+            doc.settings.get("ai_features"),
+            Some(&serde_json::json!(true))
+        );
 
-        let p = cfg.prerequisites.iter().find(|p| p.id == "laya-offline").expect("laya-offline prerequisite");
+        let p = cfg
+            .prerequisites
+            .iter()
+            .find(|p| p.id == "laya-offline")
+            .expect("laya-offline prerequisite");
         assert!(!p.required);
         assert_eq!(p.kind, bpkg_core::config::PrereqKind::Zip);
         assert_eq!(p.install_to.as_deref(), Some("models/laya"));
@@ -3071,11 +3134,16 @@ mod tests {
 
         // Default answers: the pack is fetched. Unticked: it is not.
         let mut chosen = std::collections::BTreeMap::new();
-        assert_eq!(cfg.prereqs_chosen_by_options(&chosen), vec!["laya-offline".to_string()]);
+        assert_eq!(
+            cfg.prereqs_chosen_by_options(&chosen),
+            vec!["laya-offline".to_string()]
+        );
         chosen.insert("ai_features".to_string(), serde_json::json!(false));
         assert!(cfg.prereqs_chosen_by_options(&chosen).is_empty());
         // One decision, not two rows.
-        assert!(!super::offered_prereqs(&cfg).iter().any(|x| x.id == "laya-offline"));
+        assert!(!super::offered_prereqs(&cfg)
+            .iter()
+            .any(|x| x.id == "laya-offline"));
     }
     use bpkg_core::config::InstallerConfig;
     use bpkg_core::i18n::Translator;
@@ -3311,7 +3379,13 @@ After the table.";
             let text = std::fs::read_to_string(format!("{dir}/{code}.toml")).unwrap();
             t.add_catalog(bpkg_core::i18n::Catalog::parse(code, &text).unwrap());
         }
-        let rows = option_rows(&opts, &cfg.setup_groups, &Default::default(), &Default::default(), &t);
+        let rows = option_rows(
+            &opts,
+            &cfg.setup_groups,
+            &Default::default(),
+            &Default::default(),
+            &t,
+        );
 
         // One heading per group, on the first row of it, and every grouped row has one
         // above it somewhere.
@@ -3360,7 +3434,12 @@ After the table.";
                 ),
                 Some(pid) => {
                     let p = opts.iter().find(|p| p.id == pid).unwrap();
-                    assert_eq!(p.default, serde_json::json!(false), "{} rides a pre-ticked parent", r.id);
+                    assert_eq!(
+                        p.default,
+                        serde_json::json!(false),
+                        "{} rides a pre-ticked parent",
+                        r.id
+                    );
                     assert!(!r.shown, "{} is shown before its parent is ticked", r.id);
                 }
             }
@@ -3403,7 +3482,11 @@ After the table.";
         use std::collections::{BTreeMap, BTreeSet};
         let cfg = InstallerConfig::load(BMM).unwrap();
         let opts = order_by_group(
-            cfg.setup_options.iter().filter(|o| o.id != "legal").cloned().collect(),
+            cfg.setup_options
+                .iter()
+                .filter(|o| o.id != "legal")
+                .cloned()
+                .collect(),
             &cfg.setup_groups,
         );
         let t = tr("fr");
@@ -3418,25 +3501,43 @@ After the table.";
         // Listed right after their parent, in that order.
         let pos = |id: &str| opts.iter().position(|o| o.id == id).unwrap();
         for (i, (c, _)) in children.iter().enumerate() {
-            assert_eq!(pos(c), pos("telemetry") + 1 + i, "{c} is not under telemetry");
+            assert_eq!(
+                pos(c),
+                pos("telemetry") + 1 + i,
+                "{c} is not under telemetry"
+            );
         }
-        let row = |rows: &[super::OptionRow], id: &str| rows.iter().find(|r| r.id == id).unwrap().clone();
+        let row =
+            |rows: &[super::OptionRow], id: &str| rows.iter().find(|r| r.id == id).unwrap().clone();
         let key = |id: &str| {
             let o = cfg.setup_options.iter().find(|o| o.id == id).unwrap();
-            o.maps_to.keys()[0].trim_start_matches("settings.").to_string()
+            o.maps_to.keys()[0]
+                .trim_start_matches("settings.")
+                .to_string()
         };
 
         let mut chosen: BTreeMap<String, serde_json::Value> = BTreeMap::new();
         let mut expanded: BTreeSet<String> = BTreeSet::new();
         let rows = option_rows(&opts, &cfg.setup_groups, &chosen, &expanded, &t);
-        assert_eq!(row(&rows, "telemetry").expander, "", "no link while telemetry is off");
+        assert_eq!(
+            row(&rows, "telemetry").expander,
+            "",
+            "no link while telemetry is off"
+        );
         for (c, _) in children {
             let r = row(&rows, c);
-            assert!(r.child && !r.shown && !r.bool_value && r.header.is_empty(), "{c}");
+            assert!(
+                r.child && !r.shown && !r.bool_value && r.header.is_empty(),
+                "{c}"
+            );
         }
         let doc = bpkg_core::handoff::build(&cfg.setup_options, &chosen, vec![], "1", "x");
         for (c, _) in children {
-            assert_eq!(doc.settings.get(&key(c)), Some(&serde_json::json!(false)), "{c}");
+            assert_eq!(
+                doc.settings.get(&key(c)),
+                Some(&serde_json::json!(false)),
+                "{c}"
+            );
         }
 
         // Tick telemetry: every child takes its default, still folded away.
@@ -3446,7 +3547,10 @@ After the table.";
         for (c, on) in children {
             let r = row(&rows, c);
             assert_eq!(r.bool_value, on, "{c}");
-            assert!(r.is_default, "{c} shows as changed right after ticking its parent");
+            assert!(
+                r.is_default,
+                "{c} shows as changed right after ticking its parent"
+            );
             assert!(!r.shown, "{c} shown before « Choisir »");
         }
         // Open the expander: the children are listed.
@@ -3459,10 +3563,17 @@ After the table.";
         // A granular choice sticks, and reaches the handoff.
         set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry_laya", false);
         let doc = bpkg_core::handoff::build(&cfg.setup_options, &chosen, vec![], "1", "x");
-        assert_eq!(doc.settings.get("telemetry"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            doc.settings.get("telemetry"),
+            Some(&serde_json::json!(true))
+        );
         for (c, on) in children {
             let want = on && c != "telemetry_laya";
-            assert_eq!(doc.settings.get(&key(c)), Some(&serde_json::json!(want)), "{c}");
+            assert_eq!(
+                doc.settings.get(&key(c)),
+                Some(&serde_json::json!(want)),
+                "{c}"
+            );
         }
 
         // Untick telemetry: everything off, the expander closes, the answers are gone.
@@ -3476,8 +3587,14 @@ After the table.";
         // Ticked again: back to the defaults, not to the earlier granular choice.
         set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry", true);
         let doc = bpkg_core::handoff::build(&cfg.setup_options, &chosen, vec![], "1", "x");
-        assert_eq!(doc.settings.get("telemetry_laya"), Some(&serde_json::json!(true)));
-        assert_eq!(doc.settings.get("telemetry_bench"), Some(&serde_json::json!(false)));
+        assert_eq!(
+            doc.settings.get("telemetry_laya"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            doc.settings.get("telemetry_bench"),
+            Some(&serde_json::json!(false))
+        );
     }
 
     #[test]
