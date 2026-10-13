@@ -48,11 +48,16 @@ if ((Test-Path $pkg) -and -not (Test-Path $prevPkg)) {
 }
 
 # 1) Bump the three version sources (keep them in lockstep).
-# Written WITHOUT a byte-order mark: `Set-Content -Encoding utf8` in Windows PowerShell 5.1 adds
-# one, and a BOM at the top of Cargo.toml / tauri.conf.json breaks the parsers that read them.
+# Read AND written as UTF-8 without a byte-order mark. Windows PowerShell 5.1 reads a BOM-less
+# file with `Get-Content` as Windows-1252, which turned every accent of tauri.conf.json and
+# Cargo.toml into mojibake; `Set-Content -Encoding utf8` adds a BOM that breaks their parsers.
+# A file already at this version is not rewritten at all.
 function Set-Version($path, $pattern, $replacement) {
-    $text = (Get-Content $path -Raw) -replace $pattern, $replacement
-    [System.IO.File]::WriteAllText((Resolve-Path $path), $text, (New-Object System.Text.UTF8Encoding($false)))
+    $full = (Resolve-Path $path).Path
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $old = [System.IO.File]::ReadAllText($full, $utf8)
+    $text = $old -replace $pattern, $replacement
+    if ($text -ne $old) { [System.IO.File]::WriteAllText($full, $text, $utf8) }
 }
 Set-Version $cfgPath  '(?m)^(\s*version\s*=\s*")[^"]+(")'           ('${1}' + $Version + '${2}')
 Set-Version $cargoTml '(?m)^(version\s*=\s*")[^"]+(")'             ('${1}' + $Version + '${2}')
@@ -98,7 +103,7 @@ $pkgUrl = "https://github.com/FreeProject089/BetterModsManager/releases/latest/d
 $noteText = if ($Notes) { $Notes } else { "Better Mods Manager $Version" }
 $umArgs = @("update-manifest", "--package", $pkg, "--config", $cfgPath, "--key", "examples/bmm/keys/private.key",
             "--url", $pkgUrl, "--notes", $noteText, "--installer", $setup, "--out", $manifest)
-$cfgText = Get-Content $cfgPath -Raw
+$cfgText = [System.IO.File]::ReadAllText((Resolve-Path $cfgPath).Path, (New-Object System.Text.UTF8Encoding($false)))
 $pkgMatch = [regex]::Match($cfgText, '(?ms)^\s*package_urls\s*=\s*\[(.*?)\]')
 if ($pkgMatch.Success) {
     foreach ($q in [regex]::Matches($pkgMatch.Groups[1].Value, '"([^"]+)"')) {
