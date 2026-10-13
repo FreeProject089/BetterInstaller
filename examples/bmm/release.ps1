@@ -156,6 +156,11 @@ try {
 # of the release, so a second one is a second program it may launch.
 $installersOut = @($assets | Where-Object { $_ -match '\.(exe|msi)$' })
 if ($installersOut.Count -ne 1) { throw "exactly one installer asset expected, got: $($installersOut -join ', ')" }
+# 0.9.11 falls back to the first ".exe" OR ".zip" asset, and its match is case-sensitive: a .zip
+# on the release could be what it runs, and only a lowercase ".exe" is seen at all.
+$zips = @($assets | Where-Object { $_ -match '\.zip$' })
+if ($zips.Count -gt 0) { throw "no .zip asset on a BMM release (BMM 0.9.11 may run it): $($zips -join ', ')" }
+if (-not ($installersOut[0] -cmatch 'BMM-Setup\.exe$')) { throw "the installer asset must be named BMM-Setup.exe (lowercase .exe), got: $($installersOut[0])" }
 
 # 8) Optionally publish the GitHub release: every asset in ONE call (so no client ever sees the
 #    release without its signed manifests), as Latest and NOT a pre-release: the stable channel
