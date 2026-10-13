@@ -458,6 +458,122 @@ in **maintenance mode** with three actions, each behind a confirmation with **Ca
   package); downloads/extracts with rollback.
 - **Uninstall** — reverses shortcuts/protocol/ARP entry and removes the install dir.
 
+### Command line: unattended install, update, repair, modify, uninstall
+
+Every action of the window can be run from the command line, with no question. The same
+executable (`BMM-Setup.exe`, or the `uninstall.exe` copy in the install folder) takes:
+
+| Option | Meaning |
+|---|---|
+| *(none)* | The interactive installer, as before. |
+| `--mode install\|update\|repair\|modify\|uninstall` | Run that action unattended. |
+| `--update` | Shortcut for `--mode update --passive`. |
+| `--uninstall` | Alone: the uninstall window (the Apps & Features button). With `--passive` or `--quiet`: `--mode uninstall`. |
+| `--passive` | Progress window, no question, closes by itself at the end (default of every mode). A failure stays on screen 15 s. |
+| `--quiet`, `--silent` | No window at all. Never asks for administrator rights: fails with exit code 4 instead. |
+| `--dir <path>` | Install folder of a fresh install (default: the per-user folder). For the other modes it only helps find an install the registry does not list; it cannot move one. |
+| `--components <a,b>` | Components to install (install, modify). Required ones are always added; an optional prerequisite is `prereq:<id>`. |
+| `--preset recommended\|minimal\|full` | Components when `--components` is absent: required + default ones (recommended, the default), required only, or all. |
+| `--shortcuts <list>` | `desktop`, `startmenu`, `autostart`, or `none` (install, modify). Default for an install: what the Location page pre-ticks; update/repair keep what was recorded. |
+| `--set <option>=<value>` | Answer a setup option (`[[setup_option]] id`): a bool takes `on`/`off`, a select or swatch one of its `choices`. Never a licence. `--help` lists this installer's options. |
+| `--telemetry on\|off` | Shorthand for `--set telemetry=on\|off`. |
+| `--accept-terms`, `--accept-privacy` | Accept the Terms of Service / Privacy Policy shipped in the package. Required for a fresh install. |
+| `--lang <code>` | Installer language (also `--lang=<code>`). Also decides what a select left on `auto` becomes, and which language of the legal texts is accepted. |
+| `--wait-pid <pid>` | Wait for this process to exit first (default 60 s, `--wait-timeout <s>`), then close the app if it is still running. |
+| `--launch` | Start the app at the end (`[install] main_exe`). |
+| `--log <file>` | Append a timestamped log of the run (it is also written to stderr). |
+| `--no-restart` | Accepted for scripts: the installer never restarts the computer. |
+| `--offline` | `--update` only: do not ask the network. |
+| `--allow-downgrade` | repair / modify: allow a setup older than what is installed. |
+| `--check-update` | Print a JSON update report and exit (0 up to date, 10 available, 2 error). |
+| `--version`, `--help` | Print the version / the help (with this installer's components and options). |
+
+What each mode does:
+
+- **install** — a fresh install, exactly like the window: verify the package, install the
+  chosen components, shortcuts, protocol, Apps & Features entry, then write the first-run
+  handoff. Refused (exit 9) when the app is already installed.
+- **update** — finds the existing installation (Apps & Features entry, else an
+  `uninstall-info.json` for this app in `--dir` or beside the executable) and installs the
+  bundled version over it, keeping its folder, components and shortcuts. The handoff is
+  not rewritten: the answers and consents given at install stay as they are. When the bundled
+  version is not newer, the signed `[update]` manifest is asked (download, verification,
+  rollback, as the Update button); nothing newer anywhere is success (exit 0). Never a
+  downgrade. No installation: exit 3, never a fresh install (that needs the person's
+  consent).
+- **repair** — re-verify and re-extract the bundled version with the recorded choices.
+- **modify** — change components (`--components` / `--preset`; files of a component taken
+  out are deleted) and shortcuts (`--shortcuts`). Settings are changed in the app.
+- **uninstall** — the same uninstall as the window.
+
+Rules that hold in every mode:
+
+- **Verification is mandatory.** The package signature (against `[security] public_key`)
+  and every file's SHA-256 are checked as for a click on Install; a package that does not
+  verify is refused before anything is written (exit 5). No flag skips it.
+- **Consent is never assumed.** A fresh unattended install refuses to run (exit 11)
+  without `--accept-terms` for the terms and `--accept-privacy` for the privacy policy, and
+  prints each document with the SHA-256 of its text. With them, the handoff carries one
+  consent receipt per document — document, SHA-256 of the exact text, language, file, time
+  and `"source": "cli"` (the window's receipts say `"ui"`).
+- **Data stays off unless named.** Every option with `sends_data = true` is off unless given
+  with `--set` / `--telemetry`; a child of a parent turned on takes its declared default, as
+  in the window. A choice whose default card would turn data on must be answered explicitly:
+  « Accept all » is never implied. A required choice with no default (BMM's privacy choice)
+  stays unanswered unless `--set`, and the app asks it on first launch.
+- **The running app.** Before files are replaced the app's own executables in the install
+  folder are closed; one that cannot be closed is exit 7. `--wait-pid` lets the app pass its
+  own pid and exit.
+- **Administrator rights** are asked once (UAC) when the folder needs them; the elevated copy
+  does the work and its exit code is returned. Refused prompt, or `--quiet`: exit 4.
+- **Disk space** is checked first against the files still to write (exit 6). Prerequisite
+  downloads are not counted.
+- **Closing the progress window** asks to cancel: it takes effect before anything is written
+  (exit 8); once files are being written the run completes.
+
+Exit codes (10 is `--check-update`'s "update available", not used here):
+
+| Code | Meaning |
+|---|---|
+| 0 | Success (for `--update`, also "already up to date") |
+| 1 | Failed (network, prerequisite, handoff write, other) |
+| 2 | Bad arguments (unknown option, bad value, combination that makes no sense) |
+| 3 | No existing installation (update, repair, modify, uninstall) |
+| 4 | Administrator rights needed and refused (or `--quiet`) |
+| 5 | Package signature or hash verification failed |
+| 6 | Not enough disk space / disk write error |
+| 7 | The app is running and could not be closed |
+| 8 | Cancelled |
+| 9 | Already installed (`--mode install`) |
+| 11 | Fresh install without `--accept-terms` / `--accept-privacy` |
+| 12 | The setup is older than the installed version (repair, modify without `--allow-downgrade`) |
+
+Examples:
+
+```powershell
+# BMM's in-app updater: BMM passes its own pid, exits, and is started again at the end.
+BMM-Setup.exe --update --wait-pid 1234 --launch
+
+# Silent repair, logged.
+BMM-Setup.exe --mode repair --quiet --log "$env:TEMP\bmm-repair.log"
+
+# Silent uninstall (from the installed copy).
+& "$env:LOCALAPPDATA\Programs\Better Mods Manager\uninstall.exe" --uninstall --quiet
+
+# Unattended fresh install: the consent is given explicitly, data-sending options off,
+# privacy answer recorded, no MCP server, French, desktop + Start Menu shortcuts.
+BMM-Setup.exe --mode install --quiet --accept-terms --accept-privacy `
+  --set privacy_choice=essential --components core,cli --shortcuts desktop,startmenu `
+  --lang fr --log C:\Temp\bmm-install.log
+
+# Add the MCP server to an existing install.
+BMM-Setup.exe --mode modify --components core,cli,mcp-server
+```
+
+Notes: an elevated copy started by UAC with another administrator account writes that
+account's per-user entries (shortcuts, Apps & Features); install per-user folders without
+elevation. `--quiet` output goes to stderr (attached to the calling console) and `--log`.
+
 ---
 
 ## 6. CLI reference (`bpkg`)

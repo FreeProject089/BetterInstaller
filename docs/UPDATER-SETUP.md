@@ -217,14 +217,18 @@ Prints a JSON report to **stdout** and sets the **exit code**:
 ### `--update` → apply it
 
 ```sh
-"<install_dir>/uninstall.exe" --update
+"<install_dir>/uninstall.exe" --update --wait-pid <your pid> --launch
 ```
 
-Opens the maintenance window and, as soon as the manifest confirms a newer version,
-**starts the update automatically** (verified manifest → download → package hash and
-signature → close the app's own running processes → apply with rollback,
-delta when offered). Without `--update`, launching it normally shows the **Update**
-button for the user to click.
+`--update` is `--mode update --passive`: a progress window, no question. It waits for
+`--wait-pid` to exit, then installs the newer version — the one bundled in the setup when
+it is newer (a freshly downloaded `Setup.exe`), else the one the verified manifest names
+(download → package hash and signature → close the app's own running processes → apply
+with rollback, delta when offered) — keeping the install's folder, components and
+shortcuts, and starts the app again with `--launch`. Nothing newer is success (exit 0);
+no installation is exit 3. Add `--quiet` for no window at all. Without `--update`,
+launching it normally shows the **Update** button for the user to click. Every option and
+exit code: GUIDE.md, « Command line ».
 
 ### Wiring it into your app (example)
 
@@ -236,8 +240,10 @@ let report: serde_json::Value = serde_json::from_slice(&out.stdout)?;
 if report["update_available"] == true {
     // show: "Update available: {current_version} → {latest_version}\n{notes}"
     // on user confirm:
-    std::process::Command::new(&exe).arg("--update").spawn()?;
-    // (optionally exit your app so the updater can replace its files)
+    std::process::Command::new(&exe)
+        .args(["--update", "--wait-pid", &std::process::id().to_string(), "--launch"])
+        .spawn()?;
+    std::process::exit(0); // the updater waits for this pid, then replaces the files
 }
 ```
 

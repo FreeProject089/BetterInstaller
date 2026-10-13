@@ -477,6 +477,131 @@ lancé avec `--uninstall` (le bouton « Désinstaller » de Windows fait ça), l
   distant ou paquet embarqué plus récent) ; télécharge/extrait avec rollback.
 - **Désinstaller** — annule raccourcis/protocole/entrée ARP et retire le dossier d'install.
 
+### Ligne de commande : installer, mettre à jour, réparer, modifier, désinstaller sans surveillance
+
+Chaque action de la fenêtre se lance aussi en ligne de commande, sans aucune question. Le
+même exécutable (`BMM-Setup.exe`, ou la copie `uninstall.exe` du dossier d'installation)
+accepte :
+
+| Option | Effet |
+|---|---|
+| *(aucune)* | L'installateur interactif, comme avant. |
+| `--mode install\|update\|repair\|modify\|uninstall` | Lance cette action sans surveillance. |
+| `--update` | Raccourci de `--mode update --passive`. |
+| `--uninstall` | Seul : la fenêtre de désinstallation (le bouton d'Applications et fonctionnalités). Avec `--passive` ou `--quiet` : `--mode uninstall`. |
+| `--passive` | Fenêtre de progression, aucune question, se ferme seule à la fin (défaut de tous les modes). Un échec reste affiché 15 s. |
+| `--quiet`, `--silent` | Aucune fenêtre. Ne demande jamais les droits administrateur : échoue avec le code 4 à la place. |
+| `--dir <chemin>` | Dossier d'une nouvelle installation (défaut : le dossier par utilisateur). Pour les autres modes, sert seulement à retrouver une installation absente du registre ; ne la déplace jamais. |
+| `--components <a,b>` | Composants à installer (install, modify). Les composants requis sont toujours ajoutés ; un prérequis optionnel s'écrit `prereq:<id>`. |
+| `--preset recommended\|minimal\|full` | Composants quand `--components` est absent : requis + par défaut (recommended, le défaut), requis seulement, ou tous. |
+| `--shortcuts <liste>` | `desktop`, `startmenu`, `autostart` ou `none` (install, modify). Défaut d'une installation : ce que la page Emplacement coche ; update/repair gardent ce qui a été enregistré. |
+| `--set <option>=<valeur>` | Répond à une option (`id` d'un `[[setup_option]]`) : un booléen prend `on`/`off`, une liste ou une palette une de ses `choices`. Jamais une licence. `--help` liste les options de cet installateur. |
+| `--telemetry on\|off` | Raccourci de `--set telemetry=on\|off`. |
+| `--accept-terms`, `--accept-privacy` | Accepte les Conditions d'utilisation / la Politique de confidentialité livrées dans le paquet. Obligatoires pour une nouvelle installation. |
+| `--lang <code>` | Langue de l'installateur (aussi `--lang=<code>`). Décide aussi ce que devient une liste laissée sur `auto`, et la langue des textes juridiques acceptés. |
+| `--wait-pid <pid>` | Attend d'abord la fin de ce processus (60 s par défaut, `--wait-timeout <s>`), puis ferme l'application si elle tourne encore. |
+| `--launch` | Lance l'application à la fin (`[install] main_exe`). |
+| `--log <fichier>` | Ajoute un journal horodaté de l'exécution (également écrit sur stderr). |
+| `--no-restart` | Accepté pour les scripts : l'installateur ne redémarre jamais l'ordinateur. |
+| `--offline` | `--update` seulement : ne pas interroger le réseau. |
+| `--allow-downgrade` | repair / modify : autorise un setup plus ancien que la version installée. |
+| `--check-update` | Affiche un rapport JSON de mise à jour et quitte (0 à jour, 10 disponible, 2 erreur). |
+| `--version`, `--help` | Affiche la version / l'aide (avec les composants et options de cet installateur). |
+
+Ce que fait chaque mode :
+
+- **install** — une nouvelle installation, exactement comme la fenêtre : vérification du
+  paquet, composants choisis, raccourcis, protocole, entrée d'Applications et fonctionnalités,
+  puis écriture du transfert de premier lancement (handoff). Refusée (code 9) si
+  l'application est déjà installée.
+- **update** — retrouve l'installation existante (entrée d'Applications et fonctionnalités,
+  sinon un `uninstall-info.json` de cette application dans `--dir` ou à côté de l'exécutable)
+  et installe la version embarquée par-dessus, en gardant son dossier, ses composants et ses
+  raccourcis. Le handoff n'est pas réécrit : les réponses et consentements donnés à
+  l'installation restent tels quels. Si la version embarquée n'est pas plus récente, le
+  manifeste signé `[update]` est interrogé (téléchargement, vérification, retour arrière,
+  comme le bouton Mettre à jour) ; rien de plus récent nulle part est un succès (code 0).
+  Jamais de retour à une version antérieure. Aucune installation : code 3, jamais une nouvelle
+  installation (elle exige le consentement de la personne).
+- **repair** — revérifie et réextrait la version embarquée avec les choix enregistrés.
+- **modify** — change les composants (`--components` / `--preset` ; les fichiers d'un
+  composant retiré sont supprimés) et les raccourcis (`--shortcuts`). Les réglages se changent
+  dans l'application.
+- **uninstall** — la même désinstallation que la fenêtre.
+
+Règles valables dans tous les modes :
+
+- **La vérification est obligatoire.** La signature du paquet (contre
+  `[security] public_key`) et le SHA-256 de chaque fichier sont vérifiés comme pour un clic
+  sur Installer ; un paquet qui ne se vérifie pas est refusé avant toute écriture (code 5).
+  Aucune option ne la contourne.
+- **Le consentement n'est jamais présumé.** Une nouvelle installation sans surveillance refuse
+  de démarrer (code 11) sans `--accept-terms` pour les conditions et `--accept-privacy` pour la
+  politique de confidentialité, et affiche chaque document avec le SHA-256 de son texte. Avec
+  elles, le handoff contient un reçu par document — document, SHA-256 du texte exact, langue,
+  fichier, heure et `"source": "cli"` (les reçus de la fenêtre portent `"ui"`).
+- **Les données restent coupées sauf mention.** Toute option `sends_data = true` est désactivée
+  sauf si elle est donnée par `--set` / `--telemetry` ; l'enfant d'un parent activé prend sa
+  valeur déclarée, comme dans la fenêtre. Un choix dont la carte par défaut activerait l'envoi
+  de données doit recevoir une réponse explicite : « Tout accepter » n'est jamais sous-entendu.
+  Un choix requis sans défaut (le choix de confidentialité de BMM) reste sans réponse sauf
+  `--set`, et l'application le pose au premier lancement.
+- **L'application en cours d'exécution.** Avant de remplacer des fichiers, les exécutables de
+  l'application dans le dossier d'installation sont fermés ; s'il en reste un : code 7.
+  `--wait-pid` permet à l'application de passer son propre pid puis de quitter.
+- **Les droits administrateur** sont demandés une seule fois (UAC) quand le dossier les exige ;
+  la copie élevée fait le travail et son code de sortie est renvoyé. Invite refusée, ou
+  `--quiet` : code 4.
+- **L'espace disque** est vérifié d'abord, d'après les fichiers restant à écrire (code 6). Les
+  téléchargements de prérequis ne sont pas comptés.
+- **Fermer la fenêtre de progression** demande l'annulation : elle prend effet avant toute
+  écriture (code 8) ; une fois l'écriture commencée, l'exécution va à son terme.
+
+Codes de sortie (10 est le « mise à jour disponible » de `--check-update`, inutilisé ici) :
+
+| Code | Signification |
+|---|---|
+| 0 | Succès (pour `--update`, aussi « déjà à jour ») |
+| 1 | Échec (réseau, prérequis, écriture du handoff, autre) |
+| 2 | Arguments invalides (option inconnue, valeur invalide, combinaison absurde) |
+| 3 | Aucune installation existante (update, repair, modify, uninstall) |
+| 4 | Droits administrateur nécessaires et refusés (ou `--quiet`) |
+| 5 | Échec de la vérification de signature ou d'empreinte du paquet |
+| 6 | Espace disque insuffisant / erreur d'écriture disque |
+| 7 | L'application tourne et n'a pas pu être fermée |
+| 8 | Annulé |
+| 9 | Déjà installée (`--mode install`) |
+| 11 | Nouvelle installation sans `--accept-terms` / `--accept-privacy` |
+| 12 | Le setup est plus ancien que la version installée (repair, modify sans `--allow-downgrade`) |
+
+Exemples :
+
+```powershell
+# Le programme de mise à jour intégré de BMM : BMM passe son pid, quitte, et est relancé à la fin.
+BMM-Setup.exe --update --wait-pid 1234 --launch
+
+# Réparation silencieuse, journalisée.
+BMM-Setup.exe --mode repair --quiet --log "$env:TEMP\bmm-repair.log"
+
+# Désinstallation silencieuse (depuis la copie installée).
+& "$env:LOCALAPPDATA\Programs\Better Mods Manager\uninstall.exe" --uninstall --quiet
+
+# Nouvelle installation sans surveillance : consentement donné explicitement, envoi de données
+# coupé, réponse de confidentialité enregistrée, sans serveur MCP, en français, raccourcis
+# Bureau + menu Démarrer.
+BMM-Setup.exe --mode install --quiet --accept-terms --accept-privacy `
+  --set privacy_choice=essential --components core,cli --shortcuts desktop,startmenu `
+  --lang fr --log C:\Temp\bmm-install.log
+
+# Ajouter le serveur MCP à une installation existante.
+BMM-Setup.exe --mode modify --components core,cli,mcp-server
+```
+
+Remarques : une copie élevée lancée par UAC avec un autre compte administrateur écrit les
+entrées par utilisateur de ce compte (raccourcis, Applications et fonctionnalités) ; installez
+les dossiers par utilisateur sans élévation. En `--quiet`, la sortie va sur stderr (attaché à
+la console appelante) et dans `--log`.
+
 ---
 
 ## 6. Référence CLI (`bpkg`)

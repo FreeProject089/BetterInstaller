@@ -224,14 +224,19 @@ Imprime un rapport JSON sur **stdout** et pose le **code de sortie** :
 ### `--update` → l'appliquer
 
 ```sh
-"<install_dir>/uninstall.exe" --update
+"<install_dir>/uninstall.exe" --update --wait-pid <ton pid> --launch
 ```
 
-Ouvre la fenêtre de maintenance et, dès que le manifest confirme une version plus récente,
-**démarre la mise à jour automatiquement** (manifest vérifié → download → hash et
-signature du paquet → fermeture des processus de l'app elle-même → apply avec rollback,
-delta si proposé). Sans `--update`, le lancer normalement affiche le bouton
-**Mettre à jour** que l'utilisateur clique.
+`--update` vaut `--mode update --passive` : une fenêtre de progression, aucune question. Il
+attend la fin de `--wait-pid`, puis installe la version plus récente — celle embarquée dans
+le setup quand elle est plus récente (un `Setup.exe` fraîchement téléchargé), sinon celle
+que nomme le manifest vérifié (download → hash et signature du paquet → fermeture des
+processus de l'app elle-même → apply avec rollback, delta si proposé) — en gardant le
+dossier, les composants et les raccourcis de l'installation, et relance l'app avec
+`--launch`. Rien de plus récent : succès (code 0) ; aucune installation : code 3. Ajoute
+`--quiet` pour n'avoir aucune fenêtre. Sans `--update`, le lancer normalement affiche le
+bouton **Mettre à jour** que l'utilisateur clique. Toutes les options et codes de sortie :
+GUIDE_FR.md, « Ligne de commande ».
 
 ### Le brancher dans ton app (exemple)
 
@@ -243,8 +248,10 @@ let report: serde_json::Value = serde_json::from_slice(&out.stdout)?;
 if report["update_available"] == true {
     // affiche : "Mise à jour dispo : {current_version} → {latest_version}\n{notes}"
     // sur confirmation de l'utilisateur :
-    std::process::Command::new(&exe).arg("--update").spawn()?;
-    // (optionnellement, quitte ton app pour que l'updater puisse remplacer ses fichiers)
+    std::process::Command::new(&exe)
+        .args(["--update", "--wait-pid", &std::process::id().to_string(), "--launch"])
+        .spawn()?;
+    std::process::exit(0); // l'updater attend ce pid, puis remplace les fichiers
 }
 ```
 
