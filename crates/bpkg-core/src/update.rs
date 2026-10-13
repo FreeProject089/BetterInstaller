@@ -94,6 +94,11 @@ pub struct UpdateManifest {
     /// setup. `bpkg verify-manifest --setup` checks a setup against it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_sha256: Option<String>,
+    /// Setup executables published with this release (e.g. `BMM-Setup.exe`), each with the
+    /// lowercase hex SHA-256 of its bytes. Only trusted inside a signed body: an app's own
+    /// updater checks the installer it downloads against this before running it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub installers: Vec<InstallerEntry>,
     /// RFC 3339 time the body was signed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issued: Option<String>,
@@ -143,6 +148,18 @@ impl<'a> ManifestPolicy<'a> {
             now: chrono::Utc::now(),
         }
     }
+}
+
+/// One setup executable a signed update.json vouches for.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstallerEntry {
+    /// File name of the release asset (no folders), e.g. `BMM-Setup.exe`.
+    pub path: String,
+    /// Lowercase hex SHA-256 of the file.
+    pub sha256: String,
+    /// Size in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,6 +220,7 @@ pub fn parse_manifest(text: &str, policy: &ManifestPolicy) -> Result<UpdateManif
             // Only the signed body may say these; a copy at the top level proves nothing.
             m.sha256 = None;
             m.config_sha256 = None;
+            m.installers.clear();
             m.trust = if key.is_some() {
                 ManifestTrust::UnsignedAccepted
             } else {

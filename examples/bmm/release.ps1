@@ -97,7 +97,7 @@ if (Test-Path $prevPkg) {
 $pkgUrl = "https://github.com/FreeProject089/BetterModsManager/releases/latest/download/bmm.bpkg"
 $noteText = if ($Notes) { $Notes } else { "Better Mods Manager $Version" }
 $umArgs = @("update-manifest", "--package", $pkg, "--config", $cfgPath, "--key", "examples/bmm/keys/private.key",
-            "--url", $pkgUrl, "--notes", $noteText, "--out", $manifest)
+            "--url", $pkgUrl, "--notes", $noteText, "--installer", $setup, "--out", $manifest)
 $cfgText = Get-Content $cfgPath -Raw
 $pkgMatch = [regex]::Match($cfgText, '(?ms)^\s*package_urls\s*=\s*\[(.*?)\]')
 if ($pkgMatch.Success) {

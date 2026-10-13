@@ -161,6 +161,10 @@ enum Command {
         /// Release notes.
         #[arg(long)]
         notes: Option<String>,
+        /// A setup executable published with the release (repeatable): its file name and
+        /// SHA-256 go into the signed body, so an app's updater can check it before running it.
+        #[arg(long = "installer")]
+        installers: Vec<PathBuf>,
         /// Days until the manifest expires (1 to 7).
         #[arg(long, default_value_t = 7)]
         valid_days: i64,
@@ -291,6 +295,7 @@ fn main() -> Result<()> {
             mirrors,
             deltas,
             notes,
+            installers,
             valid_days,
             out,
         } => cmd_update_manifest(ManifestArgs {
@@ -301,6 +306,7 @@ fn main() -> Result<()> {
             mirrors,
             deltas: &deltas,
             notes,
+            installers: &installers,
             valid_days,
             out: &out,
         }),
@@ -327,6 +333,7 @@ struct ManifestArgs<'a> {
     mirrors: Vec<String>,
     deltas: &'a [String],
     notes: Option<String>,
+    installers: &'a [PathBuf],
     valid_days: i64,
     out: &'a Path,
 }
@@ -376,6 +383,23 @@ fn build_update_manifest(a: &ManifestArgs) -> Result<String> {
                 .ok_or_else(|| anyhow::anyhow!("--delta {d:?}: expected <from-version>=<url>"))
         })
         .collect::<Result<Vec<_>>>()?;
+    let installers = a
+        .installers
+        .iter()
+        .map(|p| {
+            let bytes = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
+            let path = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| anyhow::anyhow!("--installer {}: no file name", p.display()))?
+                .to_string();
+            Ok(bpkg_core::update::InstallerEntry {
+                path,
+                sha256: sha256_hex(&bytes),
+                size: Some(bytes.len() as u64),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     let body = UpdateManifest {
         app_id: Some(app.id.clone()),
         version: app.version.clone(),
@@ -385,6 +409,7 @@ fn build_update_manifest(a: &ManifestArgs) -> Result<String> {
         deltas,
         sha256: Some(sha256_hex(&bpkg)),
         config_sha256: Some(sha256_hex(&cfg_bytes)),
+        installers,
         ..Default::default()
     };
     sign_manifest(&body, &sk, chrono::Utc::now(), a.valid_days).context("signing manifest")
@@ -890,6 +915,7 @@ mod tests {
             mirrors: vec![],
             deltas: &[],
             notes: None,
+            installers: &[],
             valid_days: 7,
             out: &out,
         };
@@ -914,6 +940,24 @@ mod tests {
         bpkg_core::embed::stamp(&engine, other.as_bytes(), &pkg_bytes, &restamped).unwrap();
         let err = check_manifest(&out, &pubf, Some("t"), Some(&restamped)).unwrap_err();
         assert!(err.to_string().contains("installer.toml"), "{err}");
+
+        // --installer: the setup's name and SHA-256 are in the SIGNED body.
+        let with_setup = [setup.clone()];
+        let args2 = ManifestArgs {
+            installers: &with_setup,
+            ..args
+        };
+        std::fs::write(&out, build_update_manifest(&args2).unwrap()).unwrap();
+        let m = check_manifest(&out, &pubf, Some("t"), None).unwrap();
+        let setup_bytes = std::fs::read(&setup).unwrap();
+        assert_eq!(
+            m.installers,
+            vec![bpkg_core::update::InstallerEntry {
+                path: "setup.exe".into(),
+                sha256: bpkg_core::update::sha256_hex(&setup_bytes),
+                size: Some(setup_bytes.len() as u64),
+            }]
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }
