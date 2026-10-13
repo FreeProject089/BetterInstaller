@@ -73,6 +73,14 @@ pub trait PlatformOps {
     fn remove_shortcuts(&self, _name: &str, _desktop: bool, _start_menu: bool) -> Result<()> {
         Ok(())
     }
+    /// Start `exe` when the user signs in (per user, no elevation). `name` is the entry's
+    /// name, the app id. Default: unsupported, nothing done.
+    fn set_run_at_login(&self, _name: &str, _exe: &std::path::Path) -> Result<()> {
+        Ok(())
+    }
+    fn remove_run_at_login(&self, _name: &str) -> Result<()> {
+        Ok(())
+    }
     fn unregister_protocol(&self, _scheme: &str) -> Result<()> {
         Ok(())
     }
@@ -90,6 +98,30 @@ pub trait PlatformOps {
     /// whether an update is available). Default: unknown.
     fn installed_version(&self, _app_id: &str) -> Option<String> {
         None
+    }
+}
+
+/// Whether the person reads apps in light mode: `Some(true)` light, `Some(false)` dark,
+/// `None` when the OS does not say. Windows: `AppsUseLightTheme` under the current user's
+/// Personalize key (the switch in Settings → Personalisation → Colours, "app mode"). A
+/// read-only lookup; nothing is written.
+pub fn prefers_light_theme() -> Option<bool> {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::HKEY_CURRENT_USER;
+        let key = winreg::RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+            .ok()?;
+        let v: u32 = key.get_value("AppsUseLightTheme").ok()?;
+        Some(v != 0)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // GTK / GNOME expose it through settings daemons this crate does not link; an
+        // explicit hint in the environment is the one cheap, honest signal.
+        std::env::var("GTK_THEME")
+            .ok()
+            .map(|t| !t.to_ascii_lowercase().contains("dark"))
     }
 }
 

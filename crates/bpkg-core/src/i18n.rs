@@ -272,6 +272,87 @@ pub fn detect_os_locale() -> Option<String> {
         .next()
 }
 
+/// Every interface language the user has, most preferred first, normalized and without
+/// repeats: the display language, then (Windows) the other languages listed under Settings →
+/// Time & language. Lets the installer open in the first one it actually has a catalogue for,
+/// rather than in English, for someone whose display language it does not speak but whose
+/// second language it does.
+pub fn detect_os_locales() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(l) = detect_os_locale() {
+        out.push(l);
+    }
+    #[cfg(windows)]
+    for l in windows_preferred_ui_languages() {
+        if !out.contains(&l) {
+            out.push(l);
+        }
+    }
+    out
+}
+
+/// `GetUserPreferredUILanguages` with `MUI_LANGUAGE_NAME`: a double-NUL-terminated list of
+/// tags (`fr-FR\0en-US\0\0`). Empty when the call fails.
+#[cfg(windows)]
+fn windows_preferred_ui_languages() -> Vec<String> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetUserPreferredUILanguages(
+            flags: u32,
+            num_languages: *mut u32,
+            buffer: *mut u16,
+            buffer_len: *mut u32,
+        ) -> i32;
+    }
+    const MUI_LANGUAGE_NAME: u32 = 0x8;
+    let (mut num, mut len) = (0u32, 0u32);
+    // SAFETY: first call with a null buffer only reports the needed length (in u16 units).
+    if unsafe {
+        GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut num, std::ptr::null_mut(), &mut len)
+    } == 0
+        || len == 0
+        || len > 4096
+    {
+        return Vec::new();
+    }
+    let mut buf = vec![0u16; len as usize];
+    // SAFETY: the buffer is exactly `len` units long and `len` says so.
+    if unsafe {
+        GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut num, buf.as_mut_ptr(), &mut len)
+    } == 0
+    {
+        return Vec::new();
+    }
+    buf.split(|c| *c == 0)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| normalize(&String::from_utf16_lossy(s)))
+        .collect()
+}
+
+/// Of the OS languages, the first one `available` (catalogue codes) covers — `fr-CH` is
+/// covered by `fr` — else the first OS language as it is (it falls back to English on its
+/// own), else `None`.
+pub fn pick_os_language(os: &[String], available: &[String]) -> Option<String> {
+    // The tag and its own parents (`fr-CH` → `fr`), NOT the English every chain ends with:
+    // that would make the first language always "covered".
+    let covered = |l: &str| {
+        let mut cur = l;
+        loop {
+            if available.iter().any(|a| a == cur) {
+                return true;
+            }
+            match cur.rfind('-') {
+                Some(i) => cur = &cur[..i],
+                None => return false,
+            }
+        }
+    };
+    os.iter()
+        .find(|l| covered(l))
+        .or_else(|| os.first())
+        .cloned()
+}
+
 /// The Windows UI language (what the user reads menus in), not the regional format:
 /// someone in Switzerland with an English UI and French date formats wants English.
 #[cfg(windows)]
@@ -701,5 +782,34 @@ mod tests {
         if let Some(l) = detect_os_locale() {
             assert_eq!(normalize(&l).as_deref(), Some(l.as_str()));
         }
+        for l in detect_os_locales() {
+            assert_eq!(normalize(&l).as_deref(), Some(l.as_str()));
+        }
+    }
+
+    /// The installer opens in the first OS language it has a catalogue for: a Swiss-French
+    /// display language is French, a German display language with French listed second is
+    /// French too, and nothing it knows falls back to the display language (then English).
+    #[test]
+    fn the_first_os_language_with_a_catalogue_wins() {
+        let avail = vec!["en".to_string(), "fr".to_string()];
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            pick_os_language(&s(&["fr-CH"]), &avail).as_deref(),
+            Some("fr-CH")
+        );
+        assert_eq!(
+            pick_os_language(&s(&["de-DE", "fr-FR"]), &avail).as_deref(),
+            Some("fr-FR")
+        );
+        assert_eq!(
+            pick_os_language(&s(&["de-DE", "en-US"]), &avail).as_deref(),
+            Some("en-US")
+        );
+        assert_eq!(
+            pick_os_language(&s(&["de-DE"]), &avail).as_deref(),
+            Some("de-DE")
+        );
+        assert_eq!(pick_os_language(&[], &avail), None);
     }
 }

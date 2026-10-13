@@ -12,7 +12,7 @@
 # app.id also keys the uninstall entry and the upgrade check, so it must not drift again.
 id        = "com.bettermm.desktop"
 name      = "Better Mods Manager"
-version   = "1.0.0"
+version   = "1.0.2"
 publisher = "BetterCommunity"
 homepage  = "https://github.com/FreeProject089/BetterModsManager"
 platforms = ["windows"]
@@ -53,6 +53,9 @@ main_exe         = "better-mods-manager.exe"   # shortcuts + bmm:// protocol
 protocol         = "bmm"                        # registers bmm:// deep links
 create_shortcuts = true
 desktop_shortcut = true
+# "Start with Windows" on the Location step, unticked: BMM has no tray mode, so starting it at
+# every sign-in opens a window nobody asked for unless the person wants exactly that.
+autostart        = false
 allow_portable   = true
 
 # ─── Package signature (trust) ───────────────────────────────────────
@@ -130,16 +133,27 @@ enabled  = true
 file     = "installer-handoff.json"
 location = "app_data"
 
-# ─── Configuration page headings, in display order ───────────────────
+# ─── Setup steps, in display order ───────────────────────────────────
+# Each group is ONE step of the installer. A "Custom" install shows every step; a
+# "Recommended" install shows only the steps marked `always_ask` (and any step holding a
+# required choice) and takes the defaults for the rest, which the Welcome page lists.
 [[setup_group]]
 id          = "look"
 label       = "Language & appearance"
-description = "How BMM looks the first time it opens."
+description = "How BMM looks the first time it opens. Both can be changed at any time in Settings."
 
+[[setup_group]]
+id          = "laya"
+label       = "Laya, the offline assistant"
+description = "Laya suggests tags, recognises a text's language and checks a bug report before you send it. It runs on this PC."
+
+# The cookie-banner step: always asked, even in a Recommended install, because only the
+# person installing can decide what leaves their PC.
 [[setup_group]]
 id          = "privacy"
 label       = "Privacy & data"
-description = "What BMM may send off this PC. Options that send data carry an orange mark."
+description = "What BMM may send off this PC. Your answer here is final: BMM does not ask again, and every item can be changed later in Settings → Privacy. The Privacy Policy lists every connection BMM makes, to whom, and how long data is kept."
+always_ask  = true
 
 [[setup_group]]
 id          = "guidance"
@@ -148,12 +162,8 @@ description = "The tutorial, the Tasky mascot and in-app tips."
 
 [[setup_group]]
 id          = "behaviour"
-label       = "Behaviour"
-
-[[setup_group]]
-id          = "content"
-label       = "Starter content"
-description = "Extra content copied in on first launch."
+label       = "Behaviour & starter content"
+description = "How BMM works with your files, and what it adds the first time it opens."
 
 [[setup_group]]
 id          = "security"
@@ -171,22 +181,34 @@ default     = "auto"                 # "auto" follows the installer's language (
 maps_to     = "settings.language"
 group       = "look"
 
+[[setup_option.cards]]
+value       = "auto"
+recommended = true
+
+[[setup_option.cards]]
+value       = "en"
+
+[[setup_option.cards]]
+value       = "fr"
+
 [[setup_option]]
 id          = "theme"
 type        = "swatch"
 label_key   = "setup.theme"
 label       = "Theme"
-description  = "Starting look. Every one of these ships with BMM, and you can change it at any time in Settings."
+description  = "Starting look. Every one of these ships with BMM. The installer pre-selects Daylight when Windows is in light mode."
 # Ids, not display names: they are written straight into settings.active_theme, and the
 # app resolves them against builtin-themes/. A display name would drift the moment a
 # preset is renamed.
 choices     = ["bmm-default", "bmm-sombre", "bmm-void", "bmm-white", "bmm-discord", "bmm-orange", "bmm-spotify", "bmm-brutal", "bmm-claude", "bmm-nord", "bmm-sakura", "bmm-vscode", "bmm-macos"]
 default     = "bmm-default"
+# Windows in light mode (Settings → Personalisation → Colours): start on the light theme.
+default_light = "bmm-white"
 maps_to     = "settings.active_theme"
 group       = "look"
-# Offer it once more on the final page — a theme is a decision about a picture,
-# and that is the first moment the user has nothing else to think about.
-show_at_end = true
+# Asked once, on its own step with large previews. It used to be offered a second time over
+# the Done page (`show_at_end`), which read as the installer forgetting the first answer.
+show_at_end = false
 
 # Four colours per theme, in order: background · surface · accent · text, read from each
 # preset's own tokens (--bmm-bg-base, --bmm-bg-elevated, --bmm-accent, --bmm-text-primary).
@@ -228,15 +250,92 @@ required    = true
 require_scroll = true
 maps_to     = ["settings.tos_accepted", "settings.privacy_accepted"]
 
+# « Laya hors ligne »: the Laya classifier run INSIDE BMM (src-tauri/src/commands/ai_embedded.rs).
+# ON by default, and not a `sends_data` option: inference is local, no server, no request — the
+# only network use is downloading the pinned model pack during setup (from GitHub). Picked = the
+# pack below is installed (`installs`) AND BMM's master switch is on with the embedded engine as
+# the provider (installer_handoff.rs → ai_core::apply_installer_choice); every feature still waits
+# for a click. "Not now" = no model and the AI features off. The key stays `ai_features` so the
+# handoff keeps its meaning for BMM. Scripted: `--set=ai_features=false`.
 [[setup_option]]
-id          = "skip_tutorial"
+id          = "ai_features"
 type        = "bool"
-label_key   = "setup.skipTutorial"
-label       = "Skip the interactive tutorial"
-description  = "Don't show the guided tour the first time BMM opens."
-default     = false
-maps_to     = "settings.skip_tutorial"
-group       = "guidance"
+label_key   = "setup.aiFeatures"
+label       = "Laya offline (local AI, nothing sent)"
+description  = "Laya runs on this PC: when you use it, nothing leaves the PC and no server is involved. Nothing runs in the background."
+default     = true
+maps_to     = "settings.ai_features"
+group       = "laya"
+sends_data  = false
+installs    = "laya-offline"
+
+[[setup_option.cards]]
+value       = "true"
+label       = "Install Laya offline"
+description = "A 327 MB download from the project's GitHub releases during setup (404 MB on disk), checked against its pinned SHA-256 before it is unpacked. GitHub sees your IP address, as for any download."
+recommended = true
+
+[[setup_option.cards]]
+value       = "false"
+label       = "Not now"
+description = "No model is installed and the AI features stay off. Settings → AI can download it later, or use another provider."
+
+# ─── Privacy: one choice, the way a cookie banner asks it ──────────────────────────────
+# Three cards. « Essential only » and « Accept all » decide every option they list; the
+# options themselves (below) appear only under « Customize », starting from the card that was
+# picked before. No default: nothing is pre-selected, and Install stays disabled until one is
+# picked — consent that was never actively given is not consent.
+#
+# The answer is written as settings.privacy_choice, and BMM treats it as the decision it is
+# (src-tauri/src/commands/installer_handoff.rs): with a privacy_choice present, telemetry=true
+# is consent and BMM's own consent dialog does not run; telemetry=false is a recorded refusal.
+[[setup_option]]
+id          = "privacy_choice"
+type        = "select"
+label_key   = "setup.privacyChoice"
+label       = "What may BMM send?"
+description  = "Whatever you pick, BMM checks for updates and talks to the services you use yourself (catalogues, repositories, BetterCommunity, downloads); each of those connections is listed in the Privacy Policy."
+choices     = ["essential", "all", "custom"]
+default     = ""
+required    = true
+maps_to     = "settings.privacy_choice"
+group       = "privacy"
+
+[[setup_option.cards]]
+value       = "essential"
+label       = "Essential only"
+description = "No statistics, no telemetry, no session replay, no Discord status. BMM only makes the connections it needs to work: update checks and what you ask it to fetch."
+sets        = [
+  { option = "telemetry", value = false },
+  { option = "discord_rpc", value = false },
+  { option = "auto_update", value = true },
+]
+
+[[setup_option.cards]]
+value       = "all"
+label       = "Accept all"
+description = "Usage statistics, performance, live error reports, Laya statistics, masked session replay and Discord Rich Presence. Telemetry goes to telemetry.bettercommunity.ch with your Creator ID and IP address, and is kept 180 days. Not included: the weekly hardware report (serial numbers, machine UUID, MAC addresses), which only Customize can turn on."
+# The weekly hardware report is NOT part of « Accept all » (owner decision, Oct 2026): precise
+# hardware identifiers are asked for on their own, under « Customize », exactly as BMM's own
+# « Turn all on » leaves them off. Written `false` explicitly so the card decides it whatever
+# was answered before, and Customize opened from this card starts with it off.
+sets        = [
+  { option = "telemetry", value = true },
+  { option = "telemetry_usage", value = true },
+  { option = "telemetry_perf", value = true },
+  { option = "telemetry_live_errors", value = true },
+  { option = "telemetry_laya", value = true },
+  { option = "session_recorder", value = true },
+  { option = "telemetry_bench", value = false },
+  { option = "discord_rpc", value = true },
+  { option = "auto_update", value = true },
+]
+
+[[setup_option.cards]]
+value       = "custom"
+label       = "Customize"
+description = "Choose each category yourself. Each one says what it sends and to whom."
+custom      = true
 
 [[setup_option]]
 id          = "telemetry"
@@ -244,32 +343,27 @@ type        = "bool"
 label_key   = "setup.telemetry"
 label       = "Usage & diagnostic telemetry"
 # Said as it is, checked against the sender (src-tauri/src/commands/analytics.rs,
-# frontend/src/core/analytics.ts). "Anonymous" was not true: every batch carries the
-# Creator ID, a stable identifier derived from this PC, and the public IP address. The long
-# per-category list now lives in the Privacy Policy and in the child rows below, one line each.
-description  = "Ticking it only pre-selects: BMM asks on its own consent screen before sending anything. Includes your Creator ID (a stable ID for this PC) and your IP address. Full list in the Privacy Policy."
-# OPT-IN. Unticked is the whole consent story here: nothing is collected, and BMM's own
-# consent dialog never has to nag. Ticked is only a PRE-SELECTION: BMM reads it as
-# "start my consent dialog with Yes filled in", never as consent itself
-# (src-tauri/src/commands/installer_handoff.rs).
+# frontend/src/core/analytics.ts). "Anonymous" would not be true: every batch carries the
+# Creator ID, a stable identifier derived from this PC, and the public IP address (truncated on
+# the server).
+description  = "Sent to telemetry.bettercommunity.ch with your Creator ID (a stable ID for this PC), a random install ID and your IP address; kept 180 days. Turning it on is your consent: BMM does not ask again. Pick the categories with « Choose »."
+# OPT-IN. Off unless the privacy step turns it on ("Accept all", or Customize).
 default     = false
 maps_to     = "settings.telemetry"
 group       = "privacy"
 sends_data  = true
 
 # ─── Telemetry categories (children of `telemetry`) ───────────────────────────────────
-# `parent = "telemetry"`: shown behind the « Choisir » link of the telemetry row, only while
-# it is ticked. While telemetry is OFF every one of them is off and written `false` in the
-# handoff, whatever `default` says. Ticking telemetry turns each on at its `default`: all ON
-# ("tick one box, share everything listed"), EXCEPT the weekly hardware report, which stays
-# opt-in because it sends precise hardware identifiers. BMM reads these keys only when
-# `telemetry` is true, and nothing is sent unless consent is given in BMM itself.
+# Shown behind the « Choisir » link of the telemetry row, only while it is on. While telemetry
+# is OFF every one of them is off and written `false` in the handoff, whatever `default` says.
+# Turning telemetry on turns each on at its `default`: all ON, EXCEPT the weekly hardware
+# report, which stays opt-in because it sends precise hardware identifiers.
 [[setup_option]]
 id          = "telemetry_usage"
 type        = "bool"
 label_key   = "setup.telemetryUsage"
 label       = "Usage statistics"
-description  = "Pages and features used, clicks, session length. Never what you type."
+description  = "Pages and features used, button labels clicked, links opened, session length, and a description of this PC (OS, CPU, RAM, GPU, screens, disks). Never what you type."
 default     = true
 maps_to     = "settings.telemetry_usage"
 group       = "privacy"
@@ -294,7 +388,7 @@ id          = "telemetry_live_errors"
 type        = "bool"
 label_key   = "setup.telemetryLiveErrors"
 label       = "Errors & crashes, live"
-description  = "Error message, where it happened, BMM version and OS, sent within seconds. Secrets and personal paths are removed first."
+description  = "Error message, where it happened, BMM version and OS, sent within seconds, plus warning and error lines of the session log. Secrets and personal paths are removed first."
 default     = true
 maps_to     = "settings.telemetry_live_errors"
 group       = "privacy"
@@ -317,8 +411,7 @@ sends_data  = true
 # session_recorder=false into localStorage bmm_replay_enabled='0' (frontend/src/ui/app.ts),
 # and bmm_replay_enabled is the switch for the session replay UPLOADED WITH TELEMETRY
 # (frontend/src/core/analytics.ts, startSessionReplay). The local crash recorder is a
-# different setting (bmm_watcher_*) that this option never touched. The id and maps_to
-# stay (BMM reads that key); the words say what it does.
+# different setting (bmm_watcher_*) that this option never touched.
 [[setup_option]]
 id          = "session_recorder"
 type        = "bool"
@@ -331,64 +424,108 @@ group       = "privacy"
 parent      = "telemetry"
 sends_data  = true
 
-# The weekly hardware report. It used to ride along with the telemetry box without ever
-# being asked about: BMM's own default was "on", so a ticked telemetry box also sent
-# motherboard and disk serial numbers, the machine UUID and MAC addresses every 7 days.
-# It stays its own question: a child of telemetry, but OFF even when telemetry is ticked
-# (not part of "all on"), and off on BMM's side too (localStorage bmm_telemetry_bench,
-# absent = off).
+# The weekly hardware report: a child of telemetry, but OFF even when telemetry is on (not
+# part of a plain "telemetry on"), and off on BMM's side too (localStorage bmm_telemetry_bench,
+# absent = off). « Accept all » leaves it off too: only « Customize » turns it on.
 [[setup_option]]
 id          = "telemetry_bench"
 type        = "bool"
 label_key   = "setup.telemetryBench"
 label       = "Weekly hardware report"
-description  = "A weekly benchmark plus precise hardware IDs (serial numbers, machine UUID, MAC addresses). Off unless you tick it."
+description  = "A weekly benchmark plus precise hardware IDs (serial numbers, machine UUID, MAC addresses). Off unless you turn it on."
 default     = false
 maps_to     = "settings.telemetry_bench"
 group       = "privacy"
 parent      = "telemetry"
 sends_data  = true
 
-# « Laya hors ligne »: the Laya classifier run INSIDE BMM (src-tauri/src/commands/ai_embedded.rs).
-# ON by default, and not a `sends_data` option: inference is local, no server, no request — the
-# only network use is downloading the pinned model pack during setup. Ticked = the pack below is
-# installed (`installs`) AND BMM's master switch is on with the embedded engine as the provider
-# (installer_handoff.rs → ai_core::apply_installer_choice); every feature still waits for a click.
-# Unticked = no model and the AI features off. The key stays `ai_features` so the handoff keeps
-# its meaning for BMM. Scripted: `--set=ai_features=false`.
-[[setup_option]]
-id          = "ai_features"
-type        = "bool"
-label_key   = "setup.aiFeatures"
-label       = "Laya offline (local AI, nothing sent)"
-description  = "On by default: it is local — nothing leaves this PC. Installs the Laya classifier inside BMM (a 327 MB download during setup, 404 MB on disk, verified against its pinned SHA-256) so that, when you click Suggest, BMM can rank tags among yours, recognise a text's language and check a bug report before you send it — offline, without any server. Nothing runs in the background. Untick it to install no model: the AI features stay off, and Settings → AI can download the model later or use another provider."
-default     = true
-maps_to     = "settings.ai_features"
-group       = "privacy"
-sends_data  = false
-installs    = "laya-offline"
-
-# ─── Optional preferences pre-set at install (each maps to a real BMM setting) ───
-# Defaults MATCH BMM's own defaults, so leaving them alone changes nothing; the user
-# can flip any of them here to have BMM start already configured, or change them later
-# in Settings. Absent from the handoff → BMM keeps its default.
 [[setup_option]]
 id          = "discord_rpc"
 type        = "bool"
 label_key   = "setup.discordRpc"
 label       = "Discord Rich Presence"
-# "No data leaves your machine beyond Discord's own status" undersold it: the status IS
-# data, public to anyone who can see the profile (src-tauri/src/commands/discord.rs).
-description  = "Off by default, like BMM itself: tick it to turn it on. Shows on your Discord profile, to anyone who can see it: the name of your active BMM profile, how many mods are active, your Creator ID and a link that contains it. Sent through the Discord app running on this PC."
+# The status IS data, public to anyone who can see the profile (src-tauri/src/commands/discord.rs).
+description  = "Shows on your Discord profile, to anyone who can see it: the name of your active BMM profile, how many mods are active, your Creator ID and a link that contains it. Sent through the Discord app running on this PC."
 default     = false                  # matches BMM's own default (state.rs: discord_rpc_enabled = false)
 maps_to     = "settings.discord_rpc"
 group       = "privacy"
 sends_data  = true
 
-# ─── Tasky & in-app guidance ────────────────────────────────────────────────────
-# All four are ON in BMM, so leaving them alone changes nothing. They are here because
-# they are the first things a returning user turns off, and doing it before the first
-# launch beats hunting for four toggles afterwards.
+# Automatic update checks (BMM frontend/src/ui/update-notes.ts, localStorage
+# bmm_auto_update_enabled, absent = on). Mirrored by the handoff consumer only when OFF.
+[[setup_option]]
+id          = "auto_update"
+type        = "bool"
+label_key   = "setup.autoUpdate"
+label       = "Check for updates automatically"
+description  = "At each start BMM asks GitHub (api.github.com), and bettercommunity.ch if GitHub does not answer, whether a newer version exists. Only your IP address and the app name are sent. Off: you check by hand in Settings."
+default     = true
+maps_to     = "settings.auto_update"
+group       = "privacy"
+
+# ─── Help & guidance: one choice, with the details under « Choose myself » ────────────
+[[setup_option]]
+id          = "guidance_level"
+type        = "select"
+label_key   = "setup.guidanceLevel"
+label       = "How much help do you want?"
+choices     = ["full", "light", "none", "custom"]
+default     = "full"
+group       = "guidance"
+
+[[setup_option.cards]]
+value       = "full"
+label       = "Guide me"
+description = "The interactive tour on first launch, Tasky the mascot with its help bubbles, and in-app tips."
+recommended = true
+sets        = [
+  { option = "skip_tutorial", value = false },
+  { option = "tasky_visible", value = true },
+  { option = "tasky_tooltip", value = true },
+  { option = "tasky_animated", value = true },
+  { option = "tips_visible", value = true },
+]
+
+[[setup_option.cards]]
+value       = "light"
+label       = "Just tips"
+description = "No tour and no mascot; the small explanatory tips stay."
+sets        = [
+  { option = "skip_tutorial", value = true },
+  { option = "tasky_visible", value = false },
+  { option = "tasky_tooltip", value = false },
+  { option = "tasky_animated", value = false },
+  { option = "tips_visible", value = true },
+]
+
+[[setup_option.cards]]
+value       = "none"
+label       = "I know BMM"
+description = "No tour, no mascot, no tips. Warnings are always shown."
+sets        = [
+  { option = "skip_tutorial", value = true },
+  { option = "tasky_visible", value = false },
+  { option = "tasky_tooltip", value = false },
+  { option = "tasky_animated", value = false },
+  { option = "tips_visible", value = false },
+]
+
+[[setup_option.cards]]
+value       = "custom"
+label       = "Choose myself"
+description = "Set each item below."
+custom      = true
+
+[[setup_option]]
+id          = "skip_tutorial"
+type        = "bool"
+label_key   = "setup.skipTutorial"
+label       = "Skip the interactive tutorial"
+description  = "Don't show the guided tour the first time BMM opens."
+default     = false
+maps_to     = "settings.skip_tutorial"
+group       = "guidance"
+
 [[setup_option]]
 id          = "tasky_visible"
 type        = "bool"
@@ -434,7 +571,7 @@ id          = "smart_io"
 type        = "bool"
 label_key   = "setup.smartIo"
 label       = "Smart I/O (recommended)"
-description  = "Speeds up mod install/enable/disable by batching disk operations and picking the fastest strategy for your drive. On by default."
+description  = "Speeds up mod install/enable/disable by batching disk operations and picking the fastest strategy for your drive."
 default     = true                   # matches BMM's default
 maps_to     = "settings.smart_io"
 group       = "behaviour"
@@ -444,36 +581,22 @@ id          = "sound_effects"
 type        = "bool"
 label_key   = "setup.soundEffects"
 label       = "Interface sound effects"
-description  = "Subtle click/confirm sounds in the UI. On by default."
+description  = "Subtle click/confirm sounds in the UI."
 default     = true                   # matches BMM's default
 maps_to     = "settings.sound_effects"
 group       = "behaviour"
 
-# System Access Control — how much of the filesystem BMM's own operations may reach.
-# "full" = normal (manage mods anywhere you point it); "limited" = confined to the
-# folders you configure. Maps to BMM's fs_security_mode setting.
-[[setup_option]]
-id          = "system_access"
-type        = "select"
-label_key   = "setup.systemAccess"
-label       = "System Access Control"
-description  = "How much filesystem access BMM's operations get. 'Full access' is the normal mode. 'Limited' confines file operations to the folders you configure — safer, but some flows may prompt more. You can change this later in Settings."
-choices     = ["full", "limited"]
-default     = "full"
-maps_to     = "settings.fs_security_mode"
-group       = "security"
-
-# Pre-import: bundled content the installer seeds on first launch. Checked by
-# default; unchecking it means BMM starts with only its built-in content.
+# Pre-import: bundled content the installer seeds on first launch (copied from the install
+# folder, nothing downloaded).
 [[setup_option]]
 id          = "import_themes"
 type        = "bool"
 label_key   = "setup.importThemes"
 label       = "Import the starter theme pack"
-description  = "Adds a curated set of ready-made themes the first time BMM opens. Uncheck to keep only the built-in themes."
+description  = "Adds a curated set of ready-made themes the first time BMM opens. Off keeps only the built-in themes."
 default     = true
 maps_to     = "settings.import_starter_themes"
-group       = "content"
+group       = "behaviour"
 
 [[setup_option]]
 id          = "import_languages"
@@ -483,28 +606,66 @@ label       = "Import extra language packs"
 description  = "Installs additional community translations beyond the built-in English & French (those two are always installed)."
 default     = true
 maps_to     = "settings.import_extra_languages"
-group       = "content"
+group       = "behaviour"
+
+# System Access Control — how much of the filesystem BMM's own operations may reach.
+# Maps to BMM's fs_security_mode setting.
+[[setup_option]]
+id          = "system_access"
+type        = "select"
+label_key   = "setup.systemAccess"
+label       = "System Access Control"
+description  = "How much filesystem access BMM's own operations get. You can change this later in Settings."
+choices     = ["full", "limited"]
+default     = "full"
+maps_to     = "settings.fs_security_mode"
+group       = "security"
+
+[[setup_option.cards]]
+value       = "full"
+description = "The normal mode: BMM manages mods wherever you point it."
+recommended = true
+
+[[setup_option.cards]]
+value       = "limited"
+description = "File operations stay inside the folders you configure. Safer, but some actions ask for confirmation more often."
 
 # ─── Security: the browser policy BMM starts with ──────────────────
-# A preset ID, never a policy string. An installer dropdown that could type a raw CSP
-# would be a way to hand the app a policy nobody reviewed; a preset id is a choice among
-# values BMM already ships and validates. "custom" writes nothing and leaves the field in
+# A preset ID, never a policy string. An installer choice that could type a raw CSP would be
+# a way to hand the app a policy nobody reviewed; a preset id is a choice among values BMM
+# already ships and validates. "custom" writes nothing and leaves the field in
 # Settings → Security for someone who wants to author one by hand.
 #
 # Whatever is chosen applies from the SECOND launch: a CSP meta tag is only honoured while
 # the document is parsed, so the value written on first run is read by the loader the next
-# time BMM opens. Saying so here matters — an option that appears to do nothing for one
-# session looks broken.
+# time BMM opens.
 [[setup_option]]
 id          = "csp_preset"
 type        = "select"
 label_key   = "setup.cspPreset"
 label       = "Browser security policy"
-description  = "Extra restrictions on what BMM may load and run, added on top of the policy it ships with — these can only make it stricter, never looser. Default keeps the shipped policy, which already refuses inline scripts. « Pin the network » stops the app contacting hosts it does not need; « Strict » also blocks third-party scripts, which turns off embedded YouTube videos and the BetaHub feedback widget. Changeable at any time in Settings → Security."
+description  = "Extra restrictions on what BMM may load and run, added on top of the policy it ships with: they can only make it stricter. Applies from the second launch; changeable at any time in Settings → Security."
 choices     = ["none", "network", "strict", "custom"]
 default     = "none"
 maps_to     = "settings.csp_preset"
 group       = "security"
+
+[[setup_option.cards]]
+value       = "none"
+description = "Keeps the shipped policy, which already refuses inline scripts."
+recommended = true
+
+[[setup_option.cards]]
+value       = "network"
+description = "Stops the app contacting hosts it does not need."
+
+[[setup_option.cards]]
+value       = "strict"
+description = "Also blocks third-party scripts and embeds, which turns off embedded YouTube and Spotify players."
+
+[[setup_option.cards]]
+value       = "custom"
+description = "Writes nothing now: you author your own policy later in Settings → Security."
 
 # ─── Post-install launch (offered on the Done page) ──────────────────
 # The main app is pre-checked; the optional sidecar is opt-in and only shown

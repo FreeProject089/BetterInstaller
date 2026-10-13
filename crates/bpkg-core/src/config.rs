@@ -87,12 +87,22 @@ pub struct SetupGroup {
     pub label: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// Each group is a step of its own in the installer. In a "Recommended" install only the
+    /// groups marked `always_ask` are shown (the rest take their defaults); a "Custom" install
+    /// shows them all. A group whose answer cannot be defaulted — a privacy choice, which must
+    /// be the person's own — is the one to mark.
+    #[serde(default)]
+    pub always_ask: bool,
 }
 
 /// Hex colours (e.g. "#0d1117") overriding the installer's built-in palette. Any
 /// field left out keeps the default. Lets a project re-skin the installer entirely.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ThemeConfig {
+    /// `"auto"` (the default) follows the OS light/dark setting; `"dark"` or `"light"` pins
+    /// one. The colours below override whichever palette is in use.
+    #[serde(default)]
+    pub mode: Option<String>,
     pub bg: Option<String>,
     pub panel: Option<String>,
     pub panel2: Option<String>,
@@ -418,7 +428,103 @@ impl InstallerConfig {
                 ));
             }
         }
-        self.validate_option_parents()
+        self.validate_option_parents()?;
+        self.validate_cards()
+    }
+
+    /// `cards`: on a `bool` or `select` option, each a value it can take; a preset's `sets`
+    /// names real, answerable options with values they can take; one `custom` card at most;
+    /// an option is set by one preset only; `default_light` is one of the choices.
+    fn validate_cards(&self) -> std::result::Result<(), String> {
+        let mut governed: Vec<(String, String)> = Vec::new();
+        for o in &self.setup_options {
+            if let Some(dl) = &o.default_light {
+                let ok = dl
+                    .as_str()
+                    .is_some_and(|v| o.choices.iter().any(|c| c == v));
+                if !ok {
+                    return Err(format!(
+                        "setup_option {}: default_light must be one of its choices",
+                        o.id
+                    ));
+                }
+            }
+            if o.cards.is_empty() {
+                continue;
+            }
+            let values: Vec<String> = match o.kind {
+                SetupOptionKind::Bool => vec!["true".into(), "false".into()],
+                SetupOptionKind::Select => o.choices.clone(),
+                _ => {
+                    return Err(format!(
+                        "setup_option {}: `cards` needs a bool or select option",
+                        o.id
+                    ))
+                }
+            };
+            if o.cards.iter().filter(|c| c.custom).count() > 1 {
+                return Err(format!(
+                    "setup_option {}: more than one `custom` card",
+                    o.id
+                ));
+            }
+            for c in &o.cards {
+                if !values.contains(&c.value) {
+                    return Err(format!(
+                        "setup_option {}: card {:?} is not one of its values {values:?}",
+                        o.id, c.value
+                    ));
+                }
+                if c.custom && !c.sets.is_empty() {
+                    return Err(format!(
+                        "setup_option {}: the custom card {:?} cannot also set answers",
+                        o.id, c.value
+                    ));
+                }
+                for s in &c.sets {
+                    let t = self
+                        .setup_options
+                        .iter()
+                        .find(|t| t.id == s.option)
+                        .ok_or_else(|| {
+                            format!(
+                                "setup_option {}: card {:?} sets {:?}, which is no [[setup_option]]",
+                                o.id, c.value, s.option
+                            )
+                        })?;
+                    let is_preset = t.cards.iter().any(|k| !k.sets.is_empty());
+                    if t.id == o.id || matches!(t.kind, SetupOptionKind::License) || is_preset {
+                        return Err(format!(
+                            "setup_option {}: card {:?} cannot set {:?} (itself, a license or another preset)",
+                            o.id, c.value, s.option
+                        ));
+                    }
+                    let fits = match t.kind {
+                        SetupOptionKind::Bool => s.value.is_boolean(),
+                        _ => s
+                            .value
+                            .as_str()
+                            .is_some_and(|v| t.choices.iter().any(|c| c == v)),
+                    };
+                    if !fits {
+                        return Err(format!(
+                            "setup_option {}: card {:?} gives {:?} a value it cannot take: {}",
+                            o.id, c.value, s.option, s.value
+                        ));
+                    }
+                    if let Some((other, _)) = governed.iter().find(|(_, g)| g == &s.option) {
+                        if other != &o.id {
+                            return Err(format!(
+                                "setup_option {:?} is set by two presets ({other} and {})",
+                                s.option, o.id
+                            ));
+                        }
+                    }
+                    governed.push((o.id.clone(), s.option.clone()));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `setup_option.parent`: one level, bool under bool, pointing at an option that exists.
@@ -664,13 +770,34 @@ impl InstallerConfig {
                     o.description.as_deref(),
                 );
             }
+            for card in &o.cards {
+                // A bool's card titles have no `choices` entry to hang off.
+                if matches!(o.kind, SetupOptionKind::Bool) {
+                    push(
+                        format!("options.{}.choices.{}", o.id, card.value),
+                        card.label.as_deref(),
+                    );
+                }
+                if card.description.is_some() {
+                    push(
+                        format!("options.{}.cards.{}", o.id, card.value),
+                        card.description.as_deref(),
+                    );
+                }
+            }
             if matches!(o.kind, SetupOptionKind::Select | SetupOptionKind::Swatch) {
                 for c in &o.choices {
                     let preview = o
                         .previews
                         .iter()
                         .find(|p| &p.value == c)
-                        .and_then(|p| p.label.as_deref());
+                        .and_then(|p| p.label.as_deref())
+                        .or_else(|| {
+                            o.cards
+                                .iter()
+                                .find(|k| &k.value == c)
+                                .and_then(|k| k.label.as_deref())
+                        });
                     push(format!("options.{}.choices.{c}", o.id), preview);
                 }
             }
@@ -746,6 +873,11 @@ pub struct InstallSection {
     /// Also drop a desktop shortcut (Start Menu is implied by create_shortcuts).
     #[serde(default)]
     pub desktop_shortcut: bool,
+    /// "Start with Windows": `None` (the default) does not offer it; `Some(default)` adds
+    /// the choice to the Location step, ticked or not. Picked = a per-user `Run` entry
+    /// (HKCU, no elevation) that the uninstaller removes. Needs `main_exe`.
+    #[serde(default)]
+    pub autostart: Option<bool>,
 }
 
 impl Default for InstallSection {
@@ -755,6 +887,7 @@ impl Default for InstallSection {
             protocol: None,
             create_shortcuts: true,
             desktop_shortcut: false,
+            autostart: None,
         }
     }
 }
@@ -850,6 +983,18 @@ pub struct SetupOption {
     /// the app means by them.
     #[serde(default)]
     pub previews: Vec<SetupChoicePreview>,
+    /// For `select` and `bool`: show the choices as cards, one per value, each with a line
+    /// saying what picking it does — rather than a dropdown or a checkbox. Order follows
+    /// `choices` (a `bool` uses the values "true" and "false"). A card may also be a PRESET:
+    /// `sets` lists the answers it gives to other options, and those options are then hidden
+    /// while it is picked; a `custom` card shows them instead, starting from the answers the
+    /// previous card gave. Checked at load.
+    #[serde(default)]
+    pub cards: Vec<ChoiceCard>,
+    /// For `swatch`/`select`: the default used instead of `default` when the OS is in light
+    /// mode (a light theme for someone who reads everything in light). Must be a choice.
+    #[serde(default)]
+    pub default_light: Option<serde_json::Value>,
     /// Ask again on the final page, once the install has actually succeeded.
     ///
     /// For a choice like a theme, deciding on a picture is easier than deciding on
@@ -920,6 +1065,11 @@ pub fn effective_value(
     o: &SetupOption,
     chosen: &std::collections::BTreeMap<String, serde_json::Value>,
 ) -> serde_json::Value {
+    // A preset card that is picked decides the options it lists, whatever was answered
+    // for them before: that is what makes "Essential only" mean essential only.
+    if let Some(v) = preset_value_for(options, &o.id, chosen) {
+        return v;
+    }
     let own = || {
         chosen
             .get(&o.id)
@@ -929,13 +1079,12 @@ pub fn effective_value(
     let Some(pid) = o.parent.as_deref() else {
         return own();
     };
+    // The parent's EFFECTIVE value: a parent a preset turned off takes its children with it.
     let parent_on = options
         .iter()
-        .find(|p| p.id == pid)
+        .find(|p| p.id == pid && p.parent.is_none())
         .map(|p| {
-            chosen
-                .get(&p.id)
-                .unwrap_or(&p.default)
+            effective_value(options, p, chosen)
                 .as_bool()
                 .unwrap_or(false)
         })
@@ -945,6 +1094,74 @@ pub fn effective_value(
     } else {
         serde_json::Value::Bool(false)
     }
+}
+
+/// The answer of an option shown as cards, as the string its card values are written in:
+/// the answer, else the default.
+pub fn card_value(
+    o: &SetupOption,
+    chosen: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> String {
+    match chosen.get(&o.id).unwrap_or(&o.default) {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// The card currently picked on a cards option, if any.
+pub fn picked_card<'a>(
+    o: &'a SetupOption,
+    chosen: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Option<&'a ChoiceCard> {
+    if o.cards.is_empty() {
+        return None;
+    }
+    let v = card_value(o, chosen);
+    o.cards.iter().find(|c| c.value == v)
+}
+
+/// What a picked preset card says option `id` is, if a picked card governs it.
+pub fn preset_value_for(
+    options: &[SetupOption],
+    id: &str,
+    chosen: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Option<serde_json::Value> {
+    options.iter().filter(|p| p.id != id).find_map(|p| {
+        let card = picked_card(p, chosen)?;
+        card.sets
+            .iter()
+            .find(|s| s.option == id)
+            .map(|s| s.value.clone())
+    })
+}
+
+/// The options a cards option governs: every option any of its cards `sets`, plus their
+/// children (`parent`). These are the rows a `custom` card reveals.
+pub fn governed_by(options: &[SetupOption], preset: &SetupOption) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for c in &preset.cards {
+        for s in &c.sets {
+            if !out.contains(&s.option) {
+                out.push(s.option.clone());
+            }
+        }
+    }
+    let direct = out.clone();
+    for o in options {
+        if o.parent.as_ref().is_some_and(|p| direct.contains(p)) && !out.contains(&o.id) {
+            out.push(o.id.clone());
+        }
+    }
+    out
+}
+
+/// The preset (an option with `sets` cards) that governs `id`, if any.
+pub fn governing_preset<'a>(options: &'a [SetupOption], id: &str) -> Option<&'a SetupOption> {
+    options
+        .iter()
+        .filter(|p| p.id != id && p.cards.iter().any(|c| !c.sets.is_empty()))
+        .find(|p| governed_by(options, p).iter().any(|g| g == id))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -959,6 +1176,37 @@ pub enum SetupOptionKind {
     /// A grid of picture tiles → string. Same value shape as `select`; it differs
     /// only in being shown rather than named.
     Swatch,
+}
+
+/// One card of an option shown as `cards`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChoiceCard {
+    /// The option value this card picks (one of `choices`; "true"/"false" for a `bool`).
+    pub value: String,
+    /// Title of the card (English; catalogue key `options.<id>.choices.<value>`).
+    #[serde(default)]
+    pub label: Option<String>,
+    /// One line on what picking it does (catalogue key `options.<id>.cards.<value>`).
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Marked "Recommended" on screen.
+    #[serde(default)]
+    pub recommended: bool,
+    /// Picking this card shows the options its siblings' `sets` govern, to be answered one
+    /// by one. At most one per option, and it sets nothing itself.
+    #[serde(default)]
+    pub custom: bool,
+    /// The answers this card gives to other options. A list of tables rather than a map so
+    /// the schema can name its keys (a map's keys are data).
+    #[serde(default)]
+    pub sets: Vec<PresetValue>,
+}
+
+/// One answer a preset card gives: `{ option = "telemetry", value = false }`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresetValue {
+    pub option: String,
+    pub value: serde_json::Value,
 }
 
 /// One tile of a `swatch` option.
@@ -1096,6 +1344,7 @@ fn maximal() -> InstallerConfig {
             protocol: None,
             create_shortcuts: true,
             desktop_shortcut: false,
+            autostart: Some(false),
         },
         components: vec![ComponentSection {
             id: String::new(),
@@ -1123,6 +1372,18 @@ fn maximal() -> InstallerConfig {
                 label: None,
                 colors: vec![],
             }],
+            cards: vec![ChoiceCard {
+                value: String::new(),
+                label: None,
+                description: None,
+                recommended: false,
+                custom: false,
+                sets: vec![PresetValue {
+                    option: String::new(),
+                    value: serde_json::Value::Bool(false),
+                }],
+            }],
+            default_light: None,
             show_at_end: false,
             // A SCALAR on purpose. `default` is a free-form serde_json::Value, so an object
             // here would invent key paths under it that no schema declares.
@@ -1174,6 +1435,7 @@ fn maximal() -> InstallerConfig {
             allow_delta: true,
         }),
         theme: ThemeConfig {
+            mode: None,
             bg: None,
             panel: None,
             panel2: None,
@@ -1194,6 +1456,7 @@ fn maximal() -> InstallerConfig {
             id: String::new(),
             label: String::new(),
             description: None,
+            always_ask: false,
         }],
     }
 }
@@ -1337,10 +1600,14 @@ mod tests {
             .expect("BMM declares a theme option");
 
         assert!(matches!(theme.kind, SetupOptionKind::Swatch));
+        // Asked once, on its own step with large tiles: the second ask over the Done page
+        // read as the installer forgetting the first answer.
         assert!(
-            theme.show_at_end,
-            "the theme option asks for the final picker"
+            !theme.show_at_end,
+            "the theme is asked once, on the Language & appearance step"
         );
+        // A light default for a light Windows, and it is one of the choices.
+        assert_eq!(theme.default_light, Some(serde_json::json!("bmm-white")));
 
         // Every choice must have a tile, and every tile a known choice: a preview
         // for a value that is not offered is dead, and a value with no preview

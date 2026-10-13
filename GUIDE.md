@@ -79,7 +79,14 @@ is wrong, the app never finds it and **none of the first-run settings apply**.
 accent     = "#3b82f6"   # installer accent color
 logo       = "assets/logo.png"
 background = "assets/installer-bg.png"
+
+[theme]
+mode = "auto"            # auto (follow the OS light/dark app mode) | dark | light
 ```
+
+The installer has a dark and a light palette and, with `mode = "auto"` (the default), opens in
+the one Windows uses for apps (Settings → Personalisation → Colours). Any `[theme]` colour
+(`bg`, `panel`, `accent`, `text`, …) overrides that palette, in both modes.
 
 ### `[install]`
 
@@ -89,7 +96,14 @@ main_exe         = "myapp.exe"  # for shortcuts + protocol
 protocol         = "acme"                       # registers acme:// deep links
 create_shortcuts = true
 desktop_shortcut = true
+autostart        = false   # offers "Start with Windows", unticked (omit = not offered)
 ```
+
+A Custom install shows these on the **Location & components** step: the folder, the
+components, then "Start menu shortcut", "Desktop shortcut" and (with `autostart`) "Start with
+Windows", each with one line on what ticking it does. "Start with Windows" writes a per-user
+`HKCU\…\CurrentVersion\Run` value named after `app.id` (no elevation); the uninstaller always
+removes that value. A Recommended install uses the values above.
 
 > **Install location:** there is no `default_dir` setting. The installer ships an
 > `asInvoker` manifest (no UAC prompt) and always proposes the per-user root
@@ -218,6 +232,61 @@ stream to disk and are hashed on the way, so a large one never sits in memory.
 `required = true` blocks **Next/Install** until satisfied. `maps_to` keys are written
 flat into `settings` after stripping a leading `settings.` prefix.
 
+#### Choice cards and presets (`cards`)
+
+A `bool` or `select` option can be shown as **cards**, one per value, each with a title and a
+one-line consequence, instead of a switch or a dropdown:
+
+```toml
+[[setup_option]]
+id       = "privacy_choice"
+type     = "select"
+choices  = ["essential", "all", "custom"]
+default  = ""            # no card pre-selected …
+required = true          # … so the step cannot be passed until one is picked
+maps_to  = "settings.privacy_choice"
+group    = "privacy"
+[[setup_option.cards]]
+value       = "essential"
+label       = "Essential only"
+description = "No statistics, no telemetry …"
+sets        = [ { option = "telemetry", value = false } ]
+[[setup_option.cards]]
+value       = "all"
+label       = "Accept all"
+sets        = [ { option = "telemetry", value = true } ]
+[[setup_option.cards]]
+value       = "custom"
+label       = "Customize"
+custom      = true
+```
+
+- `recommended = true` adds a "Recommended" mark to a card.
+- A card with `sets` is a **preset**: while it is picked it decides the options it lists (and
+  their `parent` children), and those options are hidden. The `custom` card (one at most, with no
+  `sets`) shows them instead, starting from the answers of the card picked before it.
+- Checked at load: every card is a value of its option, every `sets` names a real option with a
+  value it can take, an option is governed by one preset only.
+- Translations: `options.<id>.choices.<value>` (title) and `options.<id>.cards.<value>` (line).
+
+`default_light = "<choice>"` on a `select`/`swatch` replaces `default` when the OS is in light
+mode (a light theme for someone who reads every app in light).
+
+#### Recommended or Custom install
+
+The Welcome page asks **how** to install. **Custom** shows a Location & components step, then
+one step per `[[setup_group]]`. **Recommended** lists what it will do (folder, components,
+downloads, shortcuts) and shows only the groups marked `always_ask = true`, or holding a
+required card choice with no default (a privacy choice must be the person's own); every other
+option takes its declared default.
+
+```toml
+[[setup_group]]
+id         = "privacy"
+label      = "Privacy & data"
+always_ask = true
+```
+
 **Pre-import options** are just `bool` options whose key the app honors:
 ```toml
 [[setup_option]]
@@ -231,7 +300,9 @@ maps_to = "settings.import_starter_themes"
 ### Languages: `[i18n]` and `[[setup_group]]`
 
 The installer opens in the OS language (Windows UI language; `LC_ALL`/`LC_MESSAGES`/`LANG`
-elsewhere), or the one given with `--lang=<tag>`, and offers a language picker in the
+elsewhere), or the one given with `--lang=<tag>`. On Windows, when it has no catalogue for the
+display language it takes the next language listed under Settings → Time & language that it
+does have (a German display language with French second opens in French), then English. It offers a language picker in the
 sidebar until the install starts. Switching re-words every screen at once, including the
 legal documents; a document whose text changed must be accepted again.
 

@@ -128,6 +128,32 @@ impl PlatformOps for WindowsOps {
         Ok(())
     }
 
+    fn set_run_at_login(&self, name: &str, exe: &Path) -> Result<()> {
+        const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+        // HKCU\...\Run: per user, read by Explorer at sign-in. The value is the quoted exe.
+        if !crate::config::is_valid_app_id(name) {
+            return Err(Error::Other(format!("not an app id: {name:?}")));
+        }
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let (run, _) = hkcu.create_subkey(RUN_KEY).map_err(Error::IoBare)?;
+        run.set_value(name, &format!("\"{}\"", exe.display()))
+            .map_err(Error::IoBare)?;
+        Ok(())
+    }
+
+    fn remove_run_at_login(&self, name: &str) -> Result<()> {
+        const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+        // One VALUE, never the key: the Run key holds every other program's entry.
+        if !crate::config::is_valid_app_id(name) {
+            return Ok(());
+        }
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(run) = hkcu.open_subkey_with_flags(RUN_KEY, winreg::enums::KEY_SET_VALUE) {
+            let _ = run.delete_value(name);
+        }
+        Ok(())
+    }
+
     fn unregister_protocol(&self, scheme: &str) -> Result<()> {
         // The scheme comes back from uninstall-info.json. An empty or odd one names
         // `Software\Classes` itself (or something under it that is not ours), and this is a

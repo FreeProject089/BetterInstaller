@@ -80,7 +80,15 @@ handoff est écrit dans `%APPDATA%/<id>/` ; si `id` est faux, l'app ne le trouve
 accent     = "#3b82f6"   # couleur d'accent de l'installeur
 logo       = "assets/logo.png"
 background = "assets/installer-bg.png"
+
+[theme]
+mode = "auto"            # auto (suit le mode clair/sombre des applis de l'OS) | dark | light
 ```
+
+L'installeur a une palette sombre et une claire et, avec `mode = "auto"` (le défaut), s'ouvre
+dans celle que Windows utilise pour les applis (Paramètres → Personnalisation → Couleurs). Toute
+couleur de `[theme]` (`bg`, `panel`, `accent`, `text`, …) remplace celle de la palette, dans les
+deux modes.
 
 ### `[install]`
 
@@ -90,7 +98,15 @@ main_exe         = "myapp.exe"  # pour les raccourcis + le protocole
 protocol         = "acme"                       # enregistre les deep links acme://
 create_shortcuts = true
 desktop_shortcut = true
+autostart        = false   # propose « Lancer avec Windows », décoché (absent = pas proposé)
 ```
+
+Une installation personnalisée les montre à l'étape **Emplacement et composants** : le
+dossier, les composants, puis « Raccourci dans le menu Démarrer », « Raccourci sur le Bureau » et
+(avec `autostart`) « Lancer avec Windows », chacun avec une ligne sur ce que cocher change.
+« Lancer avec Windows » écrit une valeur par-utilisateur `HKCU\…\CurrentVersion\Run` nommée
+d'après `app.id` (sans élévation) ; le désinstalleur retire toujours cette valeur. Une
+installation recommandée prend les valeurs ci-dessus.
 
 > **Emplacement d'installation :** il n'y a pas de réglage `default_dir`. L'installeur
 > livre un manifeste `asInvoker` (pas de prompt UAC) et propose toujours la racine
@@ -227,6 +243,64 @@ téléchargement et hachés au passage : un gros fichier ne tient jamais entier 
 `required = true` bloque **Suivant/Installer** tant que non satisfait. Les clés `maps_to`
 sont écrites à plat dans `settings` après retrait du préfixe `settings.`.
 
+#### Cartes de choix et préréglages (`cards`)
+
+Une option `bool` ou `select` peut s'afficher en **cartes**, une par valeur, chacune avec un
+titre et une ligne sur sa conséquence, au lieu d'un interrupteur ou d'un menu déroulant :
+
+```toml
+[[setup_option]]
+id       = "privacy_choice"
+type     = "select"
+choices  = ["essential", "all", "custom"]
+default  = ""            # aucune carte présélectionnée…
+required = true          # …donc l'étape ne se passe pas tant qu'aucune n'est choisie
+maps_to  = "settings.privacy_choice"
+group    = "privacy"
+[[setup_option.cards]]
+value       = "essential"
+label       = "Essential only"
+description = "No statistics, no telemetry …"
+sets        = [ { option = "telemetry", value = false } ]
+[[setup_option.cards]]
+value       = "all"
+label       = "Accept all"
+sets        = [ { option = "telemetry", value = true } ]
+[[setup_option.cards]]
+value       = "custom"
+label       = "Customize"
+custom      = true
+```
+
+- `recommended = true` ajoute une marque « Recommandé » à une carte.
+- Une carte avec `sets` est un **préréglage** : tant qu'elle est choisie, elle décide des options
+  qu'elle liste (et de leurs enfants `parent`), et ces options sont masquées. La carte `custom`
+  (une au plus, sans `sets`) les affiche à la place, en partant des réponses de la carte choisie
+  avant elle.
+- Vérifié au chargement : chaque carte est une valeur de son option, chaque `sets` nomme une
+  option réelle avec une valeur qu'elle peut prendre, une option n'est gouvernée que par un seul
+  préréglage.
+- Traductions : `options.<id>.choices.<valeur>` (titre) et `options.<id>.cards.<valeur>` (ligne).
+
+`default_light = "<choix>"` sur un `select`/`swatch` remplace `default` quand l'OS est en mode
+clair (un thème clair pour qui lit toutes ses applis en clair).
+
+#### Installation recommandée ou personnalisée
+
+La page Bienvenue demande **comment** installer. **Personnalisée** affiche une étape
+Emplacement et composants, puis une étape par `[[setup_group]]`. **Recommandée** liste ce
+qu'elle va faire (dossier, composants, téléchargements, raccourcis) et n'affiche que les groupes
+marqués `always_ask = true`, ou contenant un choix en cartes obligatoire sans défaut (un choix de
+confidentialité doit être celui de la personne) ; toutes les autres options prennent leur défaut
+déclaré.
+
+```toml
+[[setup_group]]
+id         = "privacy"
+label      = "Privacy & data"
+always_ask = true
+```
+
 **Les options de pré-import** sont juste des options `bool` dont l'app honore la clé :
 ```toml
 [[setup_option]]
@@ -240,7 +314,10 @@ maps_to = "settings.import_starter_themes"
 ### Langues : `[i18n]` et `[[setup_group]]`
 
 L'installeur s'ouvre dans la langue de l'OS (langue d'interface de Windows ;
-`LC_ALL`/`LC_MESSAGES`/`LANG` ailleurs), ou celle donnée par `--lang=<tag>`, et propose un
+`LC_ALL`/`LC_MESSAGES`/`LANG` ailleurs), ou celle donnée par `--lang=<tag>`. Sous Windows,
+s'il n'a pas de catalogue pour la langue d'affichage, il prend la langue suivante de la liste
+Paramètres → Heure et langue qu'il connaît (un Windows en allemand avec le français en deuxième
+s'ouvre en français), puis l'anglais. Il propose un
 sélecteur de langue dans la barre latérale jusqu'au début de l'installation. Changer de
 langue retraduit tous les écrans d'un coup, documents légaux compris ; un document dont le
 texte a changé doit être accepté à nouveau.

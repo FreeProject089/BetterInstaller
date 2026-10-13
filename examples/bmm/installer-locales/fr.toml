@@ -1,7 +1,7 @@
 # Installateur de Better Mods Manager : textes en français.
 #
-# Chaque texte de installer.toml (libellés, descriptions, groupes, composants, lancements,
-# prérequis) a sa clé ici ; le test `the_bmm_catalogues_cover_every_product_string`
+# Chaque texte de installer.toml (libellés, descriptions, groupes, cartes, composants,
+# lancements, prérequis) a sa clé ici ; le test `the_bmm_catalogues_cover_every_product_string`
 # (bpkg-core, config.rs) échoue si l'une manque. Le sens doit rester celui de l'anglais :
 # les descriptions des options qui envoient des données sont des engagements.
 #
@@ -12,22 +12,23 @@ name = "Français"
 
 [groups.look]
 label = "Langue et apparence"
-description = "L'apparence de BMM à sa première ouverture."
+description = "L'apparence de BMM à sa première ouverture. Les deux se changent à tout moment dans les Paramètres."
+
+[groups.laya]
+label = "Laya, l'assistante hors ligne"
+description = "Laya propose des tags, reconnaît la langue d'un texte et vérifie un rapport de bug avant envoi. Elle tourne sur ce PC."
 
 [groups.privacy]
 label = "Confidentialité et données"
-description = "Ce que BMM peut envoyer hors de ce PC. Les options qui envoient des données portent une marque orange."
+description = "Ce que BMM peut envoyer hors de ce PC. Votre réponse ici est définitive : BMM ne redemande pas, et chaque élément reste modifiable dans Paramètres → Confidentialité. La Politique de confidentialité liste chaque connexion de BMM, vers qui, et combien de temps les données sont gardées."
 
 [groups.guidance]
 label = "Aide et accompagnement"
 description = "Le tutoriel, la mascotte Tasky et les astuces dans l'application."
 
 [groups.behaviour]
-label = "Comportement"
-
-[groups.content]
-label = "Contenu de départ"
-description = "Contenu supplémentaire copié au premier lancement."
+label = "Comportement et contenu de départ"
+description = "La façon dont BMM travaille avec vos fichiers, et ce qu'il ajoute à sa première ouverture."
 
 [groups.security]
 label = "Sécurité"
@@ -44,7 +45,7 @@ fr = "Français"
 
 [options.theme]
 label = "Thème"
-description = "Apparence de départ. Tous ces thèmes sont fournis avec BMM, et vous pouvez en changer à tout moment dans les Paramètres."
+description = "Apparence de départ. Tous ces thèmes sont fournis avec BMM. L'installateur présélectionne Daylight quand Windows est en mode clair."
 
 # Les noms de thèmes sont des noms propres : BMM ne les traduit pas non plus.
 [options.theme.choices]
@@ -62,17 +63,39 @@ bmm-sakura = "Blossom"
 bmm-vscode = "Editor"
 bmm-macos = "Cobalt"
 
-[options.skip_tutorial]
-label = "Passer le tutoriel interactif"
-description = "Ne pas afficher la visite guidée à la première ouverture de BMM."
+[options.ai_features]
+label = "Laya hors ligne (IA locale, aucune donnée envoyée)"
+description = "Laya tourne sur ce PC : quand vous l'utilisez, rien ne quitte le PC et aucun serveur n'intervient. Rien ne tourne en arrière-plan."
+
+[options.ai_features.choices]
+true = "Installer Laya hors ligne"
+false = "Pas maintenant"
+
+[options.ai_features.cards]
+true = "327 Mo téléchargés depuis les versions GitHub du projet pendant l'installation (404 Mo sur le disque), vérifiés contre leur SHA-256 épinglé avant d'être décompressés. GitHub voit votre adresse IP, comme pour tout téléchargement."
+false = "Aucun modèle n'est installé et les fonctions IA restent désactivées. Paramètres → IA peut le télécharger plus tard, ou utiliser un autre fournisseur."
+
+[options.privacy_choice]
+label = "Que peut envoyer BMM ?"
+description = "Quel que soit votre choix, BMM vérifie les mises à jour et dialogue avec les services que vous utilisez vous-même (catalogues, dépôts, BetterCommunity, téléchargements) ; chacune de ces connexions est listée dans la Politique de confidentialité."
+
+[options.privacy_choice.choices]
+essential = "L'essentiel uniquement"
+all = "Tout accepter"
+custom = "Personnaliser"
+
+[options.privacy_choice.cards]
+essential = "Pas de statistiques, pas de télémétrie, pas de relecture de session, pas de statut Discord. BMM ne fait que les connexions dont il a besoin pour fonctionner : vérification des mises à jour et ce que vous lui demandez de récupérer."
+all = "Statistiques d'utilisation, performance, erreurs en direct, statistiques Laya, relecture de session masquée et Discord Rich Presence. La télémétrie part vers telemetry.bettercommunity.ch avec votre Creator ID et votre adresse IP, et est gardée 180 jours. Non compris : le rapport matériel hebdomadaire (numéros de série, UUID de la machine, adresses MAC), que seul Personnaliser peut activer."
+custom = "Choisissez chaque catégorie vous-même. Chacune dit ce qu'elle envoie et à qui."
 
 [options.telemetry]
 label = "Télémétrie d'utilisation et de diagnostic"
-description = "Cocher ne fait que présélectionner : BMM vous le demande sur son propre écran de consentement avant tout envoi. Inclut votre Creator ID (un identifiant stable de ce PC) et votre adresse IP. Liste complète dans la Politique de confidentialité."
+description = "Envoyée à telemetry.bettercommunity.ch avec votre Creator ID (un identifiant stable de ce PC), un identifiant d'installation aléatoire et votre adresse IP ; gardée 180 jours. L'activer vaut consentement : BMM ne redemande pas. Choisissez les catégories avec « Choisir »."
 
 [options.telemetry_usage]
 label = "Statistiques d'utilisation"
-description = "Pages et fonctions utilisées, clics, durée des sessions. Jamais ce que vous tapez."
+description = "Pages et fonctions utilisées, libellés des boutons cliqués, liens ouverts, durée des sessions, et une description de ce PC (système, processeur, mémoire, carte graphique, écrans, disques). Jamais ce que vous tapez."
 
 [options.telemetry_perf]
 label = "Performance"
@@ -80,7 +103,7 @@ description = "FPS, mémoire utilisée et temps de chargement."
 
 [options.telemetry_live_errors]
 label = "Erreurs et plantages en direct"
-description = "Message d'erreur, endroit où elle s'est produite, version de BMM et système, envoyés en quelques secondes. Secrets et chemins personnels retirés avant."
+description = "Message d'erreur, endroit où elle s'est produite, version de BMM et système, envoyés en quelques secondes, plus les lignes d'avertissement et d'erreur du journal de session. Secrets et chemins personnels retirés avant."
 
 [options.telemetry_laya]
 label = "Statistiques Laya"
@@ -92,11 +115,34 @@ description = "Un enregistrement de la seule fenêtre de BMM (clics, défilement
 
 [options.telemetry_bench]
 label = "Rapport matériel hebdomadaire"
-description = "Un benchmark hebdomadaire et des identifiants matériels précis (numéros de série, UUID de la machine, adresses MAC). Désactivé sauf si vous le cochez."
+description = "Un benchmark hebdomadaire et des identifiants matériels précis (numéros de série, UUID de la machine, adresses MAC). Désactivé sauf si vous l'activez."
 
 [options.discord_rpc]
 label = "Discord Rich Presence"
-description = "Désactivé par défaut, comme dans BMM : cochez pour l'activer. Affiche sur votre profil Discord, à toute personne qui peut le voir : le nom de votre profil BMM actif, le nombre de mods activés, votre Creator ID et un lien qui le contient. Transmis par l'application Discord installée sur ce PC."
+description = "Affiche sur votre profil Discord, à toute personne qui peut le voir : le nom de votre profil BMM actif, le nombre de mods activés, votre Creator ID et un lien qui le contient. Transmis par l'application Discord installée sur ce PC."
+
+[options.auto_update]
+label = "Vérifier automatiquement les mises à jour"
+description = "À chaque démarrage, BMM demande à GitHub (api.github.com), puis à bettercommunity.ch si GitHub ne répond pas, si une version plus récente existe. Seuls votre adresse IP et le nom de l'application sont transmis. Désactivé : vous vérifiez à la main dans les Paramètres."
+
+[options.guidance_level]
+label = "Quelle aide voulez-vous ?"
+
+[options.guidance_level.choices]
+full = "Guidez-moi"
+light = "Juste les astuces"
+none = "Je connais BMM"
+custom = "Je choisis moi-même"
+
+[options.guidance_level.cards]
+full = "La visite interactive au premier lancement, Tasky la mascotte avec ses bulles d'aide, et les astuces dans l'application."
+light = "Pas de visite ni de mascotte ; les petites astuces explicatives restent."
+none = "Pas de visite, pas de mascotte, pas d'astuces. Les avertissements restent toujours affichés."
+custom = "Réglez chaque élément ci-dessous."
+
+[options.skip_tutorial]
+label = "Passer le tutoriel interactif"
+description = "Ne pas afficher la visite guidée à la première ouverture de BMM."
 
 [options.tasky_visible]
 label = "Afficher Tasky"
@@ -116,37 +162,47 @@ description = "Les petits encadrés explicatifs dans toute l'interface. Les aver
 
 [options.smart_io]
 label = "Smart I/O (recommandé)"
-description = "Accélère l'installation, l'activation et la désactivation des mods en regroupant les opérations disque et en choisissant la stratégie la plus rapide pour votre disque. Activé par défaut."
+description = "Accélère l'installation, l'activation et la désactivation des mods en regroupant les opérations disque et en choisissant la stratégie la plus rapide pour votre disque."
 
 [options.sound_effects]
 label = "Effets sonores de l'interface"
-description = "Sons discrets de clic et de confirmation dans l'interface. Activé par défaut."
-
-[options.system_access]
-label = "Contrôle d'accès au système"
-description = "L'étendue de l'accès aux fichiers accordé aux opérations de BMM. « Accès complet » est le mode normal. « Limité » cantonne les opérations sur les fichiers aux dossiers que vous configurez : plus sûr, mais certaines actions peuvent demander plus de confirmations. Modifiable ensuite dans les Paramètres."
-
-[options.system_access.choices]
-full = "Accès complet"
-limited = "Limité"
+description = "Sons discrets de clic et de confirmation dans l'interface."
 
 [options.import_themes]
 label = "Importer le pack de thèmes de départ"
-description = "Ajoute une sélection de thèmes prêts à l'emploi à la première ouverture de BMM. Décochez pour ne garder que les thèmes intégrés."
+description = "Ajoute une sélection de thèmes prêts à l'emploi à la première ouverture de BMM. Désactivé, seuls les thèmes intégrés restent."
 
 [options.import_languages]
 label = "Importer des packs de langues supplémentaires"
 description = "Installe des traductions de la communauté en plus de l'anglais et du français intégrés (ces deux-là sont toujours installés)."
 
+[options.system_access]
+label = "Contrôle d'accès au système"
+description = "L'étendue de l'accès aux fichiers accordé aux opérations de BMM. Modifiable ensuite dans les Paramètres."
+
+[options.system_access.choices]
+full = "Accès complet"
+limited = "Limité"
+
+[options.system_access.cards]
+full = "Le mode normal : BMM gère les mods partout où vous le dirigez."
+limited = "Les opérations sur les fichiers restent dans les dossiers que vous configurez. Plus sûr, mais certaines actions demandent plus souvent confirmation."
+
 [options.csp_preset]
 label = "Politique de sécurité du navigateur"
-description = "Des restrictions supplémentaires sur ce que BMM peut charger et exécuter, ajoutées à la politique qu'il embarque : elles ne peuvent que la durcir, jamais l'assouplir. « Par défaut » garde la politique embarquée, qui refuse déjà les scripts inline. « Verrouiller le réseau » empêche l'application de contacter les hôtes dont elle n'a pas besoin ; « Strict » bloque en plus les scripts tiers, ce qui désactive les vidéos YouTube intégrées et le widget de retours BetaHub. Modifiable à tout moment dans Paramètres → Sécurité."
+description = "Des restrictions supplémentaires sur ce que BMM peut charger et exécuter, ajoutées à la politique qu'il embarque : elles ne peuvent que la durcir. S'applique dès le deuxième lancement ; modifiable à tout moment dans Paramètres → Sécurité."
 
 [options.csp_preset.choices]
 none = "Par défaut"
 network = "Verrouiller le réseau"
 strict = "Strict"
-custom = "Personnalisée"
+custom = "La mienne (plus tard, dans les Paramètres)"
+
+[options.csp_preset.cards]
+none = "Garde la politique embarquée, qui refuse déjà les scripts inline."
+network = "Empêche l'application de contacter les hôtes dont elle n'a pas besoin."
+strict = "Bloque en plus les scripts et intégrations tiers, ce qui désactive les lecteurs YouTube et Spotify intégrés."
+custom = "N'écrit rien maintenant : vous rédigez votre propre politique plus tard dans Paramètres → Sécurité."
 
 [components.core]
 name = "Better Mods Manager"
@@ -174,7 +230,3 @@ name = "Node.js 20 ou plus récent"
 
 [prereqs.laya-offline]
 name = "Modèle Laya hors ligne"
-
-[options.ai_features]
-label = "Laya hors ligne (IA locale, aucune donnée envoyée)"
-description = "Coché par défaut : c'est local — rien ne quitte ce PC. Installe le classifieur Laya dans BMM (327 Mo téléchargés pendant l'installation, 404 Mo sur le disque, vérifiés contre leur SHA-256 épinglé) pour que, quand vous cliquez sur Suggérer, BMM classe les tags parmi les vôtres, reconnaisse la langue d'un texte et vérifie un rapport de bug avant envoi — hors ligne, sans aucun serveur. Rien ne tourne en arrière-plan. Décochez pour n'installer aucun modèle : les fonctions IA restent désactivées, et Paramètres → IA peut télécharger le modèle plus tard ou utiliser un autre fournisseur."

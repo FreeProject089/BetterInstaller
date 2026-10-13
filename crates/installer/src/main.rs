@@ -38,7 +38,12 @@ struct SystemIntegration {
     main_exe: Option<String>,
     protocol: Option<String>,
     create_shortcuts: bool,
+    /// The Start Menu shortcut (a choice on the Location page; on by default).
+    start_menu: bool,
     desktop: bool,
+    /// Start the app at sign-in (a choice on the Location page, when `[install] autostart`
+    /// offers it).
+    autostart: bool,
     /// Hex Ed25519 public key the package must verify against (if any).
     public_key: Option<String>,
     /// Abort the install if the signature is missing/invalid.
@@ -273,7 +278,7 @@ fn resolve_sources() -> anyhow::Result<Sources> {
 /// The language the installer opens in, most explicit first: `--lang=`, then
 /// `[i18n] default`, then a non-"auto" default on a `language` setup option (how a
 /// project pinned the language before `[i18n]` existed), then the OS, then English.
-fn initial_language(cfg: &InstallerConfig, lang_arg: Option<&str>) -> String {
+fn initial_language(cfg: &InstallerConfig, lang_arg: Option<&str>, available: &[String]) -> String {
     let pinned = |v: Option<&str>| {
         v.filter(|l| *l != "auto")
             .and_then(bpkg_core::i18n::normalize)
@@ -288,7 +293,11 @@ fn initial_language(cfg: &InstallerConfig, lang_arg: Option<&str>) -> String {
                     .and_then(|o| o.default.as_str()),
             )
         })
-        .or_else(bpkg_core::i18n::detect_os_locale)
+        // The Windows display language, else the next language the user listed that this
+        // installer has a catalogue for (Settings → Time & language), else English.
+        .or_else(|| {
+            bpkg_core::i18n::pick_os_language(&bpkg_core::i18n::detect_os_locales(), available)
+        })
         .unwrap_or_else(|| bpkg_core::i18n::FALLBACK.to_string())
 }
 
@@ -351,7 +360,7 @@ fn load_product_catalogs(
 }
 
 fn run_gui(
-    cfg: InstallerConfig,
+    mut cfg: InstallerConfig,
     package_path: Option<PathBuf>,
     config_dir: Option<PathBuf>,
     start_uninstall: bool,
@@ -429,7 +438,8 @@ fn run_gui(
             translator.add_catalog(c);
         }
     }
-    translator.set_language(&initial_language(&cfg, lang_arg.as_deref()));
+    let available: Vec<String> = translator.available().into_iter().map(|(c, _)| c).collect();
+    translator.set_language(&initial_language(&cfg, lang_arg.as_deref(), &available));
     let tr: Rc<RefCell<Translator>> = Rc::new(RefCell::new(translator));
     UI_TRANSLATOR.with(|c| *c.borrow_mut() = Some(tr.clone()));
 
@@ -461,45 +471,22 @@ fn run_gui(
             .to_string()
             .into(),
     );
-    if let Some(accent) = cfg.branding.accent.as_deref().and_then(parse_hex) {
-        ui.set_accent(accent);
-    }
-    // Theme: override any palette colour from `[theme]` in installer.toml.
-    {
-        let pal = ui.global::<Pal>();
-        let th = &cfg.theme;
-        if let Some(c) = th.bg.as_deref().and_then(parse_hex) {
-            pal.set_bg(c);
-        }
-        if let Some(c) = th.panel.as_deref().and_then(parse_hex) {
-            pal.set_panel(c);
-        }
-        if let Some(c) = th.panel2.as_deref().and_then(parse_hex) {
-            pal.set_panel2(c);
-        }
-        if let Some(c) = th.border.as_deref().and_then(parse_hex) {
-            pal.set_border(c);
-        }
-        if let Some(c) = th.accent.as_deref().and_then(parse_hex) {
-            pal.set_accent(c);
-        }
-        if let Some(c) = th.accent_dark.as_deref().and_then(parse_hex) {
-            pal.set_accent_dark(c);
-        }
-        if let Some(c) = th.accent_hover.as_deref().and_then(parse_hex) {
-            pal.set_accent_hover(c);
-        }
-        if let Some(c) = th.text.as_deref().and_then(parse_hex) {
-            pal.set_text(c);
-        }
-        if let Some(c) = th.dim.as_deref().and_then(parse_hex) {
-            pal.set_dim(c);
-        }
-        if let Some(c) = th.danger.as_deref().and_then(parse_hex) {
-            pal.set_danger(c);
-        }
-        if let Some(c) = th.shadow.as_deref().and_then(parse_hex) {
-            pal.set_shadow(c);
+    // Light or dark: `[theme] mode`, else the OS app mode (Windows: Settings →
+    // Personalisation → Colours). Then `[branding] accent` and every `[theme]` colour on top.
+    let light = match cfg.theme.mode.as_deref() {
+        Some("light") => true,
+        Some("dark") => false,
+        _ => platform::prefers_light_theme().unwrap_or(false),
+    };
+    apply_palette(&ui, light, &cfg.theme, cfg.branding.accent.as_deref());
+    // A swatch/select may name a light default (`default_light`): someone who reads every
+    // app in light mode starts on a light theme. Done before any option state is built, so
+    // the page, "Restore defaults" and the handoff all agree on what the default is.
+    if light {
+        for o in cfg.setup_options.iter_mut() {
+            if let Some(dl) = o.default_light.clone() {
+                o.default = dl;
+            }
         }
     }
     // App branding logo: read `[branding].logo` from the package and show it in the
@@ -641,75 +628,195 @@ fn run_gui(
         }
     });
 
-    // ── Navigation (page-aware: Welcome → Terms* → Setup → Install → Done) ──
-    {
-        let w = ui.as_weak();
+    // ── The flow ────────────────────────────────────────────────────────────
+    //
+    // Welcome (install type) → Terms → [Location & components] → one step per setup group
+    // → Install → Done. Which groups are steps depends on the install type: a Custom install
+    // shows them all, a Recommended one only those that ask for the person's own answer
+    // (`always_ask`, or a required choice with no default — a privacy choice). The rest take
+    // their declared defaults, which the Welcome page lists.
+    let custom_mode: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    let flow: Rc<RefCell<Vec<Step>>> = Rc::new(RefCell::new(build_flow(
+        false,
+        legal_count,
+        &visible_opts,
+        &setup_groups,
+    )));
+    let cur_step: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+    // Shortcut choices on the Location page: Start Menu, desktop. Defaults from `[install]`.
+    // And "Start with Windows" when `[install] autostart` offers it (its value the default).
+    let shortcuts: Rc<RefCell<(bool, bool, bool)>> = Rc::new(RefCell::new((
+        cfg.install.create_shortcuts,
+        cfg.install.create_shortcuts && cfg.install.desktop_shortcut,
+        cfg.install.main_exe.is_some() && cfg.install.autostart.unwrap_or(false),
+    )));
+    ui.set_offer_shortcuts(cfg.install.create_shortcuts && cfg.install.main_exe.is_some());
+    ui.set_offer_autostart(cfg.install.autostart.is_some() && cfg.install.main_exe.is_some());
+    ui.set_shortcut_start(shortcuts.borrow().0);
+    ui.set_shortcut_desktop(shortcuts.borrow().1);
+    ui.set_autostart(shortcuts.borrow().2);
+
+    // Put the current step on screen: page, sidebar, the group shown, and whether its
+    // Next/Install button may be pressed.
+    let render: Rc<dyn Fn(&MainWindow)> = Rc::new({
+        let flow = flow.clone();
+        let cur = cur_step.clone();
+        let tr = tr.clone();
+        let groups = setup_groups.clone();
         let visible = visible_opts.clone();
         let chosen = chosen.clone();
-        let refresh = refresh_legal.clone();
+        let refresh_legal = refresh_legal.clone();
         let li = legal_index.clone();
-        ui.on_go_next(move || {
-            let ui = match w.upgrade() {
-                Some(u) => u,
-                None => return,
+        let maintenance = maintenance;
+        move |ui: &MainWindow| {
+            let flow = flow.borrow();
+            let c = (*cur.borrow()).min(flow.len().saturating_sub(1));
+            let labels: Vec<String> = if maintenance {
+                vec![tr.borrow().t("steps.welcome")]
+            } else {
+                flow.iter()
+                    .map(|s| step_label(s, &groups, &tr.borrow()))
+                    .collect()
             };
-            match ui.get_page() {
-                0 => {
-                    if legal_count > 0 {
-                        *li.borrow_mut() = 0;
-                        refresh(&ui, 0);
-                        ui.set_page(1);
-                    } else {
-                        ui.set_can_proceed(compute_can_proceed(&visible, &chosen.borrow()));
-                        ui.set_page(2);
-                    }
+            let rows: Vec<StepRow> = labels
+                .into_iter()
+                .enumerate()
+                .map(|(i, label)| StepRow {
+                    label: label.into(),
+                    state: match i.cmp(&c) {
+                        std::cmp::Ordering::Less => 2,
+                        std::cmp::Ordering::Equal => 1,
+                        std::cmp::Ordering::Greater => 0,
+                    },
+                })
+                .collect();
+            ui.set_steps(ModelRc::from(Rc::new(VecModel::from(rows))));
+            // The install and the end pages are driven by the worker threads; nothing to do.
+            if maintenance || matches!(ui.get_page(), 3 | 4) {
+                return;
+            }
+            ui.set_last_step(c + 1 == flow.len());
+            match &flow[c] {
+                Step::Welcome => {
+                    ui.set_page(0);
+                    ui.set_can_proceed(true);
                 }
-                1 => {
-                    let next = *li.borrow() + 1;
-                    if next < legal_count {
-                        *li.borrow_mut() = next;
-                        refresh(&ui, next);
-                    } else {
-                        ui.set_can_proceed(compute_can_proceed(&visible, &chosen.borrow()));
-                        ui.set_page(2);
-                    }
+                Step::Legal => {
+                    ui.set_page(1);
+                    refresh_legal(ui, *li.borrow());
                 }
-                _ => {}
+                Step::Location => {
+                    ui.set_page(5);
+                    ui.set_can_proceed(!ui.get_install_dir().trim().is_empty());
+                }
+                Step::Group(g) => {
+                    let tr = tr.borrow();
+                    let (title, subtitle) = group_heading(g, &groups, &tr);
+                    ui.set_setup_group(g.clone().into());
+                    ui.set_setup_title(title.into());
+                    ui.set_setup_subtitle(subtitle.into());
+                    ui.set_page(2);
+                    ui.set_can_proceed(
+                        group_answered(&visible, g, &chosen.borrow())
+                            && compute_can_proceed(&visible, &chosen.borrow()),
+                    );
+                }
+            }
+        }
+    });
+
+    // Move one step. The Terms step pages through its documents first.
+    let step_by: Rc<dyn Fn(&MainWindow, bool)> = Rc::new({
+        let flow = flow.clone();
+        let cur = cur_step.clone();
+        let li = legal_index.clone();
+        let render = render.clone();
+        move |ui: &MainWindow, forward: bool| {
+            let at_legal = flow.borrow().get(*cur.borrow()) == Some(&Step::Legal);
+            if at_legal {
+                let i = *li.borrow();
+                if forward && i + 1 < legal_count {
+                    *li.borrow_mut() = i + 1;
+                    render(ui);
+                    return;
+                }
+                if !forward && i > 0 {
+                    *li.borrow_mut() = i - 1;
+                    render(ui);
+                    return;
+                }
+            }
+            let len = flow.borrow().len();
+            let c = *cur.borrow();
+            let next = if forward {
+                (c + 1).min(len.saturating_sub(1))
+            } else {
+                c.saturating_sub(1)
+            };
+            *cur.borrow_mut() = next;
+            // Entering the Terms from the front opens the first document; from behind,
+            // the last one, where the reader left.
+            if flow.borrow().get(next) == Some(&Step::Legal) {
+                *li.borrow_mut() = if forward {
+                    0
+                } else {
+                    legal_count.saturating_sub(1)
+                };
+            }
+            render(ui);
+        }
+    });
+    {
+        let w = ui.as_weak();
+        let step_by = step_by.clone();
+        ui.on_go_next(move || {
+            if let Some(ui) = w.upgrade() {
+                step_by(&ui, true);
             }
         });
     }
     {
         let w = ui.as_weak();
-        let refresh = refresh_legal.clone();
-        let li = legal_index.clone();
+        let step_by = step_by.clone();
         ui.on_go_back(move || {
-            let ui = match w.upgrade() {
-                Some(u) => u,
-                None => return,
-            };
-            match ui.get_page() {
-                1 => {
-                    if *li.borrow() > 0 {
-                        let prev = *li.borrow() - 1;
-                        *li.borrow_mut() = prev;
-                        refresh(&ui, prev);
-                    } else {
-                        ui.set_can_proceed(true);
-                        ui.set_page(0);
-                    }
-                }
-                2 => {
-                    if legal_count > 0 {
-                        let last = legal_count - 1;
-                        *li.borrow_mut() = last;
-                        refresh(&ui, last);
-                        ui.set_page(1);
-                    } else {
-                        ui.set_can_proceed(true);
-                        ui.set_page(0);
-                    }
-                }
+            if let Some(ui) = w.upgrade() {
+                step_by(&ui, false);
+            }
+        });
+    }
+    // Recommended / Custom. Changes which steps follow; the answers already given stay.
+    {
+        let w = ui.as_weak();
+        let custom_mode = custom_mode.clone();
+        let flow = flow.clone();
+        let visible = visible_opts.clone();
+        let groups = setup_groups.clone();
+        let render = render.clone();
+        ui.on_mode_picked(move |m| {
+            let custom = m.as_str() == "custom";
+            *custom_mode.borrow_mut() = custom;
+            *flow.borrow_mut() = build_flow(custom, legal_count, &visible, &groups);
+            if let Some(ui) = w.upgrade() {
+                ui.set_install_mode(m);
+                render(&ui);
+            }
+        });
+    }
+    {
+        let w = ui.as_weak();
+        let shortcuts = shortcuts.clone();
+        ui.on_shortcut_toggled(move |which, on| {
+            let mut s = shortcuts.borrow_mut();
+            match which.as_str() {
+                "start" => s.0 = on,
+                "desktop" => s.1 = on,
+                "autostart" => s.2 = on,
                 _ => {}
+            }
+            if let Some(ui) = w.upgrade() {
+                ui.set_shortcut_start(s.0);
+                ui.set_shortcut_desktop(s.1);
+                ui.set_autostart(s.2);
             }
         });
     }
@@ -824,12 +931,16 @@ fn run_gui(
     });
 
     // ── Option changes ──────────────────────────────────────────────────
+    //
+    // Every handler ends in `render`, which re-reads whether this step's Next may be pressed
+    // (a required choice answered, the terms accepted).
     {
         let w = ui.as_weak();
         let chosen = chosen.clone();
         let opts = visible_opts.clone();
         let refresh = refresh_rows.clone();
         let expanded = expanded.clone();
+        let render = render.clone();
         ui.on_option_bool_changed(move |id, v| {
             set_bool_option(
                 &opts,
@@ -840,7 +951,28 @@ fn run_gui(
             );
             refresh();
             if let Some(ui) = w.upgrade() {
-                ui.set_can_proceed(compute_can_proceed(&opts, &chosen.borrow()));
+                render(&ui);
+            }
+        });
+    }
+    {
+        let w = ui.as_weak();
+        let chosen = chosen.clone();
+        let opts = visible_opts.clone();
+        let refresh = refresh_rows.clone();
+        let expanded = expanded.clone();
+        let render = render.clone();
+        ui.on_option_card_picked(move |id, value| {
+            pick_card(
+                &opts,
+                &mut chosen.borrow_mut(),
+                &mut expanded.borrow_mut(),
+                &id,
+                &value,
+            );
+            refresh();
+            if let Some(ui) = w.upgrade() {
+                render(&ui);
             }
         });
     }
@@ -892,15 +1024,22 @@ fn run_gui(
         let opts = visible_opts.clone();
         let refresh = refresh_rows.clone();
         let legal_id = legal_opt_id.clone();
+        let render = render.clone();
         ui.on_reset_options(move || {
-            // Everything on the Setup page back to its declared default. Legal
-            // acceptance is not on this page and is kept.
-            chosen
-                .borrow_mut()
-                .retain(|k, _| Some(k) == legal_id.as_ref());
-            refresh();
+            // The options of THIS step back to their declared defaults. Other steps keep
+            // their answers, and legal acceptance is never on a setup step.
             if let Some(ui) = w.upgrade() {
-                ui.set_can_proceed(compute_can_proceed(&opts, &chosen.borrow()));
+                let g = ui.get_setup_group().to_string();
+                let here: Vec<String> = opts
+                    .iter()
+                    .filter(|o| display_group(&opts, o) == g)
+                    .map(|o| o.id.clone())
+                    .collect();
+                chosen
+                    .borrow_mut()
+                    .retain(|k, _| Some(k) == legal_id.as_ref() || !here.contains(k));
+                refresh();
+                render(&ui);
             }
         });
     }
@@ -1056,7 +1195,9 @@ fn run_gui(
         main_exe: cfg.install.main_exe.clone(),
         protocol: cfg.install.protocol.clone(),
         create_shortcuts: cfg.install.create_shortcuts,
+        start_menu: true,
         desktop: cfg.install.desktop_shortcut,
+        autostart: false,
         public_key: cfg.security.as_ref().and_then(|s| s.public_key.clone()),
         require_signature: cfg
             .security
@@ -1070,75 +1211,82 @@ fn run_gui(
     //
     // Everything worded by Rust is re-worded here; everything worded by the .slint file
     // follows the `rev` bump on its own.
-    let apply_language: Rc<dyn Fn(&MainWindow)> = Rc::new({
-        let tr = tr.clone();
-        let refresh_rows = refresh_rows.clone();
-        let label_components = label_components.clone();
-        let label_final = label_final.clone();
-        let docs = legal_docs.clone();
-        let acc = legal_accepted.clone();
-        let chosen = chosen.clone();
-        let legal_id = legal_opt_id.clone();
-        let refresh_legal = refresh_legal.clone();
-        let li = legal_index.clone();
-        let cfg = cfg_rc.clone();
-        let pkg = package_path.clone();
-        let may_read = trust.may_read();
-        let trust = trust.clone();
-        move |ui: &MainWindow| {
-            let (names, index, rtl, sig) = {
-                let t = tr.borrow();
-                let avail = t.available();
-                let index = avail
-                    .iter()
-                    .position(|(c, _)| c == t.language())
-                    .unwrap_or(0);
-                let names: Vec<SharedString> =
-                    avail.into_iter().map(|(_, name)| name.into()).collect();
-                (
-                    names,
-                    index,
-                    t.direction() == Direction::Rtl,
-                    trust.text(&t),
-                )
-            };
-            ui.set_language_names(ModelRc::from(Rc::new(VecModel::from(names))));
-            ui.set_language_index(index as i32);
-            ui.set_signature_status(sig.into());
-            let g = ui.global::<I18n>();
-            g.set_rtl(rtl);
-            g.set_rev(g.get_rev() + 1);
+    let apply_language: Rc<dyn Fn(&MainWindow)> =
+        Rc::new({
+            let tr = tr.clone();
+            let render = render.clone();
+            let visible = visible_opts.clone();
+            let refresh_rows = refresh_rows.clone();
+            let label_components = label_components.clone();
+            let label_final = label_final.clone();
+            let docs = legal_docs.clone();
+            let acc = legal_accepted.clone();
+            let chosen = chosen.clone();
+            let legal_id = legal_opt_id.clone();
+            let refresh_legal = refresh_legal.clone();
+            let li = legal_index.clone();
+            let cfg = cfg_rc.clone();
+            let pkg = package_path.clone();
+            let may_read = trust.may_read();
+            let trust = trust.clone();
+            move |ui: &MainWindow| {
+                let (names, index, rtl, sig) = {
+                    let t = tr.borrow();
+                    let avail = t.available();
+                    let index = avail
+                        .iter()
+                        .position(|(c, _)| c == t.language())
+                        .unwrap_or(0);
+                    let names: Vec<SharedString> =
+                        avail.into_iter().map(|(_, name)| name.into()).collect();
+                    (
+                        names,
+                        index,
+                        t.direction() == Direction::Rtl,
+                        trust.text(&t),
+                    )
+                };
+                ui.set_language_names(ModelRc::from(Rc::new(VecModel::from(names))));
+                ui.set_language_index(index as i32);
+                ui.set_signature_status(sig.into());
+                let g = ui.global::<I18n>();
+                g.set_rtl(rtl);
+                g.set_rev(g.get_rev() + 1);
 
-            refresh_rows();
-            label_components(ui);
-            label_final(ui);
+                refresh_rows();
+                label_components(ui);
+                label_final(ui);
+                render(ui);
+                ui.set_recommended_items(ModelRc::from(Rc::new(VecModel::from(
+                    recommended_items(&cfg, &visible, &tr.borrow()),
+                ))));
 
-            // The documents follow the language too. One whose text changed must be
-            // accepted again: acceptance is of the text that was read.
-            let fresh = load_legal_docs(&cfg, pkg.as_deref(), may_read, &tr.borrow());
-            if fresh.len() == docs.borrow().len() {
-                let mut a = acc.borrow_mut();
-                for (i, (old, new)) in docs.borrow().iter().zip(&fresh).enumerate() {
-                    if old.file != new.file {
-                        a[i] = false;
+                // The documents follow the language too. One whose text changed must be
+                // accepted again: acceptance is of the text that was read.
+                let fresh = load_legal_docs(&cfg, pkg.as_deref(), may_read, &tr.borrow());
+                if fresh.len() == docs.borrow().len() {
+                    let mut a = acc.borrow_mut();
+                    for (i, (old, new)) in docs.borrow().iter().zip(&fresh).enumerate() {
+                        if old.file != new.file {
+                            a[i] = false;
+                        }
                     }
-                }
-                let all = a.iter().all(|x| *x);
-                if let Some(id) = &legal_id {
-                    if chosen.borrow().contains_key(id) {
-                        chosen
-                            .borrow_mut()
-                            .insert(id.clone(), serde_json::json!(all));
+                    let all = a.iter().all(|x| *x);
+                    if let Some(id) = &legal_id {
+                        if chosen.borrow().contains_key(id) {
+                            chosen
+                                .borrow_mut()
+                                .insert(id.clone(), serde_json::json!(all));
+                        }
                     }
-                }
-                drop(a);
-                *docs.borrow_mut() = fresh;
-                if ui.get_page() == 1 {
-                    refresh_legal(ui, *li.borrow());
+                    drop(a);
+                    *docs.borrow_mut() = fresh;
+                    if ui.get_page() == 1 {
+                        refresh_legal(ui, *li.borrow());
+                    }
                 }
             }
-        }
-    });
+        });
     apply_language(&ui);
     {
         let w = ui.as_weak();
@@ -1224,6 +1372,7 @@ fn run_gui(
         // Only a fresh install offers the picker — Repair and Update do not
         // rewrite the handoff, so there would be nothing for it to change.
         let show_final = final_opt.is_some();
+        let shortcuts = shortcuts.clone();
         ui.on_install(move || {
             let ui = match w.upgrade() {
                 Some(u) => u,
@@ -1327,7 +1476,12 @@ fn run_gui(
                     let weak = ui.as_weak();
                     let handoff_msg = message.clone();
                     let handoff_ok = ok;
-                    let integ = integ.clone();
+                    // The shortcut choices from the Location page (their defaults otherwise).
+                    let mut integ = integ.clone();
+                    let (start_menu, desktop, autostart) = *shortcuts.borrow();
+                    integ.start_menu = start_menu;
+                    integ.desktop = desktop;
+                    integ.autostart = autostart;
                     // Build the launch rows on the UI thread (Rc isn't Send).
                     let lrows = launch_rows(&launch_cfg, &launch_checked.borrow(), &comps, &trs);
                     std::thread::spawn(move || {
@@ -1831,17 +1985,20 @@ fn do_system_integration(dest: &Path, integ: &SystemIntegration, record: &Instal
 
     if let Some(exe_rel) = integ.main_exe.as_ref() {
         let exe = dest.join(exe_rel);
-        if integ.create_shortcuts {
+        if integ.create_shortcuts && (integ.start_menu || integ.desktop) {
             let _ = plat.create_shortcuts(&ShortcutSpec {
                 name: integ.app.name.clone(),
                 target: exe.clone(),
                 icon: None,
                 desktop: integ.desktop,
-                start_menu: true,
+                start_menu: integ.start_menu,
             });
         }
         if let Some(scheme) = integ.protocol.as_ref() {
             let _ = plat.register_protocol(scheme, &exe);
+        }
+        if integ.autostart {
+            let _ = plat.set_run_at_login(&integ.app.id, &exe);
         }
     }
 
@@ -1863,7 +2020,8 @@ fn do_system_integration(dest: &Path, integ: &SystemIntegration, record: &Instal
         "protocol": integ.protocol,
         "shortcut_name": integ.app.name,
         "desktop": integ.create_shortcuts && integ.desktop,
-        "start_menu": integ.create_shortcuts,
+        "start_menu": integ.create_shortcuts && integ.start_menu,
+        "autostart": integ.autostart,
         "install_dir": dest.to_string_lossy(),
         "owns_dir": record.owns_dir,
         "files": record.files,
@@ -1895,6 +2053,11 @@ fn do_uninstall_full(dir: &Path, fallback_files: &[String]) -> Result<(), String
     }
     if let Some(scheme) = info["protocol"].as_str() {
         let _ = plat.unregister_protocol(scheme);
+    }
+    // Whatever the record says: the entry may come from an install whose record predates
+    // the choice, and removing a value that is not there costs nothing.
+    if let Some(id) = info["app_id"].as_str() {
+        let _ = plat.remove_run_at_login(id);
     }
     if let Some(id) = info["app_id"].as_str() {
         let _ = plat.unregister_uninstaller(id);
@@ -2663,6 +2826,292 @@ fn doc_title(file: &str, tr: &Translator) -> String {
     tr.t(key)
 }
 
+/// One step before the install. The install and the end are not steps of the flow: they
+/// are driven by the worker threads, and the sidebar adds them on its own.
+#[derive(Debug, Clone, PartialEq)]
+enum Step {
+    Welcome,
+    Legal,
+    Location,
+    /// The options of one `[[setup_group]]` ("" for ungrouped options).
+    Group(String),
+}
+
+/// The group a row is shown under: its own, or its parent's for a child option.
+fn display_group(opts: &[SetupOption], o: &SetupOption) -> String {
+    let own = |x: &SetupOption| x.group.clone().unwrap_or_default();
+    match o.parent.as_deref() {
+        Some(pid) => opts
+            .iter()
+            .find(|p| p.id == pid)
+            .map(own)
+            .unwrap_or_else(|| own(o)),
+        None => own(o),
+    }
+}
+
+/// The steps for an install type. Custom: every group, after a Location step. Recommended:
+/// only the groups that need the person's own answer — `always_ask`, or one holding a
+/// required choice (cards) — since every other one takes its declared defaults.
+fn build_flow(
+    custom: bool,
+    legal_count: usize,
+    opts: &[SetupOption],
+    groups: &[SetupGroup],
+) -> Vec<Step> {
+    let mut f = vec![Step::Welcome];
+    if legal_count > 0 {
+        f.push(Step::Legal);
+    }
+    if custom {
+        f.push(Step::Location);
+    }
+    let mut ids: Vec<String> = Vec::new();
+    if opts.iter().any(|o| o.parent.is_none() && o.group.is_none()) {
+        ids.push(String::new());
+    }
+    for g in groups {
+        if opts
+            .iter()
+            .any(|o| o.group.as_deref() == Some(g.id.as_str()))
+        {
+            ids.push(g.id.clone());
+        }
+    }
+    for id in ids {
+        let always = groups.iter().any(|g| g.id == id && g.always_ask);
+        let must_answer = opts.iter().any(|o| {
+            display_group(opts, o) == id
+                && o.required
+                && !o.cards.is_empty()
+                && !matches!(o.kind, SetupOptionKind::License)
+        });
+        if custom || always || must_answer {
+            f.push(Step::Group(id));
+        }
+    }
+    f
+}
+
+/// A group's heading and the line under it, in the current language.
+fn group_heading(id: &str, groups: &[SetupGroup], tr: &Translator) -> (String, String) {
+    if id.is_empty() {
+        return (tr.t("setup.title"), tr.t("setup.hint"));
+    }
+    let sg = groups.iter().find(|g| g.id == id);
+    (
+        product_text(
+            tr,
+            &format!("groups.{id}.label"),
+            sg.map(|s| s.label.as_str()),
+        )
+        .unwrap_or_else(|| humanize(id)),
+        product_text(
+            tr,
+            &format!("groups.{id}.description"),
+            sg.and_then(|s| s.description.as_deref()),
+        )
+        .unwrap_or_default(),
+    )
+}
+
+fn step_label(s: &Step, groups: &[SetupGroup], tr: &Translator) -> String {
+    match s {
+        Step::Welcome => tr.t("steps.welcome"),
+        Step::Legal => tr.t("steps.terms"),
+        Step::Location => tr.t("steps.location"),
+        Step::Group(id) => group_heading(id, groups, tr).0,
+    }
+}
+
+/// Every required choice shown in this group has an answer.
+fn group_answered(
+    opts: &[SetupOption],
+    group: &str,
+    chosen: &BTreeMap<String, serde_json::Value>,
+) -> bool {
+    opts.iter()
+        .filter(|o| display_group(opts, o) == group && o.required && !o.cards.is_empty())
+        .all(|o| bpkg_core::config::picked_card(o, chosen).is_some())
+}
+
+/// A card was picked. A bool card is the bool; a select card is its value. Picking the
+/// `custom` card of a preset first copies what the previously picked card gave each option
+/// it governs into the answers, so "Customize" starts from "Essential only" (or "Accept
+/// all") rather than from scratch, and opens the finer choices of those options.
+fn pick_card(
+    opts: &[SetupOption],
+    chosen: &mut BTreeMap<String, serde_json::Value>,
+    expanded: &mut BTreeSet<String>,
+    id: &str,
+    value: &str,
+) {
+    let Some(o) = opts.iter().find(|o| o.id == id) else {
+        return;
+    };
+    let Some(card) = o.cards.iter().find(|c| c.value == value) else {
+        return;
+    };
+    match o.kind {
+        SetupOptionKind::Bool => set_bool_option(opts, chosen, expanded, id, value == "true"),
+        SetupOptionKind::Select => {
+            if card.custom {
+                let was_custom =
+                    bpkg_core::config::picked_card(o, chosen).is_some_and(|c| c.custom);
+                if !was_custom {
+                    let governed = bpkg_core::config::governed_by(opts, o);
+                    let seeded: Vec<(String, serde_json::Value)> = governed
+                        .iter()
+                        .filter_map(|g| opts.iter().find(|x| &x.id == g))
+                        .map(|x| (x.id.clone(), effective_value(opts, x, chosen)))
+                        .collect();
+                    for (k, v) in seeded {
+                        chosen.insert(k, v);
+                    }
+                    for g in &governed {
+                        if opts.iter().any(|c| c.parent.as_deref() == Some(g.as_str())) {
+                            expanded.insert(g.clone());
+                        }
+                    }
+                }
+            }
+            chosen.insert(id.to_string(), serde_json::json!(value));
+        }
+        _ => {}
+    }
+}
+
+/// What a Recommended install does, listed on the Welcome page: the folder, the components
+/// installed by default, what default-on options download, the shortcuts.
+fn recommended_items(
+    cfg: &InstallerConfig,
+    opts: &[SetupOption],
+    tr: &Translator,
+) -> Vec<SharedString> {
+    let mut out: Vec<SharedString> = Vec::new();
+    let plat = platform::current();
+    let meta = AppMeta {
+        id: cfg.app.id.clone(),
+        name: cfg.app.name.clone(),
+        version: cfg.app.version.clone(),
+        publisher: cfg.app.publisher.clone(),
+        homepage: cfg.app.homepage.clone(),
+        platforms: cfg.app.platforms.clone(),
+    };
+    out.push(
+        tr.t_with(
+            "welcome.includes_folder",
+            &[(
+                "dir",
+                &plat.default_install_dir(&meta).display().to_string(),
+            )],
+        )
+        .into(),
+    );
+    for c in cfg.components.iter().filter(|c| c.required || c.default) {
+        let name = product_text(tr, &format!("components.{}.name", c.id), Some(&c.name))
+            .unwrap_or_else(|| c.id.clone());
+        out.push(if c.size_mb > 0 {
+            format!("{name} ({} MB)", c.size_mb).into()
+        } else {
+            name.into()
+        });
+    }
+    let _ = opts;
+    let defaults: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    for pid in cfg.prereqs_chosen_by_options(&defaults) {
+        if let Some(p) = cfg.prerequisites.iter().find(|p| p.id == pid) {
+            let name = product_text(tr, &format!("prereqs.{}.name", p.id), Some(&p.name))
+                .unwrap_or_else(|| p.id.clone());
+            out.push(
+                tr.t_with("welcome.includes_download", &[("name", &name)])
+                    .into(),
+            );
+        }
+    }
+    if cfg.install.create_shortcuts && cfg.install.main_exe.is_some() {
+        out.push(
+            tr.t(if cfg.install.desktop_shortcut {
+                "welcome.includes_shortcuts_desktop"
+            } else {
+                "welcome.includes_shortcuts"
+            })
+            .into(),
+        );
+    }
+    if cfg.install.main_exe.is_some() && cfg.install.autostart == Some(true) {
+        out.push(tr.t("welcome.includes_autostart").into());
+    }
+    out
+}
+
+/// The installer's colours: the built-in dark or light set, then `[branding] accent`, then
+/// every `[theme]` colour the project set.
+fn apply_palette(
+    ui: &MainWindow,
+    light: bool,
+    th: &bpkg_core::config::ThemeConfig,
+    accent: Option<&str>,
+) {
+    ui.set_dark(!light);
+    let pal = ui.global::<Pal>();
+    let c = |hex: &str| parse_hex(hex).unwrap_or_default();
+    let a = |hex: &str, alpha: u8| {
+        let base = c(hex);
+        Color::from_argb_u8(alpha, base.red(), base.green(), base.blue())
+    };
+    if light {
+        pal.set_bg(c("#f4f6fa"));
+        pal.set_panel(c("#ffffff"));
+        pal.set_panel2(c("#eef2f7"));
+        pal.set_border(c("#dde3ec"));
+        pal.set_border_strong(c("#b8c2d3"));
+        pal.set_accent(c("#2563eb"));
+        pal.set_accent_dark(c("#1d4ed8"));
+        pal.set_accent_hover(c("#3b82f6"));
+        pal.set_accent_soft(a("#2563eb", 0x14));
+        pal.set_text(c("#1f2937"));
+        pal.set_ink(c("#0b1220"));
+        pal.set_dim(c("#5b6678"));
+        pal.set_danger(c("#dc2626"));
+        pal.set_danger_soft(a("#dc2626", 0x14));
+        pal.set_success(c("#15803d"));
+        pal.set_success_soft(a("#16a34a", 0x16));
+        pal.set_warn(c("#b45309"));
+        pal.set_warn_soft(a("#f59e0b", 0x1f));
+        pal.set_shadow(a("#0f172a", 0x26));
+        pal.set_sidebar(c("#eaeef5"));
+        pal.set_titlebar(c("#e3e8f0"));
+        pal.set_track(c("#c7cfdb"));
+    }
+    // Same accent in both modes: it is the product's colour, not the mode's.
+    if let Some(col) = accent.and_then(parse_hex) {
+        pal.set_accent(col);
+        pal.set_accent_soft(Color::from_argb_u8(
+            if light { 0x14 } else { 0x1f },
+            col.red(),
+            col.green(),
+            col.blue(),
+        ));
+    }
+    let set = |v: &Option<String>, f: &dyn Fn(Color)| {
+        if let Some(col) = v.as_deref().and_then(parse_hex) {
+            f(col);
+        }
+    };
+    set(&th.bg, &|x| pal.set_bg(x));
+    set(&th.panel, &|x| pal.set_panel(x));
+    set(&th.panel2, &|x| pal.set_panel2(x));
+    set(&th.border, &|x| pal.set_border(x));
+    set(&th.accent, &|x| pal.set_accent(x));
+    set(&th.accent_dark, &|x| pal.set_accent_dark(x));
+    set(&th.accent_hover, &|x| pal.set_accent_hover(x));
+    set(&th.text, &|x| pal.set_text(x));
+    set(&th.dim, &|x| pal.set_dim(x));
+    set(&th.danger, &|x| pal.set_danger(x));
+    set(&th.shadow, &|x| pal.set_shadow(x));
+}
+
 /// Options in display order: ungrouped first, then each `[[setup_group]]` in the order
 /// the config declares them. Stable, so options keep their config order inside a group.
 fn order_by_group(mut opts: Vec<SetupOption>, groups: &[SetupGroup]) -> Vec<SetupOption> {
@@ -2757,6 +3206,12 @@ fn option_rows(
                 SetupOptionKind::Swatch => "swatch",
             };
             let current = effective_value(opts, o, chosen);
+            // An option a preset card decides is listed only under that preset's `custom`
+            // card; under any other card its value is the card's, and it is not asked.
+            let governed_hidden =
+                bpkg_core::config::governing_preset(opts, &o.id).is_some_and(|p| {
+                    !bpkg_core::config::picked_card(p, chosen).is_some_and(|c| c.custom)
+                });
             let (is_default, shown) = match o.parent.as_deref() {
                 Some(pid) => {
                     let parent_on = is_on(pid);
@@ -2769,6 +3224,34 @@ fn option_rows(
                 }
                 None => (current == o.default, true),
             };
+            let shown = shown && !governed_hidden;
+            let picked = bpkg_core::config::card_value(o, chosen);
+            let cards: Vec<CardRow> = o
+                .cards
+                .iter()
+                .map(|c| CardRow {
+                    value: c.value.clone().into(),
+                    title: product_text(
+                        tr,
+                        &format!("options.{}.choices.{}", o.id, c.value),
+                        c.label.as_deref(),
+                    )
+                    .unwrap_or_else(|| c.value.clone())
+                    .into(),
+                    description: product_text(
+                        tr,
+                        &format!("options.{}.cards.{}", o.id, c.value),
+                        c.description.as_deref(),
+                    )
+                    .unwrap_or_default()
+                    .into(),
+                    recommended: c.recommended,
+                    selected: c.value == picked,
+                })
+                .collect();
+            let needs_answer = o.required
+                && !o.cards.is_empty()
+                && bpkg_core::config::picked_card(o, chosen).is_none();
             let has_children = opts
                 .iter()
                 .any(|c| c.parent.as_deref() == Some(o.id.as_str()));
@@ -2791,6 +3274,11 @@ fn option_rows(
                     choice_label(o, o.default.as_str().unwrap_or(""), tr)
                 }
                 SetupOptionKind::License => String::new(),
+            };
+            let default_text = if o.default.is_null() || o.default.as_str() == Some("") {
+                String::new()
+            } else {
+                default_text
             };
             let default_label = if default_text.is_empty() {
                 String::new()
@@ -2836,6 +3324,9 @@ fn option_rows(
             OptionRow {
                 id: o.id.clone().into(),
                 kind: kind.into(),
+                group_id: display_group(opts, o).into(),
+                cards: ModelRc::from(Rc::new(VecModel::from(cards))),
+                needs_answer,
                 label: option_label(o, tr).into(),
                 description: option_description(o, tr).into(),
                 choices: ModelRc::from(Rc::new(VecModel::from(choices))),
@@ -3399,7 +3890,13 @@ After the table.";
         // Nothing is changed yet, and every row says what its default is.
         for r in &rows {
             assert!(r.is_default, "{} starts changed", r.id);
-            assert!(!r.default_label.is_empty(), "{} shows no default", r.id);
+            // A required choice has no default on purpose (the privacy step): it says
+            // "choose one" instead.
+            assert!(
+                !r.default_label.is_empty() || r.needs_answer,
+                "{} shows no default",
+                r.id
+            );
         }
 
         // Telemetry is in French, marked as sending data, and its default is Off.
@@ -3516,7 +4013,9 @@ After the table.";
                 .to_string()
         };
 
+        // The categories are listed under the privacy step's « Customize » card.
         let mut chosen: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        chosen.insert("privacy_choice".into(), serde_json::json!("custom"));
         let mut expanded: BTreeSet<String> = BTreeSet::new();
         let rows = option_rows(&opts, &cfg.setup_groups, &chosen, &expanded, &t);
         assert_eq!(
@@ -3595,6 +4094,214 @@ After the table.";
             doc.settings.get("telemetry_bench"),
             Some(&serde_json::json!(false))
         );
+    }
+
+    /// The privacy step, cookie-banner style: nothing picked blocks the step; « Essential
+    /// only » and « Accept all » decide every option they list and hide them; « Customize »
+    /// shows them, starting from the card picked before; the handoff carries the decision.
+    #[test]
+    fn the_privacy_step_is_three_choices_like_a_cookie_banner() {
+        use super::{group_answered, pick_card};
+        use std::collections::{BTreeMap, BTreeSet};
+        let cfg = InstallerConfig::load(BMM).unwrap();
+        let opts = order_by_group(
+            cfg.setup_options
+                .iter()
+                .filter(|o| o.id != "legal")
+                .cloned()
+                .collect(),
+            &cfg.setup_groups,
+        );
+        let t = tr("en");
+        let mut chosen: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        let mut expanded: BTreeSet<String> = BTreeSet::new();
+        let row =
+            |rows: &[super::OptionRow], id: &str| rows.iter().find(|r| r.id == id).unwrap().clone();
+        let doc = |c: &BTreeMap<String, serde_json::Value>| {
+            bpkg_core::handoff::build(&cfg.setup_options, c, vec![], "1", "x").settings
+        };
+
+        // Nothing pre-selected: the step cannot be passed, and no category is on screen.
+        assert!(!group_answered(&opts, "privacy", &chosen));
+        let rows = option_rows(&opts, &cfg.setup_groups, &chosen, &expanded, &t);
+        let p = row(&rows, "privacy_choice");
+        assert!(p.needs_answer && p.cards.row_count() == 3);
+        assert!(!(0..3).any(|i| p.cards.row_data(i).unwrap().selected));
+        for id in ["telemetry", "discord_rpc", "auto_update"] {
+            assert!(!row(&rows, id).shown, "{id} shown before Customize");
+        }
+
+        // Accept all: every category on EXCEPT the weekly hardware report (serial numbers,
+        // machine UUID, MAC addresses), which stays opt-in through « Customize » only, as
+        // BMM's own « Turn all on » leaves it off. The card says so.
+        pick_card(&opts, &mut chosen, &mut expanded, "privacy_choice", "all");
+        assert!(group_answered(&opts, "privacy", &chosen));
+        let s = doc(&chosen);
+        assert_eq!(s["privacy_choice"], serde_json::json!("all"));
+        for k in [
+            "telemetry",
+            "telemetry_usage",
+            "telemetry_perf",
+            "telemetry_live_errors",
+            "telemetry_laya",
+            "session_recorder",
+            "discord_rpc",
+            "auto_update",
+        ] {
+            assert_eq!(s[k], serde_json::json!(true), "{k}");
+        }
+        assert_eq!(
+            s["telemetry_bench"],
+            serde_json::json!(false),
+            "« Accept all » must not turn on the hardware report"
+        );
+        // Even when it had been ticked under Customize first: the card decides.
+        pick_card(&opts, &mut chosen, &mut expanded, "privacy_choice", "custom");
+        super::set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry", true);
+        chosen.insert("telemetry_bench".into(), serde_json::json!(true));
+        assert_eq!(doc(&chosen)["telemetry_bench"], serde_json::json!(true));
+        pick_card(&opts, &mut chosen, &mut expanded, "privacy_choice", "all");
+        assert_eq!(doc(&chosen)["telemetry_bench"], serde_json::json!(false));
+        // And the card's text, in every catalogue, says it is not included.
+        let all = cfg
+            .setup_options
+            .iter()
+            .find(|o| o.id == "privacy_choice")
+            .unwrap()
+            .cards
+            .iter()
+            .find(|c| c.value == "all")
+            .and_then(|c| c.description.clone())
+            .unwrap_or_default();
+        assert!(
+            all.contains("Not included") && all.contains("hardware report"),
+            "{all}"
+        );
+        let fr = std::fs::read_to_string(
+            std::path::Path::new(BMM)
+                .parent()
+                .unwrap()
+                .join("installer-locales/fr.toml"),
+        )
+        .unwrap();
+        assert!(fr.contains("Non compris : le rapport matériel hebdomadaire"));
+
+        // Essential only: nothing that sends data, updates still checked.
+        pick_card(
+            &opts,
+            &mut chosen,
+            &mut expanded,
+            "privacy_choice",
+            "essential",
+        );
+        let s = doc(&chosen);
+        for k in [
+            "telemetry",
+            "telemetry_usage",
+            "telemetry_perf",
+            "telemetry_live_errors",
+            "telemetry_laya",
+            "session_recorder",
+            "telemetry_bench",
+            "discord_rpc",
+        ] {
+            assert_eq!(s[k], serde_json::json!(false), "{k}");
+        }
+        assert_eq!(s["auto_update"], serde_json::json!(true));
+
+        // Customize from « Accept all »: the categories appear, all on but the hardware report,
+        // which is the one place it can be turned on.
+        pick_card(&opts, &mut chosen, &mut expanded, "privacy_choice", "all");
+        pick_card(
+            &opts,
+            &mut chosen,
+            &mut expanded,
+            "privacy_choice",
+            "custom",
+        );
+        let rows = option_rows(&opts, &cfg.setup_groups, &chosen, &expanded, &t);
+        for id in ["telemetry", "telemetry_usage", "discord_rpc", "auto_update"] {
+            let r = row(&rows, id);
+            assert!(r.shown && r.bool_value, "{id}");
+        }
+        let bench = row(&rows, "telemetry_bench");
+        assert!(bench.shown && !bench.bool_value, "hardware report starts off");
+        super::set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry_bench", true);
+        super::set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry_laya", false);
+        let s = doc(&chosen);
+        assert_eq!(s["privacy_choice"], serde_json::json!("custom"));
+        assert_eq!(s["telemetry_bench"], serde_json::json!(true));
+        assert_eq!(s["telemetry_laya"], serde_json::json!(false));
+        assert_eq!(s["telemetry_usage"], serde_json::json!(true));
+    }
+
+    /// "Start with Windows" is offered by `[install] autostart`; the Recommended summary says
+    /// so only when it is on by default (BMM offers it unticked).
+    #[test]
+    fn autostart_is_listed_only_when_it_is_on_by_default() {
+        let mut cfg = InstallerConfig::load(BMM).unwrap();
+        assert_eq!(
+            cfg.install.autostart,
+            Some(false),
+            "BMM offers it, unticked"
+        );
+        let t = tr("en");
+        let line = t.t("welcome.includes_autostart");
+        assert!(!super::recommended_items(&cfg, &[], &t)
+            .iter()
+            .any(|s| s.as_str() == line));
+        cfg.install.autostart = Some(true);
+        assert!(super::recommended_items(&cfg, &[], &t)
+            .iter()
+            .any(|s| s.as_str() == line));
+    }
+
+    /// Recommended asks only what needs the person's own answer (privacy); Custom adds the
+    /// Location step and every group, in the config's order.
+    #[test]
+    fn recommended_asks_only_privacy_and_custom_asks_everything() {
+        use super::{build_flow, Step};
+        let cfg = InstallerConfig::load(BMM).unwrap();
+        let opts = order_by_group(
+            cfg.setup_options
+                .iter()
+                .filter(|o| o.id != "legal")
+                .cloned()
+                .collect(),
+            &cfg.setup_groups,
+        );
+        let rec = build_flow(false, 2, &opts, &cfg.setup_groups);
+        assert_eq!(
+            rec,
+            vec![Step::Welcome, Step::Legal, Step::Group("privacy".into())]
+        );
+        let custom = build_flow(true, 2, &opts, &cfg.setup_groups);
+        let groups: Vec<String> = custom
+            .iter()
+            .filter_map(|s| match s {
+                Step::Group(g) => Some(g.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(custom[2], Step::Location);
+        assert_eq!(
+            groups,
+            [
+                "look",
+                "laya",
+                "privacy",
+                "guidance",
+                "behaviour",
+                "security"
+            ]
+        );
+        // The Recommended defaults keep BMM's own: the guided tour, Laya installed.
+        let s =
+            bpkg_core::handoff::build(&cfg.setup_options, &Default::default(), vec![], "1", "x")
+                .settings;
+        assert_eq!(s["skip_tutorial"], serde_json::json!(false));
+        assert_eq!(s["ai_features"], serde_json::json!(true));
+        assert_eq!(s["privacy_choice"], serde_json::json!(""));
     }
 
     #[test]
@@ -3752,5 +4459,203 @@ After the table.";
         for require in [false, true] {
             assert!(signature_verdict(true, true, require).is_ok());
         }
+    }
+
+    /// Renders every installer page to BMP files with Slint's software renderer, for a look
+    /// at the layout without launching an installer. Not part of the suite:
+    /// `BI_PREVIEW_DIR=<dir> cargo test -p installer render_previews -- --ignored`
+    /// (`BI_PREVIEW_LIGHT=1` for the light palette, `BI_PREVIEW_LANG=fr` for French).
+    #[test]
+    #[ignore]
+    fn render_previews() {
+        use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+        use slint::platform::{Platform, WindowAdapter};
+        use slint::ComponentHandle;
+        use std::rc::Rc;
+        struct P(Rc<MinimalSoftwareWindow>);
+        impl Platform for P {
+            fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+                Ok(self.0.clone())
+            }
+        }
+        let out = std::path::PathBuf::from(
+            std::env::var("BI_PREVIEW_DIR").unwrap_or_else(|_| ".".into()),
+        );
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(P(window.clone()))).unwrap();
+        let (w, h) = (1000u32, 760u32);
+        let cfg = InstallerConfig::load(BMM).unwrap();
+        let opts = order_by_group(
+            cfg.setup_options
+                .iter()
+                .filter(|o| o.id != "legal")
+                .cloned()
+                .collect(),
+            &cfg.setup_groups,
+        );
+        let mut t = Translator::builtin();
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/bmm/installer-locales"
+        );
+        for code in ["en", "fr"] {
+            let text = std::fs::read_to_string(format!("{dir}/{code}.toml")).unwrap();
+            t.add_catalog(bpkg_core::i18n::Catalog::parse(code, &text).unwrap());
+        }
+        let lang = std::env::var("BI_PREVIEW_LANG").unwrap_or_else(|_| "en".into());
+        t.set_language(&lang);
+        t.set_ctx("app", cfg.app.name.clone());
+        t.set_ctx("version", cfg.app.version.clone());
+        t.set_ctx("publisher", cfg.app.publisher.clone());
+        let t = Rc::new(t);
+        let ui = super::MainWindow::new().unwrap();
+        {
+            let t = t.clone();
+            ui.global::<super::I18n>().on_tr(move |k, _| t.t(&k).into());
+        }
+        let light = std::env::var("BI_PREVIEW_LIGHT").is_ok();
+        super::apply_palette(&ui, light, &cfg.theme, cfg.branding.accent.as_deref());
+        window.set_size(slint::PhysicalSize::new(w, h));
+        ui.show().unwrap();
+        ui.set_app_name(cfg.app.name.clone().into());
+        ui.set_app_version(cfg.app.version.clone().into());
+        ui.set_signed(true);
+        ui.set_signature_status(t.t("signature.verified").into());
+        ui.set_recommended_items(slint::ModelRc::from(Rc::new(slint::VecModel::from(
+            super::recommended_items(&cfg, &opts, &t),
+        ))));
+        let flow = super::build_flow(true, 2, &opts, &cfg.setup_groups);
+        let steps = |cur: usize| {
+            let rows: Vec<super::StepRow> = flow
+                .iter()
+                .enumerate()
+                .map(|(i, s)| super::StepRow {
+                    label: super::step_label(s, &cfg.setup_groups, &t).into(),
+                    state: if i < cur {
+                        2
+                    } else if i == cur {
+                        1
+                    } else {
+                        0
+                    },
+                })
+                .collect();
+            slint::ModelRc::from(Rc::new(slint::VecModel::from(rows)))
+        };
+        let mut chosen = std::collections::BTreeMap::new();
+        chosen.insert("privacy_choice".to_string(), serde_json::json!("custom"));
+        chosen.insert("guidance_level".to_string(), serde_json::json!("custom"));
+        let mut expanded = std::collections::BTreeSet::new();
+        expanded.insert("telemetry".to_string());
+        chosen.insert("telemetry".to_string(), serde_json::json!(true));
+        let rows = option_rows(&opts, &cfg.setup_groups, &chosen, &expanded, &t);
+        ui.set_options(slint::ModelRc::from(Rc::new(slint::VecModel::from(rows))));
+        let comps = super::component_rows(&cfg, &[], &["core".into(), "cli".into()], &t);
+        ui.set_components(slint::ModelRc::from(Rc::new(slint::VecModel::from(comps))));
+        ui.set_install_dir("C:\\Program Files\\Better Mods Manager".into());
+        ui.set_offer_shortcuts(true);
+        ui.set_offer_autostart(true);
+        ui.set_language_names(slint::ModelRc::from(Rc::new(slint::VecModel::from(vec![
+            slint::SharedString::from("English"),
+            slint::SharedString::from("Français"),
+        ]))));
+        let blocks = parse_md(
+            &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../PRIVACY.md"))
+                .unwrap_or_default(),
+        );
+        ui.set_legal_blocks(slint::ModelRc::from(Rc::new(slint::VecModel::from(blocks))));
+        ui.set_legal_title(t.t("docs.privacy").into());
+        ui.set_legal_accept_text(
+            t.t_with("legal.accept", &[("doc", &t.t("docs.privacy"))])
+                .into(),
+        );
+        ui.set_legal_counter(
+            t.t_with("legal.counter", &[("n", "2"), ("total", "2")])
+                .into(),
+        );
+
+        let shot = |name: &str| {
+            slint::platform::update_timers_and_animations();
+            window.request_redraw();
+            let mut buf = vec![slint::Rgb8Pixel::default(); (w * h) as usize];
+            window.draw_if_needed(|r| {
+                r.render(&mut buf, w as usize);
+            });
+            // 24-bit BMP, bottom-up rows.
+            let row = (w * 3 + 3) & !3;
+            let size = 54 + row * h;
+            let mut f: Vec<u8> = Vec::with_capacity(size as usize);
+            f.extend_from_slice(b"BM");
+            f.extend_from_slice(&size.to_le_bytes());
+            f.extend_from_slice(&[0, 0, 0, 0]);
+            f.extend_from_slice(&54u32.to_le_bytes());
+            f.extend_from_slice(&40u32.to_le_bytes());
+            f.extend_from_slice(&(w as i32).to_le_bytes());
+            f.extend_from_slice(&(h as i32).to_le_bytes());
+            f.extend_from_slice(&1u16.to_le_bytes());
+            f.extend_from_slice(&24u16.to_le_bytes());
+            f.extend_from_slice(&[0u8; 24]);
+            for y in (0..h).rev() {
+                for x in 0..w {
+                    let p = buf[(y * w + x) as usize];
+                    f.extend_from_slice(&[p.b, p.g, p.r]);
+                }
+                for _ in 0..(row - w * 3) {
+                    f.push(0);
+                }
+            }
+            std::fs::write(out.join(format!("{name}.bmp")), f).unwrap();
+        };
+        let group_page = |g: &str, cur: usize| {
+            let (title, sub) = super::group_heading(g, &cfg.setup_groups, &t);
+            ui.set_setup_group(g.into());
+            ui.set_setup_title(title.into());
+            ui.set_setup_subtitle(sub.into());
+            ui.set_steps(steps(cur));
+            ui.set_page(2);
+        };
+        ui.set_steps(steps(0));
+        ui.set_page(0);
+        shot("01-welcome");
+        ui.set_steps(steps(1));
+        ui.set_page(1);
+        shot("02-legal");
+        ui.set_steps(steps(2));
+        ui.set_page(5);
+        shot("03-location");
+        for (i, g) in [
+            "look",
+            "laya",
+            "privacy",
+            "guidance",
+            "behaviour",
+            "security",
+        ]
+        .iter()
+        .enumerate()
+        {
+            group_page(g, 3 + i);
+            shot(&format!("{:02}-group-{g}", 4 + i));
+        }
+        // The privacy step before any choice.
+        let rows = option_rows(
+            &opts,
+            &cfg.setup_groups,
+            &Default::default(),
+            &Default::default(),
+            &t,
+        );
+        ui.set_options(slint::ModelRc::from(Rc::new(slint::VecModel::from(rows))));
+        group_page("privacy", 5);
+        ui.set_last_step(true);
+        ui.set_can_proceed(false);
+        shot("10-privacy-unanswered");
+        ui.set_progress(0.42);
+        ui.set_progress_label("Installing…  42%  ·  better-mods-manager.exe".into());
+        ui.set_page(3);
+        shot("11-progress");
+        ui.set_result_title(t.t("done.installed_title").into());
+        ui.set_page(4);
+        shot("12-done");
     }
 }
