@@ -48,13 +48,23 @@ if ((Test-Path $pkg) -and -not (Test-Path $prevPkg)) {
 }
 
 # 1) Bump the three version sources (keep them in lockstep).
+# Written WITHOUT a byte-order mark: `Set-Content -Encoding utf8` in Windows PowerShell 5.1 adds
+# one, and a BOM at the top of Cargo.toml / tauri.conf.json breaks the parsers that read them.
 function Set-Version($path, $pattern, $replacement) {
-    (Get-Content $path -Raw) -replace $pattern, $replacement | Set-Content -Encoding utf8 $path
+    $text = (Get-Content $path -Raw) -replace $pattern, $replacement
+    [System.IO.File]::WriteAllText((Resolve-Path $path), $text, (New-Object System.Text.UTF8Encoding($false)))
 }
 Set-Version $cfgPath  '(?m)^(\s*version\s*=\s*")[^"]+(")'           ('${1}' + $Version + '${2}')
 Set-Version $cargoTml '(?m)^(version\s*=\s*")[^"]+(")'             ('${1}' + $Version + '${2}')
 Set-Version $tauriCfg '("version"\s*:\s*")[^"]+(")'               ('${1}' + $Version + '${2}')
 Write-Host "[release] bumped installer.toml / Cargo.toml / tauri.conf.json"
+# package.json / package-lock.json are not rewritten here (npm owns them): bump them first with
+# `npm version <x.y.z> --no-git-tag-version`. The gate below names every source that disagrees.
+Push-Location $BmmRoot
+try {
+    & node scripts/check-release-versions.mjs
+    if ($LASTEXITCODE -ne 0) { throw "the BMM sources do not agree on $Version (see above)" }
+} finally { Pop-Location }
 
 # 2) Build BMM (frontend + exe) unless skipped.
 if (-not $SkipBmmBuild) {
@@ -107,16 +117,60 @@ if ($ExtraSources.Count -gt 0) {
 # 6) Archive the NEW package for the next release's delta.
 Copy-Item $pkg (Join-Path $archive ("bmm-{0}.bpkg" -f $Version)) -Force
 
-# 7) Optionally publish the GitHub release.
+# 7) BMM's OWN signed incremental manifest (update-manifest.json). A BMM copy that
+#    BetterInstaller did not install (and every 1.0.x full-installer fallback) reads THIS file,
+#    not update.json, and runs an installer only when the signed manifest lists it with its
+#    SHA-256. Publishing without it is what made 1.0.x answer "Update refused: this release
+#    publishes no signed update manifest". Generated from the setup just stamped, signed with
+#    the same key under BMM's own context, and verified against the key BMM pins.
+Push-Location $BmmRoot
+try {
+    $relAssets = Join-Path "dist" ("release-assets-v{0}" -f $Version)
+    # A setup left there by an earlier run would be a second installer on the release.
+    Get-ChildItem $relAssets -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.(exe|msi)$' } | Remove-Item -Force
+    & node scripts/gen-update-manifest.mjs --version $Version --installer Release/BMM-Setup.exe --require-installer
+    if ($LASTEXITCODE -ne 0) { throw "gen-update-manifest failed" }
+    $bmmManifest = Join-Path $relAssets "update-manifest.json"
+    $keyFile = Join-Path (Get-Location) "BetterInstaller/examples/bmm/keys/private.key"
+    if (-not (Test-Path $keyFile)) { $keyFile = Join-Path $PSScriptRoot "keys/private.key" }
+    & node scripts/sign-update-manifest.mjs sign $bmmManifest --key $keyFile
+    if ($LASTEXITCODE -ne 0) { throw "signing update-manifest.json failed" }
+    & node scripts/sign-update-manifest.mjs verify $bmmManifest
+    if ($LASTEXITCODE -ne 0) { throw "update-manifest.json does not verify against the key BMM pins" }
+    # Every artefact states $Version, both manifests were signed NOW, ONE installer.
+    $bpkgAbs = (Resolve-Path (Join-Path $PSScriptRoot "../../target/release/bpkg.exe")).Path
+    & node scripts/check-release-versions.mjs --artifacts --bpkg $bpkgAbs
+    if ($LASTEXITCODE -ne 0) { throw "release artefacts disagree (see above)" }
+    $doc = Get-Content $bmmManifest -Raw | ConvertFrom-Json
+    $assets += (Resolve-Path $bmmManifest).Path
+    foreach ($f in @($doc.files)) {
+        $name = ($f.download_url -split '/')[-1]
+        $path = Join-Path $relAssets $name
+        if (-not (Test-Path $path)) { throw "$name is named by update-manifest.json but absent from $relAssets" }
+        $assets += (Resolve-Path $path).Path
+    }
+    $changelog = Join-Path (Get-Location) ("Update/changelog_v{0}_EN.md" -f $Version)
+} finally { Pop-Location }
+
+# ONE installer among the assets: BMM 0.9.11 has no version guard and runs the FIRST .msi/.exe
+# of the release, so a second one is a second program it may launch.
+$installersOut = @($assets | Where-Object { $_ -match '\.(exe|msi)$' })
+if ($installersOut.Count -ne 1) { throw "exactly one installer asset expected, got: $($installersOut -join ', ')" }
+
+# 8) Optionally publish the GitHub release: every asset in ONE call (so no client ever sees the
+#    release without its signed manifests), as Latest and NOT a pre-release: the stable channel
+#    reads /releases/latest (v1.0.1 went out as a pre-release and was offered to nobody).
+#    Both manifests expire 7 days after signing: publish right after this script, and let
+#    BMM's resign-manifests.yml renew them twice a week.
 Write-Host ""
 Write-Host "[release] assets:"; $assets | ForEach-Object { Write-Host "    $_" }
+$notesArgs = if (Test-Path $changelog) { @("--notes-file", $changelog) } else { @("--notes", $(if ($Notes) { $Notes } else { "BMM $Version" })) }
 if ($Publish) {
-    $body = if ($Notes) { $Notes } else { "BMM $Version" }
-    & gh release create "v$Version" $assets --title "BMM $Version" --notes $body
+    & gh release create "v$Version" $assets --title "BMM $Version" --latest @notesArgs
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
-    Write-Host "[release] published v$Version"
+    Write-Host "[release] published v$Version (Latest)"
 } else {
     Write-Host ""
-    Write-Host "[release] dry run (no -Publish). To publish:"
-    Write-Host ("    gh release create v{0} {1} --title `"BMM {0}`" --notes `"...`"" -f $Version, ($assets -join ' '))
+    Write-Host "[release] dry run (no -Publish). To publish (within the manifests' 7-day validity):"
+    Write-Host ("    gh release create v{0} {1} --title `"BMM {0}`" --latest {2}" -f $Version, ($assets -join ' '), ($notesArgs -join ' '))
 }

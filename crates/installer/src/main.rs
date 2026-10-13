@@ -1368,6 +1368,8 @@ fn run_gui(
         let launch_checked = launch_checked.clone();
         let written_handoff = written_handoff.clone();
         let final_opt_id: Option<String> = final_opt.as_ref().map(|o| o.id.clone());
+        let legal_docs_for_receipts = legal_docs.clone();
+        let legal_id_for_receipts = legal_opt_id.clone();
         let tr = tr.clone();
         // Only a fresh install offers the picker — Repair and Update do not
         // rewrite the handoff, so there would be nothing for it to change.
@@ -1423,6 +1425,20 @@ fn run_gui(
                     bpkg_core::VERSION,
                 );
                 doc.install_dir = ui.get_install_dir().to_string();
+                // Proof of what was accepted: one receipt per legal document, naming the
+                // exact text shown (its SHA-256), its language and file. The license step
+                // cannot be passed without accepting each one, so reaching here IS the
+                // acceptance. The app checks the hash against the texts it ships.
+                if legal_id_for_receipts
+                    .as_ref()
+                    .map(|id| chosen.borrow().get(id).and_then(|v| v.as_bool()) == Some(true))
+                    .unwrap_or(false)
+                {
+                    doc.consents = legal_receipts(
+                        &legal_docs_for_receipts.borrow(),
+                        &doc.installed_at.clone(),
+                    );
+                }
                 let dir = match h.location {
                     bpkg_core::config::HandoffLocation::AppData => app_data_dir.clone(),
                     bpkg_core::config::HandoffLocation::InstallDir => {
@@ -2414,6 +2430,11 @@ struct LegalDoc {
     file: String,
     /// Non-empty when the document is not in the language the installer is shown in.
     notice: String,
+    /// SHA-256 of the exact text shown (`handoff::text_hash`), for the consent receipt the
+    /// app records: proof of WHICH text was accepted, not merely that one was.
+    sha256: String,
+    /// Language of the file shown (`en`, `fr`, ...).
+    lang: String,
 }
 
 /// The `_<LANG>` sibling of a document name: `TOS.md` + `fr` → `TOS_FR.md`,
@@ -2507,15 +2528,37 @@ fn load_legal_docs(
             .iter()
             .find_map(|(f, code)| map.get(f).map(|b| (f, code, b)));
         if let Some((name, code, bytes)) = picked {
+            let text = String::from_utf8_lossy(bytes);
             out.push(LegalDoc {
                 title: doc_title(name, tr),
-                blocks: parse_md(&String::from_utf8_lossy(bytes)),
+                blocks: parse_md(&text),
                 file: name.clone(),
                 notice: fallback_notice(code, tr),
+                sha256: handoff::text_hash(&text),
+                lang: code.clone(),
             });
         }
     }
     out
+}
+
+/// The consent receipts for the legal documents shown (`handoff::ConsentReceipt`): one per
+/// document BMM tracks (terms, privacy policy), with the hash of the exact text read.
+fn legal_receipts(docs: &[LegalDoc], at: &str) -> Vec<handoff::ConsentReceipt> {
+    docs.iter()
+        .filter_map(|d| {
+            let id = handoff::legal_doc_id(&d.file)?;
+            Some(handoff::ConsentReceipt {
+                doc: id.to_string(),
+                text_sha256: d.sha256.clone(),
+                lang: d.lang.clone(),
+                file: d.file.clone(),
+                choice: "accepted".into(),
+                at: at.to_string(),
+                ..Default::default()
+            })
+        })
+        .collect()
 }
 
 /// Said only when a document fell back to ANOTHER language than the one on screen; `fr`
@@ -3542,8 +3585,8 @@ fn preset_choices(args: &[String], opts: &[SetupOption]) -> BTreeMap<String, ser
 #[cfg(test)]
 mod tests {
     use super::{
-        doc_title, fallback_notice, is_web_url, legal_candidates, option_rows, order_by_group,
-        parse_md, preset_choices, signature_verdict,
+        doc_title, fallback_notice, is_web_url, legal_candidates, legal_receipts, option_rows,
+        order_by_group, parse_md, preset_choices, signature_verdict, LegalDoc,
     };
 
     #[test]
@@ -3796,6 +3839,37 @@ After the table.";
         );
         assert!(blocks.iter().any(|b| b.level == 2 && b.text == "Summary"));
         assert!(texts.iter().any(|t| t == "After the table."));
+    }
+
+    #[test]
+    fn accepted_legal_documents_become_receipts_with_the_hash_of_the_text_shown() {
+        let doc = |file: &str, text: &str, lang: &str| LegalDoc {
+            title: String::new(),
+            blocks: Vec::new(),
+            file: file.into(),
+            notice: String::new(),
+            sha256: bpkg_core::handoff::text_hash(text),
+            lang: lang.into(),
+        };
+        let docs = [
+            doc("TOS_FR.md", "Conditions\r\n", "fr"),
+            doc("PRIVACY_FR.md", "Confidentialité", "fr"),
+            doc("LICENSE.md", "MIT", "en"),
+        ];
+        let r = legal_receipts(&docs, "2026-10-13T10:00:00Z");
+        assert_eq!(r.len(), 2, "the licence is not a consent BMM tracks");
+        assert_eq!(
+            (r[0].doc.as_str(), r[0].file.as_str(), r[0].lang.as_str()),
+            ("tos", "TOS_FR.md", "fr")
+        );
+        assert_eq!(
+            r[0].text_sha256,
+            bpkg_core::handoff::text_hash("Conditions")
+        );
+        assert_eq!(r[1].doc, "privacy");
+        assert!(r
+            .iter()
+            .all(|c| c.choice == "accepted" && c.at == "2026-10-13T10:00:00Z"));
     }
 
     #[test]
@@ -4156,7 +4230,13 @@ After the table.";
             "« Accept all » must not turn on the hardware report"
         );
         // Even when it had been ticked under Customize first: the card decides.
-        pick_card(&opts, &mut chosen, &mut expanded, "privacy_choice", "custom");
+        pick_card(
+            &opts,
+            &mut chosen,
+            &mut expanded,
+            "privacy_choice",
+            "custom",
+        );
         super::set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry", true);
         chosen.insert("telemetry_bench".into(), serde_json::json!(true));
         assert_eq!(doc(&chosen)["telemetry_bench"], serde_json::json!(true));
@@ -4225,7 +4305,10 @@ After the table.";
             assert!(r.shown && r.bool_value, "{id}");
         }
         let bench = row(&rows, "telemetry_bench");
-        assert!(bench.shown && !bench.bool_value, "hardware report starts off");
+        assert!(
+            bench.shown && !bench.bool_value,
+            "hardware report starts off"
+        );
         super::set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry_bench", true);
         super::set_bool_option(&opts, &mut chosen, &mut expanded, "telemetry_laya", false);
         let s = doc(&chosen);

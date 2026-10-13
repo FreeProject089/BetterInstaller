@@ -409,9 +409,22 @@ The installer writes (to `%APPDATA%/<app.id>/installer-handoff.json`):
     "skip_tutorial": false,
     "telemetry": false,
     "import_starter_themes": true
-  }
+  },
+  "consents": [
+    { "doc": "tos", "text_sha256": "<64 hex>", "lang": "fr", "file": "TOS_FR.md",
+      "choice": "accepted", "at": "2026-10-13T10:00:00+00:00" },
+    { "doc": "privacy", "text_sha256": "<64 hex>", "lang": "fr", "file": "PRIVACY_FR.md",
+      "choice": "accepted", "at": "2026-10-13T10:00:00+00:00" }
+  ]
 }
 ```
+
+`consents` (absent when nothing was accepted) is the proof of what the `license` step accepted:
+one receipt per document named `TOS*`/`EULA*`/`TERMS*` (`tos`) or `PRIVACY*` (`privacy`), with
+the SHA-256 of the exact text shown (`bpkg_core::handoff::text_hash`: CRLF → LF, trailing spaces
+trimmed), its language and file, and the install time. An app that keeps consent records checks
+the hash against the texts it ships before treating it as proof; one that does not ignores the
+field.
 
 The app must, **once** on first launch:
 1. Read the file from its own data dir, validate `source == "betterinstaller"`.

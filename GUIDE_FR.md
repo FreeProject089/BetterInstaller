@@ -427,9 +427,22 @@ L'installeur écrit (dans `%APPDATA%/<app.id>/installer-handoff.json`) :
     "skip_tutorial": false,
     "telemetry": false,
     "import_starter_themes": true
-  }
+  },
+  "consents": [
+    { "doc": "tos", "text_sha256": "<64 hex>", "lang": "fr", "file": "TOS_FR.md",
+      "choice": "accepted", "at": "2026-10-13T10:00:00+00:00" },
+    { "doc": "privacy", "text_sha256": "<64 hex>", "lang": "fr", "file": "PRIVACY_FR.md",
+      "choice": "accepted", "at": "2026-10-13T10:00:00+00:00" }
+  ]
 }
 ```
+
+`consents` (absent si rien n'a été accepté) est la preuve de ce que l'étape `license` a fait
+accepter : une preuve par document nommé `TOS*`/`EULA*`/`TERMS*` (`tos`) ou `PRIVACY*` (`privacy`),
+avec le SHA-256 du texte exact affiché (`bpkg_core::handoff::text_hash` : CRLF → LF, espaces de fin
+retirés), sa langue et son fichier, et l'heure de l'installation. Une app qui tient des preuves de
+consentement vérifie l'empreinte contre les textes qu'elle livre avant d'y voir une preuve ; une
+app qui ne le fait pas ignore le champ.
 
 L'app doit, **une fois** au 1er lancement :
 1. Lire le fichier depuis son propre dossier de données, valider `source == "betterinstaller"`.
