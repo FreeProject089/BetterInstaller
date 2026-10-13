@@ -42,7 +42,9 @@ $prevVer = Read-TomlVersion $cfgPath
 Write-Host "[release] $prevVer -> $Version"
 New-Item -ItemType Directory -Force $archive | Out-Null
 $prevPkg = Join-Path $archive ("bmm-{0}.bpkg" -f $prevVer)
-if ((Test-Path $pkg) -and -not (Test-Path $prevPkg)) {
+# Re-running a release (installer.toml already at $Version) has no previous version to diff from.
+if ($prevVer -eq $Version) { Write-Host "[release] same version as installer.toml: no archive, no delta" }
+if (($prevVer -ne $Version) -and (Test-Path $pkg) -and -not (Test-Path $prevPkg)) {
     Copy-Item $pkg $prevPkg
     Write-Host "[release] archived previous package -> $prevPkg"
 }
@@ -85,7 +87,7 @@ if ($LASTEXITCODE -ne 0) { throw "build-installer failed" }
 # 4) Delta from the previous release (if we have its package).
 $assets = @($setup, $pkg, $manifest)
 $deltas = @()
-if (Test-Path $prevPkg) {
+if (($prevVer -ne $Version) -and (Test-Path $prevPkg)) {
     $patch = Join-Path $archive ("{0}-to-{1}.patch" -f $prevVer, $Version)
     & $bpkg delta --old $prevPkg --new $pkg --out $patch
     if ($LASTEXITCODE -eq 0 -and (Test-Path $patch)) {
