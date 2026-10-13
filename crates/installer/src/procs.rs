@@ -17,6 +17,67 @@ use std::path::{Path, PathBuf};
 /// were closed. Processes that cannot be opened (another user's, elevated) are skipped.
 #[cfg(windows)]
 pub fn close_by_path(targets: &[PathBuf]) -> usize {
+    scan(targets, true)
+}
+
+/// How many processes of this user are running one of `targets` (never this process).
+/// The same lookup as [`close_by_path`], without closing anything: what an unattended run
+/// asks after closing, to fail with "app running" rather than on a locked file.
+#[cfg(windows)]
+pub fn count_running(targets: &[PathBuf]) -> usize {
+    scan(targets, false)
+}
+
+#[cfg(not(windows))]
+pub fn count_running(_targets: &[PathBuf]) -> usize {
+    0
+}
+
+/// Wait up to `timeout` for process `pid` to exit. `true` when it has exited (or does not
+/// exist, or cannot be opened: then there is nothing this process could wait on).
+#[cfg(windows)]
+pub fn wait_pid(pid: u32, timeout: std::time::Duration) -> bool {
+    type Handle = isize;
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+        fn WaitForSingleObject(h: Handle, ms: u32) -> u32;
+        fn CloseHandle(h: Handle) -> i32;
+    }
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const WAIT_TIMEOUT: u32 = 0x0000_0102;
+    if pid == std::process::id() {
+        return true;
+    }
+    // SAFETY: documented kernel32 calls; the handle is closed on every path.
+    unsafe {
+        let h = OpenProcess(SYNCHRONIZE, 0, pid);
+        if h == 0 {
+            return true;
+        }
+        let ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+        let r = WaitForSingleObject(h, ms);
+        CloseHandle(h);
+        r != WAIT_TIMEOUT
+    }
+}
+
+#[cfg(not(windows))]
+pub fn wait_pid(pid: u32, timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    let alive = || std::path::Path::new(&format!("/proc/{pid}")).exists();
+    while alive() {
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    true
+}
+
+/// Find this user's processes running one of `targets`; terminate them when `terminate`.
+/// Returns how many matched (and, when terminating, were closed).
+#[cfg(windows)]
+fn scan(targets: &[PathBuf], terminate: bool) -> usize {
     use std::os::windows::ffi::OsStringExt;
 
     #[repr(C)]
@@ -99,7 +160,9 @@ pub fn close_by_path(targets: &[PathBuf]) -> usize {
                         let is_target = std::fs::canonicalize(&image)
                             .map(|c| wanted.iter().any(|(w, _)| same_path(w, &c)))
                             .unwrap_or(false);
-                        if is_target && TerminateProcess(h, 1) != 0 {
+                        if is_target && !terminate {
+                            closed += 1;
+                        } else if is_target && TerminateProcess(h, 1) != 0 {
                             WaitForSingleObject(h, 5000);
                             closed += 1;
                         }

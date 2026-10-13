@@ -92,6 +92,8 @@ installing_pct = "Installation…  {pct} %"
 prerequisite = "Installation du prérequis : {name}…"
 closing = "Fermeture de l'application en cours d'exécution…"
 finishing = "Finalisation…"
+waiting_app = "Attente de la fermeture de l'application…"
+cancelling = "Annulation à la fin de l'étape en cours…"
 repairing = "Réparation…"
 updating = "Mise à jour…"
 uninstalling = "Désinstallation…"
@@ -144,6 +146,8 @@ yes_repair = "Oui, réparer"
 
 [errors]
 not_writable = "Impossible d'écrire dans {dir} : {error}\nChoisissez un dossier accessible en écriture (celui par défaut est dans votre profil utilisateur). Installer dans Program Files nécessite un installateur administrateur (élevé)."
+app_running = "L'application est toujours en cours d'exécution et n'a pas pu être fermée. Fermez-la puis réessayez."
+cancelled = "Annulé : rien n'a été installé."
 signature_invalid = "La signature du paquet est INVALIDE. Installation refusée."
 signature_missing = "Le paquet n'est pas signé, alors qu'une signature est exigée."
 

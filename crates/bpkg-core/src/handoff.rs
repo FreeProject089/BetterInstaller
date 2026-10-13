@@ -58,6 +58,11 @@ pub struct ConsentReceipt {
     pub categories: BTreeMap<String, bool>,
     /// RFC 3339, UTC: when the install was confirmed.
     pub at: String,
+    /// How the acceptance was given: `ui` (the installer window: each document read and
+    /// ticked) or `cli` (an unattended install run with `--accept-terms` /
+    /// `--accept-privacy`). Absent from receipts written before the field existed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 /// The SHA-256 of a document as BMM's consent ledger hashes it (`consent_ledger::text_hash`):

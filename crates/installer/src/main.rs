@@ -12,7 +12,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+mod cli;
 mod procs;
+mod unattended;
 mod uninstall;
 
 use i_slint_backend_winit::WinitWindowAccessor;
@@ -52,6 +54,43 @@ struct SystemIntegration {
     prereqs: Vec<bpkg_core::config::Prerequisite>,
 }
 
+impl SystemIntegration {
+    /// The integration the config declares, with the installer's default shortcut choices
+    /// (Start Menu on, desktop as `desktop_shortcut`, autostart off).
+    fn from_config(cfg: &InstallerConfig, app: AppMeta) -> Self {
+        SystemIntegration {
+            app,
+            main_exe: cfg.install.main_exe.clone(),
+            protocol: cfg.install.protocol.clone(),
+            create_shortcuts: cfg.install.create_shortcuts,
+            start_menu: true,
+            desktop: cfg.install.desktop_shortcut,
+            autostart: false,
+            public_key: cfg.security.as_ref().and_then(|s| s.public_key.clone()),
+            require_signature: cfg
+                .security
+                .as_ref()
+                .map(|s| s.require_signature)
+                .unwrap_or(false),
+            prereqs: cfg.prerequisites.clone(),
+        }
+    }
+
+    /// The shortcut choices an earlier install recorded in `uninstall-info.json` (each
+    /// one only when recorded).
+    fn apply_record(&mut self, info: &serde_json::Value) {
+        if let Some(v) = info["start_menu"].as_bool() {
+            self.start_menu = v;
+        }
+        if let Some(v) = info["desktop"].as_bool() {
+            self.desktop = v;
+        }
+        if let Some(v) = info["autostart"].as_bool() {
+            self.autostart = v;
+        }
+    }
+}
+
 slint::include_modules!();
 
 /// Pushes a legal document (by index) into the UI and gates the Next button.
@@ -70,34 +109,88 @@ thread_local! {
 fn main() -> anyhow::Result<()> {
     #[cfg(windows)]
     harden_dll_search();
-    let args: Vec<String> = std::env::args().collect();
-    let has = |flag: &str| args.iter().any(|a| a == flag);
-    // `--lang=<tag>` opens in that language, whatever the OS says. For testing a
-    // translation, and for a support person reproducing what a user sees.
-    let lang_arg = args
-        .iter()
-        .find_map(|a| a.strip_prefix("--lang="))
-        .map(str::to_string);
-    let (cfg, package_path, config_dir) = resolve_sources()?;
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let exe_name = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "setup.exe".into());
+
+    // The command line first: a typo in an unattended command is an error with its own exit
+    // code, never a different install (cli.rs).
+    let args = match cli::parse(&raw) {
+        Ok(a) => a,
+        Err(e) => {
+            #[cfg(windows)]
+            attach_parent_console();
+            eprintln!(
+                "{exe_name}: {e}
+Run {exe_name} --help for the options."
+            );
+            std::process::exit(cli::Exit::BadArgs.code());
+        }
+    };
+    let sources = resolve_sources(&args.positionals);
+
+    if args.help || args.version {
+        #[cfg(windows)]
+        attach_parent_console();
+        let cfg = sources.as_ref().ok().map(|s| &s.0);
+        if args.version {
+            match cfg {
+                Some(c) => println!(
+                    "{} {} (BetterInstaller {})",
+                    c.app.name,
+                    c.app.version,
+                    bpkg_core::VERSION
+                ),
+                None => println!("BetterInstaller {}", bpkg_core::VERSION),
+            }
+        } else {
+            let extra = cfg.map(unattended::help_for_config).unwrap_or_default();
+            print!(
+                "{}",
+                cli::help_text(
+                    &exe_name,
+                    cfg.map(|c| (c.app.name.as_str(), c.app.version.as_str())),
+                    &extra
+                )
+            );
+        }
+        std::process::exit(0);
+    }
+
+    let (cfg, package_path, config_dir) = match sources {
+        Ok(s) => s,
+        Err(e) if args.mode.is_some() => {
+            #[cfg(windows)]
+            attach_parent_console();
+            eprintln!("{exe_name}: {e}");
+            std::process::exit(cli::Exit::Verification.code());
+        }
+        Err(e) => return Err(e),
+    };
 
     // `--check-update`: headless update check. Prints a JSON result to stdout and exits
     // (10 = update available, 0 = up to date, 2 = error). Lets the installed app ask
     // "is there a newer version?" by spawning the installer and reading its output.
-    if has("--check-update") {
+    if args.check_update {
         return run_check_update(&cfg);
     }
 
-    // `--uninstall` (from the ARP entry) opens the GUI straight in maintenance mode.
-    // `--update` does the same but auto-starts the update once the manifest confirms one.
-    let uninstall = has("--uninstall");
-    let auto_update = has("--update");
+    // `--update`, `--mode <m>`, `--uninstall --quiet`: no question, see unattended.rs.
+    if let Some(mode) = args.mode {
+        let code = unattended::run(&args, mode, cfg, package_path, config_dir);
+        std::process::exit(code.code());
+    }
+
+    // `--uninstall` alone (from the ARP entry) opens the GUI straight in maintenance mode.
     run_gui(
         cfg,
         package_path,
         config_dir,
-        uninstall,
-        auto_update,
-        lang_arg,
+        args.gui_uninstall,
+        args.lang.clone(),
+        args.sets.clone(),
     )
 }
 
@@ -249,7 +342,7 @@ fn attach_parent_console() {
 /// mode, where product catalogues are read from disk when no package is given.
 type Sources = (InstallerConfig, Option<PathBuf>, Option<PathBuf>);
 
-fn resolve_sources() -> anyhow::Result<Sources> {
+fn resolve_sources(positionals: &[String]) -> anyhow::Result<Sources> {
     if let Some(emb) = std::env::current_exe()
         .ok()
         .and_then(|e| bpkg_core::embed::read_embedded(&e).ok().flatten())
@@ -264,7 +357,7 @@ fn resolve_sources() -> anyhow::Result<Sources> {
         return Ok((cfg, Some(tmp), None));
     }
 
-    let mut args = std::env::args().skip(1).filter(|a| !a.starts_with("--"));
+    let mut args = positionals.iter().cloned();
     let config_path = args
         .next()
         .unwrap_or_else(|| "examples/bmm/installer.toml".to_string());
@@ -364,8 +457,8 @@ fn run_gui(
     package_path: Option<PathBuf>,
     config_dir: Option<PathBuf>,
     start_uninstall: bool,
-    auto_update: bool,
     lang_arg: Option<String>,
+    sets: Vec<(String, String)>,
 ) -> anyhow::Result<()> {
     // Select the winit backend so the custom (frameless) title bar can drive the
     // window (drag / minimize / maximize). Must run before any Slint window.
@@ -512,11 +605,10 @@ fn run_gui(
     // Shared mutable state captured by callbacks.
     let setup_opts = Rc::new(cfg.setup_options.clone());
     let setup_groups: Rc<Vec<SetupGroup>> = Rc::new(cfg.setup_groups.clone());
-    // `--set=<option>=<value>` pre-fills answers (see `preset_choices`); the page still shows
+    // `--set <option>=<value>` pre-fills answers (see `preset_choices`); the page still shows
     // them and the user can change them before installing.
-    let cli_args: Vec<String> = std::env::args().collect();
     let chosen: Rc<RefCell<BTreeMap<String, serde_json::Value>>> =
-        Rc::new(RefCell::new(preset_choices(&cli_args, &cfg.setup_options)));
+        Rc::new(RefCell::new(preset_choices(&sets, &cfg.setup_options)));
 
     // Post-install "launch now" items (opt-in checkboxes on the Done page).
     let launch_cfg: Rc<Vec<bpkg_core::config::LaunchItem>> = Rc::new(cfg.launch.clone());
@@ -1190,22 +1282,13 @@ fn run_gui(
         });
     }
     let app_version = cfg.app.version.clone();
-    let integ = SystemIntegration {
-        app: app_meta.clone(),
-        main_exe: cfg.install.main_exe.clone(),
-        protocol: cfg.install.protocol.clone(),
-        create_shortcuts: cfg.install.create_shortcuts,
-        start_menu: true,
-        desktop: cfg.install.desktop_shortcut,
-        autostart: false,
-        public_key: cfg.security.as_ref().and_then(|s| s.public_key.clone()),
-        require_signature: cfg
-            .security
-            .as_ref()
-            .map(|s| s.require_signature)
-            .unwrap_or(false),
-        prereqs: cfg.prerequisites.clone(),
-    };
+    let mut integ = SystemIntegration::from_config(&cfg, app_meta.clone());
+    // Repair / Update keep the shortcuts the install chose (they used to fall back to the
+    // defaults, which re-created a desktop shortcut someone had declined and dropped
+    // "start with Windows").
+    if maintenance {
+        integ.apply_record(&uninstall::read_info(&install_location));
+    }
 
     // ── Language switch ─────────────────────────────────────────────────────
     //
@@ -1346,10 +1429,6 @@ fn run_gui(
                         ui.set_update_available(true);
                         ui.set_new_version(newv.into());
                         REMOTE_MANIFEST.with(|c| *c.borrow_mut() = Some(m));
-                        // `--update`: a newer version is confirmed → start it immediately.
-                        if auto_update {
-                            ui.invoke_update_app();
-                        }
                     });
                 }
             });
@@ -1437,6 +1516,7 @@ fn run_gui(
                     doc.consents = legal_receipts(
                         &legal_docs_for_receipts.borrow(),
                         &doc.installed_at.clone(),
+                        "ui",
                     );
                 }
                 let dir = match h.location {
@@ -1501,8 +1581,14 @@ fn run_gui(
                     // Build the launch rows on the UI thread (Rc isn't Send).
                     let lrows = launch_rows(&launch_cfg, &launch_checked.borrow(), &comps, &trs);
                     std::thread::spawn(move || {
-                        let result =
-                            run_real_install(weak.clone(), &pkg, &dest, &comps, &integ, &trs);
+                        let report = gui_reporter(weak.clone());
+                        let hooks = Hooks {
+                            report: &report,
+                            cancel: None,
+                            drop_components: &[],
+                        };
+                        let result = run_real_install(&hooks, &pkg, &dest, &comps, &integ, &trs)
+                            .map_err(|f| f.message);
                         let _ = weak.upgrade_in_event_loop(move |ui| {
                             match result {
                                 Ok(n) => {
@@ -1856,30 +1942,84 @@ fn apply_remote_update(
     Ok(applied.written)
 }
 
-/// Verify + extract a package on a worker thread, pushing throttled (per whole
-/// percent) progress to the UI. Returns the number of files installed.
+/// How an install reports and may be stopped. The GUI reports into its window; an
+/// unattended run into its progress window and its log (unattended.rs).
+pub(crate) struct Hooks<'a> {
+    /// `(fraction done, label)`; `None` leaves the bar where it is.
+    pub report: &'a dyn Fn(Option<f32>, String),
+    /// Checked before anything is written; once files are being written, the install runs
+    /// to its end.
+    pub cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    /// Optional components to REMOVE (an unattended modify): their files are deleted after
+    /// the install and dropped from the install record.
+    pub drop_components: &'a [String],
+}
+
+impl Hooks<'_> {
+    fn label(&self, s: String) {
+        (self.report)(None, s);
+    }
+
+    fn check_cancel(&self, tr: &Translator) -> Result<(), unattended::Failure> {
+        if self
+            .cancel
+            .is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            return Err(unattended::Failure::new(
+                cli::Exit::Cancelled,
+                tr.t("errors.cancelled"),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The GUI's reporter: every report goes to the window through the event loop.
+fn gui_reporter(weak: Weak<MainWindow>) -> impl Fn(Option<f32>, String) {
+    move |p, label| {
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            if let Some(p) = p {
+                ui.set_progress(p);
+            }
+            ui.set_progress_label(label.into());
+        });
+    }
+}
+
+/// Verify + extract a package (on a worker thread), reporting throttled (per whole
+/// percent) progress through `hooks`. Returns the number of files installed.
 fn run_real_install(
-    weak: Weak<MainWindow>,
+    hooks: &Hooks,
     pkg: &Path,
     dest: &Path,
     comps: &[String],
     integ: &SystemIntegration,
     tr: &Translator,
-) -> Result<u64, String> {
+) -> Result<u64, unattended::Failure> {
+    use cli::Exit;
+    use unattended::Failure;
     // The package is opened and its signature checked FIRST — before a prerequisite is
     // downloaded and run, and before a running copy of the app is killed for an install
     // that is then refused.
-    let mut p = Package::open(pkg).map_err(|e| e.to_string())?;
+    let mut p = Package::open(pkg).map_err(|e| Failure::from_pkg(&e))?;
     if let Some(pk_hex) = integ.public_key.as_ref() {
-        let vk = bpkg_core::sign::parse_public(pk_hex).map_err(|e| e.to_string())?;
-        let valid = p.verify_signature(&vk).map_err(|e| e.to_string())?;
-        signature_verdict(valid, p.is_signed(), integ.require_signature).map_err(|k| tr.t(k))?;
+        let vk = bpkg_core::sign::parse_public(pk_hex)
+            .map_err(|e| Failure::new(Exit::Verification, e.to_string()))?;
+        let valid = p
+            .verify_signature(&vk)
+            .map_err(|e| Failure::new(Exit::Verification, e.to_string()))?;
+        signature_verdict(valid, p.is_signed(), integ.require_signature)
+            .map_err(|k| Failure::new(Exit::Verification, tr.t(k)))?;
     } else if integ.require_signature {
         // Config validation refuses this combination at load; kept so the rule holds for a
         // SystemIntegration built any other way.
-        return Err(tr.t("errors.signature_missing"));
+        return Err(Failure::new(
+            Exit::Verification,
+            tr.t("errors.signature_missing"),
+        ));
     }
     let package_files: Vec<String> = p.manifest.files.iter().map(|f| f.path.clone()).collect();
+    hooks.check_cancel(tr)?;
 
     // Whether this install owns `dest`, decided while "was it empty?" is still answerable —
     // before a zip prerequisite or the first file lands in it (see uninstall.rs).
@@ -1889,7 +2029,6 @@ fn run_real_install(
     // Prerequisites: auto-download/-install the missing required ones (those with a
     // download_url), error on any still missing. Done before touching the install.
     {
-        let weak = weak.clone();
         // The selection list carries both kinds; `prereq:` marks the ones that are not
         // package components. Split here rather than earlier so there is one selection
         // model in the UI — but the package extraction below must never be handed a
@@ -1901,35 +2040,37 @@ fn run_real_install(
         // `dest` so a zip prerequisite (a downloaded runtime) unpacks under the install
         // directory the user chose, not somewhere fixed.
         bpkg_core::prereq::ensure_required(&integ.prereqs, dest, &opted_in, |name| {
-            let label = tr.t_with("progress.prerequisite", &[("name", name)]);
-            let _ = weak.upgrade_in_event_loop(move |ui| {
-                ui.set_progress_label(label.into());
-            });
+            hooks.label(tr.t_with("progress.prerequisite", &[("name", name)]));
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Failure::from_pkg(&e))?;
     }
+    hooks.check_cancel(tr)?;
 
     // If a previous version is running, close it first — otherwise its locked .exe /
     // resources make the overwrite (install / repair / update) fail. No-op on a fresh
-    // install where the dir doesn't exist yet.
+    // install where the dir doesn't exist yet. One that could not be closed (an elevated
+    // copy) is said so, rather than failing later on a locked file.
     if dest.exists() {
-        let label = tr.t("progress.closing");
-        let _ = weak.upgrade_in_event_loop(move |ui| {
-            ui.set_progress_label(label.into());
-        });
+        hooks.label(tr.t("progress.closing"));
         kill_running_apps(dest, &package_files);
         std::thread::sleep(std::time::Duration::from_millis(400));
+        if running_apps(dest, &package_files) > 0 {
+            return Err(Failure::new(Exit::AppRunning, tr.t("errors.app_running")));
+        }
     }
 
     // Writability preflight — fail with a clear message instead of a cryptic I/O
     // error if the chosen folder needs administrator rights (e.g. Program Files).
     if let Err(e) = std::fs::create_dir_all(dest) {
-        return Err(tr.t_with(
-            "errors.not_writable",
-            &[
-                ("dir", &dest.display().to_string()),
-                ("error", &e.to_string()),
-            ],
+        return Err(Failure::new(
+            unattended::io_exit(&e),
+            tr.t_with(
+                "errors.not_writable",
+                &[
+                    ("dir", &dest.display().to_string()),
+                    ("error", &e.to_string()),
+                ],
+            ),
         ));
     }
 
@@ -1947,6 +2088,7 @@ fn run_real_install(
     } else {
         Some(&pkg_comps)
     };
+    hooks.check_cancel(tr)?;
     let mut last_pct = -1i32;
     let mut written_files: Vec<String> = Vec::new();
     let written = p
@@ -1960,26 +2102,42 @@ fn run_real_install(
                 last_pct = pct;
                 // `file` is an archive entry path — the package's text, drawn on screen.
                 let file = bpkg_core::i18n::sanitize_text(file);
-                let label = tr.t_with(
-                    "progress.installing_file",
-                    &[("pct", &pct.to_string()), ("file", &file)],
+                (hooks.report)(
+                    Some(pct as f32 / 100.0),
+                    tr.t_with(
+                        "progress.installing_file",
+                        &[("pct", &pct.to_string()), ("file", &file)],
+                    ),
                 );
-                let _ = weak.upgrade_in_event_loop(move |ui| {
-                    ui.set_progress(pct as f32 / 100.0);
-                    ui.set_progress_label(label.into());
-                });
             }
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Failure::from_pkg(&e))?;
+
+    // A modify that deselected components: their files go, and leave the record.
+    let mut files = uninstall::merged_files(&prior, &written_files);
+    if !hooks.drop_components.is_empty() {
+        let gone: Vec<String> = p
+            .manifest
+            .files
+            .iter()
+            .filter(|f| {
+                f.component
+                    .as_ref()
+                    .is_some_and(|c| hooks.drop_components.contains(c))
+            })
+            .map(|f| f.path.clone())
+            .collect();
+        let self_exe = std::env::current_exe().unwrap_or_default();
+        uninstall::remove_listed(dest, &gone, &self_exe);
+        files.retain(|f| !gone.contains(f));
+    }
 
     // After files land: shortcuts, protocol, uninstaller (best-effort).
-    let label = tr.t("progress.finishing");
-    let _ = weak.upgrade_in_event_loop(move |ui| {
-        ui.set_progress_label(label.into());
-    });
+    hooks.label(tr.t("progress.finishing"));
     let record = InstallRecord {
         owns_dir,
-        files: uninstall::merged_files(&prior, &written_files),
+        files,
+        components: pkg_comps,
     };
     do_system_integration(dest, integ, &record);
     Ok(written)
@@ -1990,6 +2148,9 @@ fn run_real_install(
 struct InstallRecord {
     owns_dir: bool,
     files: Vec<String>,
+    /// The package components installed (empty: all of them), so an unattended update or
+    /// repair installs the same ones.
+    components: Vec<String>,
 }
 
 /// Register the app with the OS: shortcuts, custom URL scheme, and the
@@ -2041,6 +2202,7 @@ fn do_system_integration(dest: &Path, integ: &SystemIntegration, record: &Instal
         "install_dir": dest.to_string_lossy(),
         "owns_dir": record.owns_dir,
         "files": record.files,
+        "components": record.components,
         // This engine verifies signed update manifests (card C-1, migration rule).
         uninstall::SIGNED_MANIFESTS_MARK: 1,
     });
@@ -2127,6 +2289,18 @@ fn kill_running_apps(dir: &Path, installed: &[String]) {
         .filter(|p| *p != self_exe && p.is_file())
         .collect();
     procs::close_by_path(&targets);
+}
+
+/// How many of the package's own executables in `dir` are still running (after
+/// [`kill_running_apps`]: one it could not close, e.g. an elevated copy).
+fn running_apps(dir: &Path, installed: &[String]) -> usize {
+    let self_exe = std::env::current_exe().unwrap_or_default();
+    let targets: Vec<PathBuf> = top_level_exes(installed)
+        .into_iter()
+        .map(|name| dir.join(name))
+        .filter(|p| *p != self_exe && p.is_file())
+        .collect();
+    procs::count_running(&targets)
 }
 
 /// The `.exe` entries at the top of a package file list (`app.exe`, not `tools/x.exe`).
@@ -2394,7 +2568,14 @@ fn spawn_reinstall(
     ui.set_progress_label(tr.t(progress_key).into());
     let weak = ui.as_weak();
     std::thread::spawn(move || {
-        let result = run_real_install(weak.clone(), &pkg, &dest, &comps, &integ, &tr);
+        let report = gui_reporter(weak.clone());
+        let hooks = Hooks {
+            report: &report,
+            cancel: None,
+            drop_components: &[],
+        };
+        let result =
+            run_real_install(&hooks, &pkg, &dest, &comps, &integ, &tr).map_err(|f| f.message);
         let _ = weak.upgrade_in_event_loop(move |ui| {
             match result {
                 Ok(n) => {
@@ -2544,7 +2725,7 @@ fn load_legal_docs(
 
 /// The consent receipts for the legal documents shown (`handoff::ConsentReceipt`): one per
 /// document BMM tracks (terms, privacy policy), with the hash of the exact text read.
-fn legal_receipts(docs: &[LegalDoc], at: &str) -> Vec<handoff::ConsentReceipt> {
+fn legal_receipts(docs: &[LegalDoc], at: &str, source: &str) -> Vec<handoff::ConsentReceipt> {
     docs.iter()
         .filter_map(|d| {
             let id = handoff::legal_doc_id(&d.file)?;
@@ -2555,6 +2736,7 @@ fn legal_receipts(docs: &[LegalDoc], at: &str) -> Vec<handoff::ConsentReceipt> {
                 file: d.file.clone(),
                 choice: "accepted".into(),
                 at: at.to_string(),
+                source: source.to_string(),
                 ..Default::default()
             })
         })
@@ -3549,37 +3731,39 @@ fn parse_hex(s: &str) -> Option<Color> {
 /// * a `license` is NEVER pre-accepted from a command line — accepting terms is a person's click;
 /// * an unknown id or a malformed value is ignored (the declared default stands), so a typo can
 ///   only fall back to the default, never to something unexpected.
-fn preset_choices(args: &[String], opts: &[SetupOption]) -> BTreeMap<String, serde_json::Value> {
+fn preset_choices(
+    sets: &[(String, String)],
+    opts: &[SetupOption],
+) -> BTreeMap<String, serde_json::Value> {
     let mut out = BTreeMap::new();
-    for a in args {
-        let Some(rest) = a.strip_prefix("--set=") else {
+    for (id, raw) in sets {
+        let Some(opt) = opts.iter().find(|o| o.id == *id) else {
             continue;
         };
-        let Some((id, raw)) = rest.split_once('=') else {
-            continue;
-        };
-        let (id, raw) = (id.trim(), raw.trim());
-        let Some(opt) = opts.iter().find(|o| o.id == id) else {
-            continue;
-        };
-        let value = match opt.kind {
-            SetupOptionKind::Bool => match raw.to_ascii_lowercase().as_str() {
-                "true" | "1" | "yes" | "on" => Some(serde_json::json!(true)),
-                "false" | "0" | "no" | "off" => Some(serde_json::json!(false)),
-                _ => None,
-            },
-            SetupOptionKind::Select | SetupOptionKind::Swatch => opt
-                .choices
-                .iter()
-                .any(|c| c == raw)
-                .then(|| serde_json::json!(raw)),
-            SetupOptionKind::License => None,
-        };
-        if let Some(v) = value {
+        if let Some(v) = set_value(opt, raw) {
             out.insert(id.to_string(), v);
         }
     }
     out
+}
+
+/// The value `--set <id>=<raw>` gives option `opt`, or `None` when `raw` is not one it can
+/// take. A `license` takes none: accepting terms is never a `--set`.
+fn set_value(opt: &SetupOption, raw: &str) -> Option<serde_json::Value> {
+    let raw = raw.trim();
+    match opt.kind {
+        SetupOptionKind::Bool => match raw.to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Some(serde_json::json!(true)),
+            "false" | "0" | "no" | "off" => Some(serde_json::json!(false)),
+            _ => None,
+        },
+        SetupOptionKind::Select | SetupOptionKind::Swatch => opt
+            .choices
+            .iter()
+            .any(|c| c == raw)
+            .then(|| serde_json::json!(raw)),
+        SetupOptionKind::License => None,
+    }
 }
 
 #[cfg(test)]
@@ -3592,16 +3776,15 @@ mod tests {
     #[test]
     fn set_flag_prefills_only_valid_answers_and_never_a_license() {
         let cfg = InstallerConfig::load("../../examples/bmm/installer.toml").unwrap();
-        let args: Vec<String> = [
-            "betterinstaller.exe",
-            "--set=ai_features=true",
-            "--set=telemetry=maybe",
-            "--set=tos=true",
-            "--set=nope=true",
-            "--set=discord_rpc=OFF",
+        let args: Vec<(String, String)> = [
+            ("ai_features", "true"),
+            ("telemetry", "maybe"),
+            ("tos", "true"),
+            ("nope", "true"),
+            ("discord_rpc", "OFF"),
         ]
         .iter()
-        .map(|s| s.to_string())
+        .map(|(a, b)| (a.to_string(), b.to_string()))
         .collect();
         let p = preset_choices(&args, &cfg.setup_options);
         assert_eq!(p.get("ai_features"), Some(&serde_json::json!(true)));
@@ -3618,7 +3801,7 @@ mod tests {
             .map(|o| o.id.as_str())
             .collect();
         for id in lic {
-            let a = vec![format!("--set={id}=true")];
+            let a = vec![(id.to_string(), "true".to_string())];
             assert!(
                 preset_choices(&a, &cfg.setup_options).is_empty(),
                 "{id} accepted from a CLI"
@@ -3856,7 +4039,7 @@ After the table.";
             doc("PRIVACY_FR.md", "Confidentialité", "fr"),
             doc("LICENSE.md", "MIT", "en"),
         ];
-        let r = legal_receipts(&docs, "2026-10-13T10:00:00Z");
+        let r = legal_receipts(&docs, "2026-10-13T10:00:00Z", "cli");
         assert_eq!(r.len(), 2, "the licence is not a consent BMM tracks");
         assert_eq!(
             (r[0].doc.as_str(), r[0].file.as_str(), r[0].lang.as_str()),
@@ -3867,9 +4050,9 @@ After the table.";
             bpkg_core::handoff::text_hash("Conditions")
         );
         assert_eq!(r[1].doc, "privacy");
-        assert!(r
-            .iter()
-            .all(|c| c.choice == "accepted" && c.at == "2026-10-13T10:00:00Z"));
+        assert!(r.iter().all(|c| c.choice == "accepted"
+            && c.at == "2026-10-13T10:00:00Z"
+            && c.source == "cli"));
     }
 
     #[test]

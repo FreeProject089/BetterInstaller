@@ -2937,6 +2937,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bpkg-core",
+ "chrono",
  "embed-manifest",
  "i-slint-backend-winit",
  "rfd",

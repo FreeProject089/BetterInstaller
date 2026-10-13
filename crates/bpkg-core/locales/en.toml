@@ -109,6 +109,8 @@ installing_pct = "Installing…  {pct}%"
 prerequisite = "Installing prerequisite: {name}…"
 closing = "Closing the running app…"
 finishing = "Finishing up…"
+waiting_app = "Waiting for the app to close…"
+cancelling = "Cancelling once the current step ends…"
 repairing = "Repairing…"
 updating = "Updating…"
 uninstalling = "Uninstalling…"
@@ -168,6 +170,8 @@ yes_repair = "Yes, repair"
 [errors]
 # {dir} {error}
 not_writable = "Can't write to {dir}: {error}\nPick a folder you can write to (the default is under your user profile). Installing into Program Files needs an administrator (elevated) installer."
+app_running = "The app is still running and could not be closed. Close it and try again."
+cancelled = "Cancelled: nothing was installed."
 signature_invalid = "The package signature is INVALID. Refusing to install."
 signature_missing = "The package is not signed, but a signature is required."
 
