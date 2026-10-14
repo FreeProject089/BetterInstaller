@@ -111,6 +111,33 @@ l'intégrité du paquet, pas la réputation Windows).
 
 ---
 
+## Livrer Better Mod Manager 1.0.2
+
+BetterInstaller construit `BMM-Setup.exe`, le seul installateur publié pour BMM. Ce sur quoi
+repose la version 1.0.2 :
+
+- **Mises à jour en une étape** : BMM lance `BMM-Setup.exe --update`, qui attend la fermeture
+  de BMM (`--wait-pid`), installe par-dessus en gardant le dossier, les composants, les
+  raccourcis et les choix, puis le relance (`--launch`). La ligne de commande complète (modes,
+  options, codes de sortie) est dans
+  [GUIDE_FR.md](GUIDE_FR.md#ligne-de-commande--installer-mettre-à-jour-réparer-modifier-désinstaller-sans-surveillance).
+- **Des manifestes signés qui nomment l'installateur** : le `update.json` signé liste
+  l'exécutable d'installation de la version avec son SHA-256 et sa taille, pour que BMM vérifie
+  le fichier téléchargé avant de le lancer. `examples/bmm/release.ps1` construit, signe et
+  vérifie aussi `update-manifest.json`, et publie une version avec un seul installateur,
+  `BMM-Setup.exe`.
+- **La confidentialité demandée une fois** : l'étape de confidentialité fonctionne comme un
+  bandeau de cookies, sans rien de présélectionné (*L'essentiel uniquement*, *Tout accepter*,
+  *Personnaliser*) ; *Tout accepter* n'active jamais le rapport matériel hebdomadaire.
+- **Des reçus de consentement dans le handoff** : pour chaque texte légal accepté, le handoff
+  transmet le document, le SHA-256 du texte exact affiché, la langue et l'heure ; BMM ne
+  l'accepte comme preuve que si le texte correspond à l'un de ceux qu'il embarque.
+
+Depuis BMM 0.9.11, la mise à jour passe d'abord par 0.9.12, puis 1.0.2 ; voir le
+[README de BMM](https://github.com/FreeProject089/BetterModsManager/blob/master/README_FR.md).
+
+---
+
 ## Référence `installer.toml` (exemple)
 
 ```toml

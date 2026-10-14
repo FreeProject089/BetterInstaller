@@ -115,6 +115,31 @@ Authenticode (Ed25519 only covers package integrity, not Windows reputation).
 
 ---
 
+## Shipping Better Mod Manager 1.0.2
+
+BetterInstaller builds `BMM-Setup.exe`, the only installer published for BMM. What the 1.0.2
+release relies on:
+
+- **One-step updates**: BMM runs `BMM-Setup.exe --update`, which waits for BMM to close
+  (`--wait-pid`), installs over it keeping the folder, components, shortcuts and choices, and
+  starts it again (`--launch`). The full command line (modes, options, exit codes) is in
+  [GUIDE.md](GUIDE.md#command-line-unattended-install-update-repair-modify-uninstall).
+- **Signed manifests that name the installer**: the signed `update.json` lists the release's
+  setup executable with its SHA-256 and size, so BMM can check the file it downloads before
+  running it. `examples/bmm/release.ps1` builds, signs and verifies `update-manifest.json` too,
+  and publishes a release with exactly one installer asset, `BMM-Setup.exe`.
+- **Privacy asked once**: the privacy step works like a cookie banner with nothing pre-selected
+  (*Essential only*, *Accept all*, *Customize*); *Accept all* never turns on the weekly hardware
+  report.
+- **Consent receipts in the handoff**: for each legal text accepted, the handoff carries the
+  document, the SHA-256 of the exact text shown, the language and the time; BMM accepts it as
+  proof only if the text matches one it ships.
+
+Users upgrading from BMM 0.9.11 go through 0.9.12 first, then 1.0.2; see the
+[BMM README](https://github.com/FreeProject089/BetterModsManager#readme).
+
+---
+
 ## Workspace
 
 ```
