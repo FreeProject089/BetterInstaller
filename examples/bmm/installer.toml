@@ -12,7 +12,7 @@
 # app.id also keys the uninstall entry and the upgrade check, so it must not drift again.
 id        = "com.bettermm.desktop"
 name      = "Better Mods Manager"
-version   = "1.0.2"
+version   = "1.0.3"
 publisher = "BetterCommunity"
 homepage  = "https://github.com/FreeProject089/BetterModsManager"
 platforms = ["windows"]
