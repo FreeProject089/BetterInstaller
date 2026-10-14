@@ -96,6 +96,10 @@ slint::include_modules!();
 /// Pushes a legal document (by index) into the UI and gates the Next button.
 type RefreshLegal = Rc<dyn Fn(&MainWindow, usize)>;
 
+/// Moves the wizard one step (forward when the flag is true); the Terms step pages through
+/// its documents first.
+type StepBy = Rc<dyn Fn(&MainWindow, bool)>;
+
 thread_local! {
     /// The remote update manifest found by the background check (UI-thread only).
     static REMOTE_MANIFEST: RefCell<Option<bpkg_core::update::UpdateManifest>> =
@@ -759,7 +763,6 @@ fn run_gui(
         let chosen = chosen.clone();
         let refresh_legal = refresh_legal.clone();
         let li = legal_index.clone();
-        let maintenance = maintenance;
         move |ui: &MainWindow| {
             let flow = flow.borrow();
             let c = (*cur.borrow()).min(flow.len().saturating_sub(1));
@@ -818,7 +821,7 @@ fn run_gui(
     });
 
     // Move one step. The Terms step pages through its documents first.
-    let step_by: Rc<dyn Fn(&MainWindow, bool)> = Rc::new({
+    let step_by: StepBy = Rc::new({
         let flow = flow.clone();
         let cur = cur_step.clone();
         let li = legal_index.clone();
@@ -4866,9 +4869,7 @@ After the table.";
                     let p = buf[(y * w + x) as usize];
                     f.extend_from_slice(&[p.b, p.g, p.r]);
                 }
-                for _ in 0..(row - w * 3) {
-                    f.push(0);
-                }
+                f.resize(f.len() + (row - w * 3) as usize, 0);
             }
             std::fs::write(out.join(format!("{name}.bmp")), f).unwrap();
         };

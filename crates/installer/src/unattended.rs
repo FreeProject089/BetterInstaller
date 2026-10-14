@@ -1338,6 +1338,8 @@ fn free_space(_dest: &Path) -> Option<u64> {
 
 /// One argument quoted for a Windows command line (the rules CommandLineToArgvW and the
 /// Rust runtime parse back): backslashes are literal except before a quote.
+/// Only `elevate` (Windows) calls it outside the tests.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn quote_arg(a: &str) -> String {
     if !a.is_empty() && !a.contains([' ', '\t', '\n', '"']) {
         return a.to_string();
@@ -1366,6 +1368,7 @@ fn quote_arg(a: &str) -> String {
 
 /// The same command line, for the elevated copy: every argument as given, plus `--elevated`
 /// so it never asks again.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn elevated_args(raw: &[String]) -> String {
     raw.iter()
         .map(|a| quote_arg(a))
