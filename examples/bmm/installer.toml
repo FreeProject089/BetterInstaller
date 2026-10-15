@@ -200,7 +200,7 @@ description  = "Starting look. Every one of these ships with BMM. The installer 
 # Ids, not display names: they are written straight into settings.active_theme, and the
 # app resolves them against builtin-themes/. A display name would drift the moment a
 # preset is renamed.
-choices     = ["bmm-default", "bmm-sombre", "bmm-void", "bmm-white", "bmm-discord", "bmm-orange", "bmm-spotify", "bmm-brutal", "bmm-claude", "bmm-nord", "bmm-sakura", "bmm-vscode", "bmm-macos"]
+choices     = ["bmm-default", "bmm-sombre", "bmm-void", "bmm-white", "bmm-indigo", "bmm-orange", "bmm-neon", "bmm-brutal", "bmm-clay", "bmm-arctic", "bmm-sakura", "bmm-charcoal", "bmm-cobalt", "bmm-logo"]
 default     = "bmm-default"
 # Windows in light mode (Settings → Personalisation → Colours): start on the light theme.
 default_light = "bmm-white"
@@ -220,15 +220,16 @@ previews = [
   { value = "bmm-sombre", label = "Graphite",    colors = ["#1a1a1e", "#232328", "#5865f2", "#dbdee1"] },
   { value = "bmm-void",   label = "Pure Black",  colors = ["#000000", "#0b0b0d", "#d4d4d8", "#f5f5f7"] },
   { value = "bmm-white",  label = "Daylight",    colors = ["#f5f6f8", "#ffffff", "#1d4ed8", "#18181b"] },
-  { value = "bmm-discord", label = "Indigo",      colors = ["#313338", "#2b2d31", "#5865f2", "#f2f3f5"] },
+  { value = "bmm-indigo", label = "Indigo",      colors = ["#313338", "#2b2d31", "#5865f2", "#f2f3f5"] },
   { value = "bmm-orange", label = "Ember",       colors = ["#0a0a0a", "#161614", "#ff6a00", "#f6f1ea"] },
-  { value = "bmm-spotify", label = "Neon",        colors = ["#121212", "#181818", "#1ed760", "#ffffff"] },
+  { value = "bmm-neon",   label = "Neon",        colors = ["#121212", "#181818", "#1ed760", "#ffffff"] },
   { value = "bmm-brutal", label = "Newsprint",   colors = ["#e7e3d8", "#fcfbf6", "#e8590c", "#111111"] },
-  { value = "bmm-claude", label = "Clay",        colors = ["#f0eee6", "#fbfaf5", "#c8613f", "#2b2a27"] },
-  { value = "bmm-nord",   label = "Arctic",      colors = ["#2e3440", "#3b4252", "#81a1c1", "#eceff4"] },
+  { value = "bmm-clay",   label = "Clay",        colors = ["#f0eee6", "#fbfaf5", "#c8613f", "#2b2a27"] },
+  { value = "bmm-arctic", label = "Arctic",      colors = ["#2e3440", "#3b4252", "#81a1c1", "#eceff4"] },
   { value = "bmm-sakura", label = "Blossom",     colors = ["#faf4f2", "#ffffff", "#db507c", "#3b2230"] },
-  { value = "bmm-vscode", label = "Editor",      colors = ["#1f1f1f", "#252526", "#0078d4", "#cccccc"] },
-  { value = "bmm-macos",  label = "Cobalt",      colors = ["#1e1e1e", "#2a2a2c", "#0a84ff", "#f5f5f7"] },
+  { value = "bmm-charcoal", label = "Charcoal",  colors = ["#1f1f1f", "#252526", "#0078d4", "#cccccc"] },
+  { value = "bmm-cobalt",  label = "Cobalt",      colors = ["#1e1e1e", "#2a2a2c", "#0a84ff", "#f5f5f7"] },
+  { value = "bmm-logo",   label = "BMM Logo",    colors = ["#ececec", "#f8f8f8", "#ffcc00", "#1a1a1a"] },
 ]
 
 [[setup_option]]

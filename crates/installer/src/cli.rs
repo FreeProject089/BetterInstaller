@@ -738,7 +738,7 @@ mod tests {
             "--lang",
             "fr",
             "--set",
-            "theme=bmm-nord",
+            "theme=bmm-arctic",
             "--set=smart_io=off",
             "--telemetry",
             "off",
@@ -765,7 +765,7 @@ mod tests {
         assert_eq!(
             c.sets,
             vec![
-                ("theme".into(), "bmm-nord".into()),
+                ("theme".into(), "bmm-arctic".into()),
                 ("smart_io".into(), "off".into())
             ]
         );

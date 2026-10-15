@@ -1597,11 +1597,11 @@ mod tests {
         }
         let ok = unattended_choices(
             &cfg.setup_options,
-            &sets(&[("theme", "bmm-nord"), ("smart_io", "off")]),
+            &sets(&[("theme", "bmm-arctic"), ("smart_io", "off")]),
             Some(false),
         )
         .unwrap();
-        assert_eq!(ok.get("theme"), Some(&serde_json::json!("bmm-nord")));
+        assert_eq!(ok.get("theme"), Some(&serde_json::json!("bmm-arctic")));
         assert_eq!(ok.get("smart_io"), Some(&serde_json::json!(false)));
     }
 
